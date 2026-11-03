@@ -1,7 +1,65 @@
 # Local compatibility and provider checks — 2026-11-03
 
-The user now authorizes game/mod access. No live gameplay or billable LLM call
-has been performed during these checks.
+## Native combat preview extension
+
+Added the repository-owned `mod/McpMod.AgentPreview.cs` extension and the
+idempotent `tools/patch_mod_preview.py` integration script. Built against the
+installed v0.107.1 game: **zero warnings, zero errors**. The ignored output is
+`.venv/mod-build/out-preview/STS2_MCP.dll`, SHA-256
+`522E94E37254B70A8730642BE9F15B7C1BB16961429C16FA13C6C93D24AF3034`.
+
+Source inspection of the installed game confirms that `UpdateDynamicVarPreview`
+uses native damage/block hooks and target-specific status/relic rules. The
+extension updates cloned variables using the real card identity. This is source
+inspection and a successful build, not live validation of the extension.
+
+Focused synthetic observation/decision checks: **21 passed**. Two added local
+regression tests cover the exact serialized LLM message, target-specific damage,
+block, visible statuses, missing previews, unknown later intents, and changed
+state invalidation. The two tests also passed after extending coverage for AoE,
+multi-hit, and unparsed descriptions. Tests and fixtures remain local and ignored.
+One existing setup test was excluded because the configured local `.env` makes
+its missing-provider premise false. Pytest's temp directory was placed under
+the ignored tests directory to avoid sandbox temp-directory permissions.
+
+Installation/live verification is pending: the running game holds the old DLL
+open, and the user requested waiting for the other chat's active run to finish
+before restarting. Its installed DLL remains unchanged. An ignored backup is
+`.venv/mod-build/STS2_MCP.before-preview.dll`.
+
+See `COMBAT_VISIBILITY.md` for the preview data contract and limitations.
+
+The user now authorizes game/mod access. No live gameplay action or billable LLM
+call has been performed during these checks.
+
+## Latest recheck: v0.107.1 — startup and API reads verified
+
+The installed game changed to **v0.107.1**, commit `59260271`, main assembly hash
+`-1555940892`. Steam now reports build **23811903**, `public` branch.
+
+Upstream `main` still points to `55e064850a68f3b4cde7e5fd525bf9b2dec4e885`.
+Rebuilt that source against the currently installed game with .NET SDK 9.0.320:
+**build succeeded, zero warnings, zero errors**. Output is local and ignored:
+`.venv/mod-build/out-v01071/STS2_MCP.dll`.
+
+Installed the rebuilt DLL and its manifest into the game's `mods` directory and
+launched via Steam. The game log confirms successful mod initialization and the
+server listening on `http://localhost:15526/`. Read-only checks passed:
+
+- `GET /`: `{"message":"Hello from STS2 MCP v0.4.0","status":"ok"}`.
+- `GET /api/v1/singleplayer`: readable `menu` state, parsed by the agent.
+- `GET /api/v1/compendium`: readable JSON.
+
+This establishes compilation, startup, and API-read compatibility with v0.107.1;
+combat and other gameplay actions remain unvalidated. No gameplay POSTs or LLM
+calls were made. The agent does not automate the menu/run-start screen.
+
+Use this rebuilt source version, rather than assuming the older downloadable
+0.4.0 DLL is equivalent: the version label was not bumped for the compatibility
+fix. No alternate mod or further game-version change is needed for these verified
+startup/read checks.
+
+## Earlier check: v0.111.0 (historical)
 
 ## Installed game and mod
 

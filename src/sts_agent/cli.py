@@ -38,6 +38,7 @@ from .policy import BaselinePolicy
 from .providers import API_KEY_ENV, AnthropicTextModel, ProviderConfigError, UsageBudget
 from .providers.deepseek import DeepSeekTextModel
 from .env import load_env
+from .expert_stats import ExpertDecisionStats
 from .replay import decide_from_observation_file, replay_trace
 from .runner import Runner
 from .strategic import StrategicPlanner
@@ -96,7 +97,7 @@ def _objective(cfg) -> str:
     return cfg.llm.objective or DEFAULT_OBJECTIVE
 
 
-def _frame_from_view(view, *, run_id, run_id_source, facts_source, objective) -> DecisionFrame:
+def _frame_from_view(view, *, run_id, run_id_source, facts_source, objective, expert_stats=None) -> DecisionFrame:
     cap = CAPABILITIES.get(view.kind, {})
     return DecisionFrame(
         run_id=run_id, run_id_source=run_id_source, objective=objective,
@@ -104,7 +105,8 @@ def _frame_from_view(view, *, run_id, run_id_source, facts_source, objective) ->
                 "capability": {"status": cap.get("status"), "live_validated": False, "mod_revision": MOD_REVISION}},
         observation_fingerprint=view.fingerprint, facts_source=facts_source, facts=view.facts,
         candidates=view.candidates, bindings=view.bindings, limitations=view.limitations,
-        assessment={"status": "not_requested_in_preview"}, previous_turn_intent=None, history=[])
+        assessment={"status": "not_requested_in_preview"}, previous_turn_intent=None, history=[],
+        decision_support=expert_stats.for_view(view) if expert_stats is not None else None)
 
 
 def _versions(client) -> tuple[str | None, str | None]:
@@ -259,7 +261,8 @@ def cmd_observe(args) -> int:
             return 0
         _, run_id = _versions(client)
         frame = _frame_from_view(view, run_id=run_id or "preview", run_id_source="mod_compendium" if run_id else
-                                 "preview_only", facts_source="observed", objective=_objective(cfg))
+                                 "preview_only", facts_source="observed", objective=_objective(cfg),
+                                 expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build))
         if args.save_frame:
             Path(args.save_frame).parent.mkdir(parents=True, exist_ok=True)
             Path(args.save_frame).write_text(json.dumps(frame.to_record(), indent=2, ensure_ascii=False), encoding="utf-8")
@@ -358,6 +361,7 @@ def _shareable_config(cfg) -> dict:
     d = cfg.to_dict()
     d.pop("game_dir", None)
     d.pop("trace_dir", None)
+    d.get("expert_stats", {}).pop("cache_dir", None)
     return d
 
 
@@ -388,6 +392,8 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
         f"{', SCRIPTED' if scripted else ''})")
     scope = {"step": "step", "play-combat": "combat", "play-run": "run"}[command]
     coord = RunCoordinator(client, policy, planner=planner, recorder=rec, limits=cfg.limits, scope=scope,
+                           expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build)
+                           if facts_source != "synthetic" and not scripted else None,
                            run_id=run_id, run_id_source=run_id_source, facts_source=facts_source,
                            objective=_objective(cfg), model_timeout_s=getattr(model, "timeout_s", 0.0), log=log)
     try:

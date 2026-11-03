@@ -40,6 +40,27 @@ class LLMConfig:
 
 
 @dataclass
+class ExpertStatsConfig:
+    enabled: bool = True
+    cohort_size: int = 5
+    min_character_runs: int = 30
+    ascension: int | None = None          # None = observed ascension; never silently widened
+    match_version: bool = True            # uses Config.game_build when known
+    lang: str = "eng"                     # event title matching uses this catalog language
+    cache_dir: str = "traces/spire_codex_cache"
+    cache_ttl_s: float = 86400.0
+    request_timeout_s: float = 3.0
+    max_fetch_s: float = 12.0
+    history_enabled: bool = True
+    history_runs_per_player: int = 100     # bounded local corpus, not every submitted run
+    history_new_runs_per_decision: int = 3
+    floor_window: int = 3
+    min_context_samples: int = 20
+    deck_similarity_min: float = 0.5      # multiset Jaccard over base card IDs
+    deck_advice_enabled: bool = True
+
+
+@dataclass
 class Config:
     policy: str = "llm"                    # "llm" (default) or "baseline" (explicit comparison mode)
     base_url: str = "http://127.0.0.1:15526"
@@ -51,6 +72,7 @@ class Config:
     game_dir: str | None = None            # optional, used by `doctor` to read the mod manifest
     limits: Limits = field(default_factory=Limits)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    expert_stats: ExpertStatsConfig = field(default_factory=ExpertStatsConfig)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -73,7 +95,7 @@ _SECRET_KEYS = {"api_key", "anthropic_api_key", "openai_api_key", "deepseek_api_
 
 
 def _apply(cfg: Config, data: dict, p: Path) -> None:
-    tables = {"limits": cfg.limits, "llm": cfg.llm}
+    tables = {"limits": cfg.limits, "llm": cfg.llm, "expert_stats": cfg.expert_stats}
     top = {f.name for f in fields(Config)} - set(tables)
     for k, v in data.items():
         if k in tables:

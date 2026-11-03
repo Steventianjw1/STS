@@ -40,6 +40,13 @@ against a fresh observation, executes it once, confirms the result, and records 
 rule-based heuristic is kept only as an explicit comparison mode (`--policy baseline`), for combat
 only. It is never a fallback.
 
+Combat frames include player/enemy statuses and the next enemy move. The optional
+native-preview mod extension adds current damage/block variables per card and
+target, so the LLM can directly compare a Vulnerable enemy with another target.
+Rounds beyond the next enemy move are explicitly unknown. See
+[combat visibility and mod setup](docs/COMBAT_VISIBILITY.md) for the data contract
+and limits of these previews.
+
 > **What is implemented, what is checked, and what is pending**
 >
 > | | Status |
@@ -230,6 +237,9 @@ facts. See [docs/STRATEGIC_PLANNER.md](docs/STRATEGIC_PLANNER.md) for its standa
 
 ## 9. More documentation
 
+- [docs/EXPERT_STATS.md](docs/EXPERT_STATS.md): cached character-specific expert
+  pick rates, event choices and merchant purchases, automatically included in
+  relevant LLM decisions. Configure `[expert_stats]` in the example TOML.
 - [docs/LLM_DECISION_ENGINE.md](docs/LLM_DECISION_ENGINE.md): the design handoff this
   implementation follows.
 - [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md): the capability table, source evidence,

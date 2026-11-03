@@ -50,3 +50,23 @@ max_calls_per_run = 2000           # decision + strategic calls
 max_input_bytes = 98304            # decision prompt size; oldest history trimmed first, facts never trimmed
 # objective = "Win the run (ordinary victory) with the current character at the current difficulty."
 strategic_planner = true
+
+[expert_stats]
+enabled = true
+cohort_size = 5                    # highest character Elo among the global top 100
+min_character_runs = 30            # solo A10 standard rated runs on this character
+# ascension = 10                   # omit to match observed ascension; no automatic broadening
+match_version = true              # filter profiles by game_build above when known
+lang = "eng"                      # event catalog language for exact title matching
+cache_dir = "traces/spire_codex_cache"
+cache_ttl_s = 86400.0              # memory + disk; expired data is not used
+request_timeout_s = 3.0
+max_fetch_s = 12.0                 # overall fetch budget per decision; remaining run budget also applies
+history_enabled = true
+history_runs_per_player = 100      # bounded SQLite corpus under cache_dir; standard solo runs only
+history_new_runs_per_decision = 3  # incremental sync; at most one run per player per decision
+floor_window = 3                  # nearby floor +/- 3, then act, then indexed cohort
+min_context_samples = 20          # report widening and sparse final samples
+deck_similarity_min = 0.5         # base-card multiset Jaccard; excludes incomplete card identities
+deck_advice_enabled = true        # requires an explicit permanent deck from the patched mod
+# Optional SPIRE_CODEX_API_KEY belongs in .env, never in this file.

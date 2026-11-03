@@ -184,6 +184,13 @@ earlier.
 
 The trace stores no hidden reasoning transcripts, only the contracted `reason` and `turn_intent`.
 
+Relevant frames may also contain optional `decision_support`: the cached Spire
+Codex expert cohort, filters, per-option counts/rates, contributor counts and
+availability/cache provenance. This is external observational evidence, separate
+from game facts. It participates in the frame hash and is replayed from the
+record without a network request. Frames without this field retain their
+original hashes. See [EXPERT_STATS.md](EXPERT_STATS.md).
+
 ### Replay of LLM traces: recorded-decision validation
 
 `sts-agent replay traces\<session_id>` detects `llm_decision` records and **does not call any

@@ -1,8 +1,9 @@
-"""Strategic planner orchestration: update gate, one model call, validation, memory.
+"""Strategic planner orchestration: update gate, bounded correction, validation, memory.
 
 Synchronous and single-caller: do not share one ``StrategicPlanner`` between
 threads. The injected ``TextModel`` owns timeouts and cancellation. There is
-one completion attempt per update, no repair loop, and no heuristic fallback.
+at most one corrective retry for invalid output. Provider errors are not retried;
+all attempts use the same model budget. No heuristic fallback exists.
 """
 from __future__ import annotations
 
@@ -37,6 +38,7 @@ class StrategicPlanner:
         self._assessed: StrategicSnapshot | None = None       # snapshot it was built from
         self._latest_checked: StrategicSnapshot | None = None
         self._revisions: dict[int, str] = {}                  # revision -> snapshot_id (this run)
+        self.last_attempts: list[dict] = []
 
     @property
     def assessment(self) -> StrategicAssessment | None:
@@ -92,20 +94,36 @@ class StrategicPlanner:
         return None
 
     def _call_model(self, snap: StrategicSnapshot, reason: str) -> PlannerResult:
-        user = build_user_message(snap, self._assessment)
-        text: Any = None
-        try:
-            text = self._model.complete(system=SYSTEM_INSTRUCTION, user=user)
-        except Exception as e:  # provider errors, timeouts, cancellations raised as exceptions
-            diag = f"model call failed ({reason}): {type(e).__name__}: {e}"
-            self._log(snap, user, None, FAILED, diag)
-            return self._result(FAILED, snap, model_called=True, diagnostic=diag)
-        try:
-            content = parse_assessment(text, snap.facts)
-        except OutputError as e:
-            diag = f"model output rejected ({reason}): {e}"
-            self._log(snap, user, text, FAILED, diag)
-            return self._result(FAILED, snap, model_called=True, diagnostic=diag)
+        self.last_attempts = []
+        correction = None
+        for attempt in (1, 2):
+            user = build_user_message(snap, self._assessment, correction=correction)
+            record = {"attempt": attempt, "response_text": None, "error": None, "call": None}
+            self.last_attempts.append(record)
+            try:
+                text = self._model.complete(system=SYSTEM_INSTRUCTION, user=user)
+            except Exception as e:  # provider failures are never retried
+                diag = f"model call failed ({reason}): {type(e).__name__}: {e}"
+                record["error"] = diag
+                call = getattr(self._model, "last_call", None)
+                record["call"] = call.to_dict() if hasattr(call, "to_dict") else None
+                self._log(snap, user, None, FAILED, diag)
+                return self._result(FAILED, snap, model_called=True, diagnostic=diag)
+            call = getattr(self._model, "last_call", None)
+            record["call"] = call.to_dict() if hasattr(call, "to_dict") else None
+            if isinstance(text, str):
+                record["response_text"] = text.encode("utf-8")[:MAX_MODEL_TEXT_BYTES].decode("utf-8", errors="ignore")
+            try:
+                content = parse_assessment(text, snap.facts)
+                break
+            except OutputError as e:
+                record["error"] = str(e)
+                diag = f"model output rejected ({reason}): {e}"
+                self._log(snap, user, text, FAILED, diag)
+                if attempt == 2:
+                    return self._result(FAILED, snap, model_called=True,
+                                        diagnostic=f"invalid after one corrective retry: {diag}")
+                correction = {"validation_error": str(e), "rejected_output": record["response_text"]}
 
         self._assessment = StrategicAssessment(
             run_id=snap.run_id, input_revision=snap.revision, snapshot_id=snap.snapshot_id,

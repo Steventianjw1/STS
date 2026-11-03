@@ -120,6 +120,13 @@ def _enemy(raw: dict) -> dict:
         "block": _int_or_none(raw.get("block")),
         "statuses": _statuses(raw.get("status")),
         "intents": intents,
+        # Multiple intents describe ONE move, not successive rounds.
+        "intent_forecast": [
+            {"enemy_turn_offset": offset,
+             "source": "observed_next_move" if offset == 1 and intents is not None else "not_exposed",
+             "intents": intents if offset == 1 else None}
+            for offset in range(1, 4)
+        ],
         "has_attack_intent": bool(intents) and any(i["is_attack"] for i in intents),
         "incoming_damage": incoming,  # None = unknown (attack with unparseable label, or no intents data)
     }
@@ -151,7 +158,30 @@ def _hand_card(raw: dict, position: int, occurrence: int) -> dict:
         "keywords": [k.get("name") for k in raw.get("keywords", []) if isinstance(k, dict) and k.get("name")]
         if isinstance(raw.get("keywords"), list) else None,
         "effects": eff.to_dict(),
+        "combat_previews": _combat_previews(raw.get("combat_previews")),
     }
+
+
+def _combat_previews(raw: Any) -> list[dict] | None:
+    """Allowlist the optional native-preview extension; no guessed numbers."""
+    if not isinstance(raw, list):
+        return None
+    result = []
+    for preview in raw:
+        if not isinstance(preview, dict) or preview.get("source") != "game_native_preview_v1":
+            continue
+        variables = preview.get("variables")
+        result.append({
+            "target_combat_id": _int_or_none(preview.get("target_combat_id")),
+            "source": "game_native_preview_v1",
+            "variables": [
+                {"name": _str_or_none(v.get("name")),
+                 "base_value": _int_or_none(v.get("base_value")),
+                 "preview_value": _int_or_none(v.get("preview_value"))}
+                for v in variables if isinstance(v, dict)
+            ] if isinstance(variables, list) else None,
+        })
+    return result
 
 
 def _pile_counts(raw: Any) -> dict[str, int] | None:
@@ -279,6 +309,13 @@ def normalize(raw: dict) -> dict:
         "max_potion_slots": _int_or_none(player.get("max_potion_slots")),
         "screen": _screen_info(raw, phase),
     }
+    # Read the permanent deck only when explicitly supplied by the mod. Combat
+    # piles are not a permanent deck and must never be substituted here.
+    if isinstance(player.get("deck"), list):
+        deck = player["deck"]
+        obs["deck"] = ([{"id": c["id"], "is_upgraded": c.get("is_upgraded")
+                          if isinstance(c.get("is_upgraded"), bool) else None} for c in deck]
+                       if all(isinstance(c, dict) and isinstance(c.get("id"), str) for c in deck) else None)
     obs["fingerprint"] = fingerprint(obs)
     return obs
 

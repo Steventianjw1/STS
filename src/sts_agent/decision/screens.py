@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..observation import PHASE_COMBAT_ENDED, PHASE_COMBAT_READY, normalize
+from ..combat_preview import action_preview
 from .models import sha
 
 SOURCE_INSPECTED = "source_inspected"
@@ -96,8 +97,11 @@ class _Builder:
 
 
 def _common_facts(obs: dict) -> dict:
-    return {"run": obs["run"], "player": obs["player"], "relics": obs["relics"], "potions": obs["potions"],
-            "max_potion_slots": obs["max_potion_slots"]}
+    facts = {"run": obs["run"], "player": obs["player"], "relics": obs["relics"], "potions": obs["potions"],
+             "max_potion_slots": obs["max_potion_slots"]}
+    if "deck" in obs:
+        facts["deck"] = obs["deck"]
+    return facts
 
 
 def _combat_facts(obs: dict) -> dict:
@@ -155,6 +159,17 @@ def _combat_view(obs: dict, st: str) -> ScreenView:
     v = ScreenView("combat", st, ready, True, facts=_combat_facts(obs),
                    combat_round=(obs["combat"] or {}).get("round"))
     v.limitations.append("Card 'effects' fields are a partial text-parser hint; the description is authoritative.")
+    v.limitations.extend([
+        "Enemy intents are simultaneous parts of the next enemy move, not successive rounds. "
+        "intent_forecast offsets 2 and 3 are unknown: the API exposes no three-turn lookahead.",
+        "effect_preview contains game-native current-state damage/block variables for each target. "
+        "Player and target status/relic modifiers are already included; do not apply them twice. "
+        "This is not a simulation: triggers, status changes between hits, replay, and later actions can change outcomes. "
+        "Totals and HP loss marked if_unchanged are conditional, not guaranteed. Re-evaluate after every action.",
+    ])
+    if any(c.get("combat_previews") is None for c in obs["hand"] or []):
+        v.limitations.append("Native combat previews unavailable for some cards. Install the agent preview mod extension; "
+                             "untargeted descriptions alone do not establish target-specific damage/block.")
     if not ready:
         return v
     b = _Builder()
@@ -173,12 +188,14 @@ def _combat_view(obs: dict, st: str) -> ScreenView:
             for e in enemies:
                 b.add(f"play_{idx}_t{e['combat_id']}", "play_card",
                       f"Play {name} (cost {cost}) targeting {e['name']} #{e['combat_id']} (HP {e['hp']}/{e['max_hp']}, block {e['block']})",
-                      {**details, "target_combat_id": e["combat_id"]},
+                      {**details, "target_combat_id": e["combat_id"],
+                       "effect_preview": action_preview(card, enemies, e)},
                       {"action": "play_card", "card_index": idx, "target": str(e["combat_id"])})
             if not enemies:
                 v.limitations.append(f"Hand card [{idx}] {name}: needs an enemy target but none is targetable.")
         elif tt in NO_TARGET_CARD_TYPES:
-            b.add(f"play_{idx}", "play_card", f"Play {name} (cost {cost}, {tt})", details,
+            b.add(f"play_{idx}", "play_card", f"Play {name} (cost {cost}, {tt})",
+                  {**details, "effect_preview": action_preview(card, enemies)},
                   {"action": "play_card", "card_index": idx})
         else:
             v.limitations.append(f"Hand card [{idx}] {name}: target type {tt!r} has no verified execution semantics; not offered.")
@@ -317,6 +334,12 @@ def _event(raw, obs):
              "was_chosen": o.get("was_chosen") is True, "relic_name": _s(o.get("relic_name"), 120),
              "relic_description": _s(o.get("relic_description"))}
             for o in e.get("options") or [] if isinstance(o, dict)]
+    # Preserve stable option IDs when a mod build exposes them. Existing builds
+    # provide titles only; the statistics adapter then requires an exact match.
+    for option, raw_option in zip(opts, (o for o in e.get("options") or [] if isinstance(o, dict))):
+        option_id = _s(raw_option.get("option_id"), 120)
+        if option_id:
+            option["option_id"] = option_id
     in_dialogue = e.get("in_dialogue") is True
     details = {"event_id": _s(e.get("event_id"), 80), "event_name": _s(e.get("event_name"), 120),
                "is_ancient": e.get("is_ancient") if isinstance(e.get("is_ancient"), bool) else None,

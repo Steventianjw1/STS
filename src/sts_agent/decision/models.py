@@ -50,6 +50,7 @@ class DecisionFrame:
     history: list                    # <= MAX_HISTORY recent decision/outcome pairs (this encounter)
     live_validated: bool = False
     schema_version: str = FRAME_SCHEMA_VERSION
+    decision_support: dict | None = None
     frame_id: str = field(default="", init=False)
 
     def __post_init__(self):
@@ -78,7 +79,7 @@ class DecisionFrame:
 
     def public(self) -> dict:
         """What the model sees: no bindings/payloads."""
-        return {
+        result = {
             "frame_id": self.frame_id, "schema_version": self.schema_version, "objective": self.objective,
             "run": {"run_id": self.run_id, "run_id_source": self.run_id_source},
             "screen": self.screen,
@@ -93,9 +94,12 @@ class DecisionFrame:
                 "text": self.previous_turn_intent},
             "recent_history": self.history,
         }
+        if self.decision_support is not None:
+            result["decision_support"] = self.decision_support
+        return result
 
     def to_record(self) -> dict:
-        return {
+        result = {
             "frame_id": self.frame_id, "schema_version": self.schema_version, "run_id": self.run_id,
             "run_id_source": self.run_id_source, "objective": self.objective, "screen": self.screen,
             "observation_fingerprint": self.observation_fingerprint, "facts_source": self.facts_source,
@@ -103,13 +107,17 @@ class DecisionFrame:
             "bindings": self.bindings, "limitations": self.limitations, "assessment": self.assessment,
             "previous_turn_intent": self.previous_turn_intent, "history": self.history,
         }
+        # Omit absent evidence to preserve hashes of existing saved frames/traces.
+        if self.decision_support is not None:
+            result["decision_support"] = self.decision_support
+        return result
 
     @classmethod
     def from_record(cls, rec: dict) -> "DecisionFrame":
         keys = ("run_id", "run_id_source", "objective", "screen", "observation_fingerprint", "facts_source",
                 "facts", "candidates", "bindings", "limitations", "assessment", "previous_turn_intent", "history",
-                "live_validated", "schema_version")
-        f = cls(**{k: rec[k] for k in keys})
+                "live_validated", "schema_version", "decision_support")
+        f = cls(**{k: rec[k] for k in keys if k in rec})
         if rec.get("frame_id") and rec["frame_id"] != f.frame_id:
             raise ValueError("recorded frame_id does not match the frame content")
         return f

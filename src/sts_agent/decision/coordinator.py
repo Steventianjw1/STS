@@ -97,7 +97,7 @@ _REWARD_KIND = {"gold": "gold_reward", "potion": "potion_reward", "relic": "reli
 
 
 class RunCoordinator:
-    def __init__(self, client, policy: LLMDecisionPolicy, *, planner=None, recorder=None,
+    def __init__(self, client, policy: LLMDecisionPolicy, *, planner=None, recorder=None, expert_stats=None,
                  limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
                  facts_source: str = "observed", objective: str, model_timeout_s: float = 0.0,
                  clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
@@ -105,6 +105,7 @@ class RunCoordinator:
         if scope not in ("run", "combat", "step"):
             raise ValueError("scope must be run, combat or step")
         self.client, self.policy, self.planner, self.rec = client, policy, planner, recorder
+        self.expert_stats = expert_stats
         self.lim = limits or Limits()
         self.scope, self.run_id, self.run_id_source = scope, run_id, run_id_source
         self.facts_source, self.objective = facts_source, objective
@@ -296,7 +297,8 @@ class RunCoordinator:
                             diagnostic=result.diagnostic,
                             assessment=result.assessment.to_dict() if result.assessment else None,
                             applies_to_current_facts=result.applies_to_current_facts,
-                            call=_last_call(self.policy.model))
+                            call=_last_call(self.policy.model),
+                            attempts=self.planner.last_attempts if result.model_called else [])
 
     def _assessment_for_frame(self, v: ScreenView) -> dict | None:
         if self.planner is None:
@@ -324,6 +326,12 @@ class RunCoordinator:
         if blocked:
             lims.append(f"Not offered because the game rejected them in this exact state: {blocked}")
         cap = CAPABILITIES.get(v.kind, {})
+        support = None
+        if self.expert_stats is not None:
+            started = self.clock()
+            support = self.expert_stats.for_view(
+                v, budget_s=max(0.0, self._deadline() - started - self.model_timeout_s))
+            self.last_progress += self.clock() - started  # evidence latency is not a game stall
         return DecisionFrame(
             run_id=self.run_id, run_id_source=self.run_id_source, objective=self.objective,
             screen={"kind": v.kind, "state_type": v.state_type, "encounter_key": v.encounter_key,
@@ -331,7 +339,7 @@ class RunCoordinator:
             observation_fingerprint=v.fingerprint, facts_source=self.facts_source, facts=v.facts,
             candidates=cands, bindings={c["action_id"]: v.bindings[c["action_id"]] for c in cands},
             limitations=lims, assessment=self._assessment_for_frame(v),
-            previous_turn_intent=self.turn_intent, history=self.history)
+            previous_turn_intent=self.turn_intent, history=self.history, decision_support=support)
 
     def _step(self):
         v = self._wait_ready()
