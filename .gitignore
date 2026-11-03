@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+# Tests and fixtures stay local by project preference.
+tests/
+test/
+test_*.py
+*_test.py
+conftest.py
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+traces/
+sts_agent.toml
+.env
+.env.*
+!.env.example

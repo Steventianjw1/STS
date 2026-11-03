@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sts-agent"
+version = "0.1.0"
+description = "Day-1 Slay the Spire 2 combat agent (Ironclad, A0) on top of the STS2MCP HTTP API"
+requires-python = ">=3.11"
+# Runtime uses only the standard library (urllib for HTTP, tomllib for config).
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+# Optional Claude provider (imported lazily; not needed offline or for baseline).
+llm = ["anthropic"]
+deepseek = ["openai"]
+
+[project.scripts]
+sts-agent = "sts_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
