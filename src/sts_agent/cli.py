@@ -38,7 +38,7 @@ from .policy import BaselinePolicy
 from .providers import API_KEY_ENV, AnthropicTextModel, ProviderConfigError, UsageBudget
 from .providers.deepseek import DeepSeekTextModel
 from .env import load_env
-from .expert_stats import ExpertDecisionStats
+from .expert_stats import ExpertDecisionStats, StatsUnavailable
 from .replay import decide_from_observation_file, replay_trace
 from .runner import Runner
 from .strategic import StrategicPlanner
@@ -443,6 +443,28 @@ def cmd_replay(args) -> int:
     return 0 if rep["matches"] == rep["decisions"] and rep["corrupt_lines"] == 0 else 1
 
 
+def cmd_sync_history(args) -> int:
+    cfg, _ = load_config(args.config)
+    stats = ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build)
+    if not cfg.expert_stats.enabled or not cfg.expert_stats.history_enabled:
+        print("expert_stats history is disabled in config")
+        return 1
+
+    def progress(total, result):
+        print(f"  indexed {total} new run(s); " + ", ".join(
+            f"{p['username']}={p.get('indexed_runs', '?')}:{p['status']}" for p in result["players"]))
+    try:
+        result = stats.bulk_sync(args.character, args.ascension, max_new_runs=args.max_new_runs,
+                                 max_seconds=args.max_seconds, progress=progress)
+    except StatsUnavailable as exc:
+        print(f"sync unavailable: {exc}")
+        return 1
+    print(f"done: {result['new_runs']} new run(s) for {', '.join(result['cohort'])} "
+          f"(character={result['scope']['character']}, A{result['scope']['ascension']}, "
+          f"version={result['scope']['version'] or 'all'})")
+    return 0
+
+
 def main(argv=None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:  # never crash on a non-UTF-8 Windows console (e.g. GBK)
@@ -491,6 +513,13 @@ def main(argv=None) -> int:
     r.set_defaults(fn=cmd_replay)
 
     sub.add_parser("capabilities", help="print the screen capability table").set_defaults(fn=cmd_capabilities)
+
+    h = sub.add_parser("sync-history", help="fill the local Spire Codex run corpus (network; no game or model calls)")
+    h.add_argument("--character", required=True, help="e.g. IRONCLAD")
+    h.add_argument("--ascension", type=int, required=True)
+    h.add_argument("--max-new-runs", type=int, default=500)
+    h.add_argument("--max-seconds", type=float, default=600.0)
+    h.set_defaults(fn=cmd_sync_history)
 
     args = ap.parse_args(argv)
     return args.fn(args)

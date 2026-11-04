@@ -12,7 +12,60 @@ import urllib.parse
 
 from .expert_stats import StatsUnavailable, _character, _count, _id
 
-NORMALIZER_VERSION = 1
+NORMALIZER_VERSION = 2  # 2: per-floor route rows
+
+
+def _act_id(value):
+    if isinstance(value, str) and value.strip().upper().startswith("ACT."):
+        value = value.strip()[4:]
+    return _id(value)
+
+
+def _num(value):
+    return value if type(value) in (int, float) and value >= 0 else None
+
+
+def normalize_route(raw: dict) -> tuple[dict, list[dict], list[str]]:
+    """Per-floor route facts for one solo run; unknown values stay None.
+
+    ``hp``/``gold`` are the recorded values after the floor; consumers derive
+    arrival values from the previous floor. ``act_floor`` is the 1-based
+    position within that act's recorded history.
+    """
+    acts, issues, floors = raw.get("acts"), set(), []
+    acts = acts if isinstance(acts, list) else []
+    if len(acts) < len(raw.get("map_point_history") or []):
+        issues.add("act_ids_incomplete")
+    floor = 0
+    for act_no, act in enumerate(raw.get("map_point_history") or [], 1):
+        act_id = _act_id(acts[act_no - 1]) if act_no <= len(acts) else None
+        for act_floor, point in enumerate(act if isinstance(act, list) else [], 1):
+            floor += 1
+            point = point if isinstance(point, dict) else {}
+            rooms = point.get("rooms") if isinstance(point.get("rooms"), list) else []
+            room = rooms[0] if rooms and isinstance(rooms[0], dict) else {}
+            seats = point.get("player_stats") if isinstance(point.get("player_stats"), list) else []
+            stats = seats[0] if len(seats) == 1 and isinstance(seats[0], dict) else {}
+            model = room.get("model_id")
+            model = model[10:] if isinstance(model, str) and model.startswith("ENCOUNTER.") else model
+            choices = stats.get("rest_site_choices")
+            choices = [c.upper() for c in choices if isinstance(c, str)] if isinstance(choices, list) else []
+            max_hp = _num(stats.get("max_hp"))
+            point_type, room_type = point.get("map_point_type"), room.get("room_type")
+            floors.append({
+                "act": act_no, "act_id": act_id, "act_floor": act_floor, "floor": floor,
+                "map_point_type": point_type.lower() if isinstance(point_type, str) and point_type else None,
+                "room_type": room_type.lower() if isinstance(room_type, str) and room_type else None,
+                "encounter_id": _id(model), "hp": _num(stats.get("current_hp")),
+                "max_hp": max_hp if max_hp else None, "damage_taken": _num(stats.get("damage_taken")),
+                "gold": _num(stats.get("current_gold")), "rest_choices": choices})
+            if not stats:
+                issues.add("missing_floor_player_stats")
+    win = raw.get("win")
+    run = {"win": int(win) if type(win) is bool else None,
+           "abandoned": int(raw.get("was_abandoned") is True),
+           "acts": [_act_id(a) for a in acts]}
+    return run, floors, sorted(issues)
 
 
 def _cards(value):
@@ -201,6 +254,13 @@ class RunHistoryIndex:
               PRIMARY KEY(username, filters));
             CREATE TABLE IF NOT EXISTS rejected (
               hash TEXT PRIMARY KEY, normalizer INTEGER, reason TEXT);
+            CREATE TABLE IF NOT EXISTS route_runs (
+              run_hash TEXT PRIMARY KEY, win INTEGER, abandoned INTEGER, acts TEXT, issues TEXT);
+            CREATE TABLE IF NOT EXISTS route_floors (
+              run_hash TEXT, act INTEGER, act_id TEXT, act_floor INTEGER, floor INTEGER,
+              map_point_type TEXT, room_type TEXT, encounter_id TEXT, hp REAL, max_hp REAL,
+              damage_taken REAL, gold REAL, rest_choices TEXT, PRIMARY KEY (run_hash, floor));
+            CREATE INDEX IF NOT EXISTS route_act ON route_floors(act_id);
         """)
         return closing(con)
 
@@ -208,8 +268,23 @@ class RunHistoryIndex:
         if (raw.get("ascension") != scope["ascension"] or raw.get("game_mode") != "standard"
                 or (scope["version"] is not None and raw.get("build_id") != scope["version"])):
             raise StatsUnavailable("run_filter_mismatch")
-        decisions, issues = normalize_run(raw, character=scope["character"])
+        try:
+            decisions, issues = normalize_run(raw, character=scope["character"])
+        except StatsUnavailable as exc:
+            if str(exc) == "unsupported_run_shape":
+                raise
+            # Route facts do not depend on card records; keep them.
+            decisions, issues = [], ["decision_history_unavailable:" + str(exc)]
+        route, floors, route_issues = normalize_route(raw)
         with con:
+            con.execute("DELETE FROM route_floors WHERE run_hash=?", (run_hash,))
+            con.execute("INSERT OR REPLACE INTO route_runs VALUES(?,?,?,?,?)",
+                        (run_hash, route["win"], route["abandoned"], json.dumps(route["acts"]),
+                         json.dumps(route_issues)))
+            con.executemany("INSERT INTO route_floors VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+                (run_hash, f["act"], f["act_id"], f["act_floor"], f["floor"], f["map_point_type"],
+                 f["room_type"], f["encounter_id"], f["hp"], f["max_hp"], f["damage_taken"], f["gold"],
+                 json.dumps(f["rest_choices"])) for f in floors])
             con.execute("DELETE FROM decisions WHERE run_hash=?", (run_hash,))
             con.execute("INSERT OR REPLACE INTO runs VALUES(?,?,?,?,?,?,?,?,?)",
                         (run_hash, username, scope["character"], scope["ascension"], raw.get("build_id"),
@@ -299,6 +374,27 @@ class RunHistoryIndex:
                     state.update({"status": "unavailable", "reason": str(exc)})
                     result["status"] = "partial"
         return result
+
+    def route_rows(self, cohort, scope, act_id):
+        """Every indexed in-scope run that entered ``act_id``, with its full floor list."""
+        names = [m["username"] for m in cohort]
+        if not names:
+            return []
+        sql = ("SELECT r.hash, r.username, rr.win, rr.abandoned, rr.issues FROM runs r "
+               "JOIN route_runs rr ON rr.run_hash=r.hash WHERE r.username IN (" + ",".join("?" for _ in names)
+               + ") AND r.character=? AND r.ascension=? AND r.mode='standard' AND r.normalizer=? "
+               "AND (? IS NULL OR r.version=?) AND EXISTS (SELECT 1 FROM route_floors f "
+               "WHERE f.run_hash=r.hash AND f.act_id=?)")
+        params = names + [scope["character"], scope["ascension"], NORMALIZER_VERSION,
+                          scope["version"], scope["version"], act_id]
+        with self._connect() as con:
+            runs = [dict(r) for r in con.execute(sql, params)]
+            for run in runs:
+                run["floors"] = [dict(f) for f in con.execute(
+                    "SELECT * FROM route_floors WHERE run_hash=? ORDER BY floor", (run["hash"],))]
+                for f in run["floors"]:
+                    f["rest_choices"] = json.loads(f["rest_choices"])
+        return runs
 
     def compare(self, cohort, scope, option, *, floor, act, deck):
         kind = {"pick_rate": "card_reward", "buy_rate": "shop", "choice_share": "event"}.get(option.get("metric"))

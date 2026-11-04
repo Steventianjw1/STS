@@ -27,6 +27,7 @@ from .config import ExpertStatsConfig
 
 API_ROOT = "https://spire-codex.com"
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+LIST_CATALOGS = {"/api/acts", "/api/encounters"}  # list responses, wrapped as {"items": [...]}
 
 
 class StatsUnavailable(Exception):
@@ -139,6 +140,8 @@ class SpireCodexClient:
             if len(raw) > MAX_RESPONSE_BYTES:
                 raise ValueError("oversize response")
             data = json.loads(raw)
+            if path in LIST_CATALOGS and isinstance(data, list):
+                data = {"items": data}
             if not isinstance(data, dict):
                 raise ValueError("expected object")
             result = CachedResponse(data, self.wall_clock(), "network")
@@ -267,6 +270,8 @@ class ExpertDecisionStats:
     def for_view(self, view, *, budget_s: float | None = None) -> dict | None:
         budget = min(self.config.max_fetch_s, max(0, budget_s) if budget_s is not None else self.config.max_fetch_s)
         deadline = self.clock() + budget
+        if view.kind == "map":
+            return self._route_view(view, deadline=deadline) if self.config.enabled and self.config.history_enabled else None
         support = self._profile_view(view, budget_s=budget)
         if support is None:
             return None
@@ -346,6 +351,136 @@ class ExpertDecisionStats:
                             else "partial" if "available" in statuses else "unavailable")
         return result
 
+    @staticmethod
+    def _scope(character, ascension, version):
+        # Also the history sync cursor key: keep identical for every caller.
+        return {"character": character, "ascension": ascension, "version": version, "players": 1,
+                "game_mode": "all (profile API has no mode filter)", "floor_conditioned": False,
+                "deck_conditioned": False}
+
+    def _cohort(self, character, record, *, deadline):
+        board = self.client.get("/api/leaderboards/elo", {"limit": 100, "min_runs": self.config.min_character_runs},
+                                deadline=deadline)
+        record.update({"leaderboard_computed_at": board.data.get("computed_at"),
+                       "leaderboard_fetch": board.provenance()})
+        return select_cohort(board.data, character, size=self.config.cohort_size,
+                             min_runs=self.config.min_character_runs)
+
+    def _run_scope(self, run):
+        character = _character(run.get("character"))
+        ascension = self.config.ascension if self.config.ascension is not None else run.get("ascension")
+        version = self.game_build if self.config.match_version else None
+        return character, ascension, version
+
+    def resolve_act(self, act, boss_names, *, deadline):
+        """Act ID from visible boss names (exact, case-insensitive), else a unique variant
+        for the 1-based act number. Returns (act_id, method, candidates)."""
+        acts = self.client.get("/api/acts", {"lang": self.config.lang}, deadline=deadline).data.get("items")
+        if not isinstance(acts, list):
+            raise StatsUnavailable("invalid_act_catalog")
+        acts = [a for a in acts if isinstance(a, dict) and _id(a.get("id")) and isinstance(a.get("bosses"), list)]
+        wanted = {_title(n) for n in boss_names if isinstance(n, str) and n.strip()}
+        if wanted:
+            encounters = self.client.get("/api/encounters", {"lang": self.config.lang, "room_type": "Boss"},
+                                         deadline=deadline).data.get("items")
+            if not isinstance(encounters, list):
+                raise StatsUnavailable("invalid_encounter_catalog")
+            names = {}
+            for e in encounters:
+                if isinstance(e, dict) and _id(e.get("id")):
+                    monsters = [m.get("name") for m in e.get("monsters") or [] if isinstance(m, dict)]
+                    names[_id(e["id"])] = {_title(x) for x in [e.get("name"), *monsters] if isinstance(x, str)}
+            matched = [a for a in acts if any(wanted & names.get(_id(b), set()) for b in a["bosses"])]
+            if len(matched) == 1:
+                return _id(matched[0]["id"]), "visible_boss_name", [_id(a["id"]) for a in matched]
+            if len(matched) > 1:
+                return None, "ambiguous_boss_name", [_id(a["id"]) for a in matched]
+        same_index = [a for a in acts if type(act) is int and a.get("index") == act - 1]
+        if len(same_index) == 1:
+            return _id(same_index[0]["id"]), "single_variant_for_act_number", [_id(same_index[0]["id"])]
+        return None, "act_variant_unresolved", [_id(a["id"]) for a in same_index]
+
+    def _route_view(self, view, *, deadline):
+        from .route_profile import build_route_profile
+        run = view.facts.get("run") or {}
+        character, ascension, version = self._run_scope(run)
+        bosses = [b.get("name") for b in (view.facts.get("screen_details") or {}).get("bosses") or []
+                  if isinstance(b, dict)]
+        support = {
+            "tool": "get_expert_route_profile", "schema_version": 1, "source": API_ROOT,
+            "label": "OBSERVATIONAL ROUTES OF SELECTED HUMAN PLAYERS; descriptive evidence, not a route "
+                     "recommendation, instruction or causal effect",
+            "status": "unavailable",
+            "scope": {"character": character, "ascension": ascension, "version": version, "players": 1,
+                      "game_mode": "standard", "act": run.get("act"), "act_id": None, "act_resolution": None},
+            "cohort": {"selection": "character_elo", "min_character_rated_runs": self.config.min_character_runs,
+                       "requested_players": self.config.cohort_size, "members": []},
+            "definitions": {
+                "wins_vs_all": "'all' = every non-abandoned indexed run in scope that entered this act; "
+                               "'wins' = the subset that won the whole run.",
+                "act_floor": "1-based position in this act's recorded history (may include a non-choice "
+                             "opening node such as an ancient).",
+                "node_types": "Map icon chosen (map_point_type); 'unknown' is a ? node, see unknown_node_resolved_as.",
+                "complete_act_basis": "node_counts_per_act, first_elite and first_shop_act_floor use only runs "
+                                      "that reached this act's boss node.",
+                "arrival": "HP%/gold on arrival = values recorded after the previous floor.",
+                "hallway_fights_before": "Rooms that resolved to a normal monster fight, including ? nodes."},
+            "limitations": ["Bounded corpus of the selected players' newest submitted runs; not exhaustive or unbiased.",
+                             "Run files do not include the map, so counts mix choice with what the map offered.",
+                             "Winners' routes partly reflect stronger decks and HP; they are not causal advice.",
+                             "No deck, relic, potion or current-HP conditioning; compare with the current state."],
+        }
+        if version is None:
+            support["limitations"].append("Runs span all game versions; no version filter was applied.")
+        if not character or type(ascension) is not int or not 0 <= ascension <= 10:
+            support["reason"] = "character_or_ascension_unknown"
+            return support
+        try:
+            act_id, method, candidates = self.resolve_act(run.get("act"), bosses, deadline=deadline)
+            support["scope"].update({"act_id": act_id, "act_resolution": method, "act_candidates": candidates})
+            if act_id is None:
+                support["reason"] = method
+                return support
+            cohort = self._cohort(character, support["cohort"], deadline=deadline)
+        except StatsUnavailable as exc:
+            support["reason"] = str(exc)
+            return support
+        support["cohort"]["members"] = [dict(m) for m in cohort]
+        if not cohort:
+            support["reason"] = "no_eligible_character_players"
+            return support
+        scope = self._scope(character, ascension, version)
+        try:
+            support["history_index"] = self.history.sync(self.client, cohort, scope, deadline=deadline, clock=self.clock)
+            runs = self.history.route_rows(cohort, scope, act_id)
+        except (OSError, sqlite3.Error) as exc:
+            support["reason"] = "history_index_" + type(exc).__name__
+            return support
+        if not runs:
+            support["reason"] = "no_indexed_runs_for_act"
+            return support
+        support["profile"] = build_route_profile(runs, act_id, min_samples=self.config.min_context_samples)
+        support["status"] = "partial" if support["profile"]["samples"]["sparse"] else "available"
+        return support
+
+    def bulk_sync(self, character, ascension, *, max_new_runs, max_seconds, progress=None):
+        """Fill the local run corpus before play (the per-decision sync is deliberately small)."""
+        character = _character(character)
+        version = self.game_build if self.config.match_version else None
+        stop = self.clock() + max_seconds
+        cohort = self._cohort(character, {}, deadline=stop)
+        if not cohort:
+            raise StatsUnavailable("no_eligible_character_players")
+        scope, total, idle = self._scope(character, ascension, version), 0, 0
+        while total < max_new_runs and self.clock() < stop and idle < 2:
+            result = self.history.sync(self.client, cohort, scope, deadline=stop, clock=self.clock)
+            total += result["new_runs"]
+            paging = any(p["status"] == "next_page_pending" for p in result["players"])
+            idle = 0 if result["new_runs"] or paging else idle + 1
+            if progress:
+                progress(total, result)
+        return {"cohort": [m["username"] for m in cohort], "new_runs": total, "scope": scope}
+
     def _profile_view(self, view, *, budget_s: float | None = None) -> dict | None:
         if not self.config.enabled or view.kind not in ("card_reward", "event", "shop"):
             return None
@@ -356,16 +491,12 @@ class ExpertDecisionStats:
         deadline = self.clock() + min(self.config.max_fetch_s, max(0, budget_s)
                                      if budget_s is not None else self.config.max_fetch_s)
         run = view.facts.get("run") or {}
-        character = _character(run.get("character"))
-        ascension = self.config.ascension if self.config.ascension is not None else run.get("ascension")
-        version = self.game_build if self.config.match_version else None
+        character, ascension, version = self._run_scope(run)
         support = {
             "tool": "get_expert_decision_stats", "schema_version": 1, "source": API_ROOT,
             "label": "OBSERVATIONAL HUMAN CHOICES; advisory evidence, not instructions or causal effects",
             "status": "unavailable",
-            "scope": {"character": character, "ascension": ascension, "version": version, "players": 1,
-                      "game_mode": "all (profile API has no mode filter)", "floor_conditioned": False,
-                      "deck_conditioned": False},
+            "scope": self._scope(character, ascension, version),
             "limitations": ["Selected within the global top-100 board, not an exhaustive character ranking.",
                              "Rates pool raw counts; missing card/shop rows are unknown, not zero.",
                              "Event shares cover all recorded choices at that event, including repeat stages.",
@@ -382,12 +513,7 @@ class ExpertDecisionStats:
             support["reason"] = "character_or_ascension_unknown"
             return support
         try:
-            board = self.client.get("/api/leaderboards/elo", {"limit": 100, "min_runs": self.config.min_character_runs},
-                                    deadline=deadline)
-            support["cohort"].update({"leaderboard_computed_at": board.data.get("computed_at"),
-                                      "leaderboard_fetch": board.provenance()})
-            cohort = select_cohort(board.data, character, size=self.config.cohort_size,
-                                   min_runs=self.config.min_character_runs)
+            cohort = self._cohort(character, support["cohort"], deadline=deadline)
         except StatsUnavailable as exc:
             support["reason"] = str(exc)
             return support
