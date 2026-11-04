@@ -1,4 +1,4 @@
-"""Add native combat previews to the source-inspected STS2MCP checkout.
+"""Add native combat previews, the permanent deck and the ancient-screen map to an STS2MCP checkout.
 
 Usage: python tools/patch_mod_preview.py PATH_TO_STS2MCP_SOURCE
 Then rebuild/install the mod normally. The patch is additive and idempotent.
@@ -26,11 +26,18 @@ def patch(source: Path) -> None:
             raise SystemExit("Unsupported STS2MCP source: expected one player gold anchor.")
         text = text.replace(deck_anchor, deck_anchor + "\n" + deck_addition)
         changed = True
+    map_anchor = '        state["is_ancient"] = isAncient;'
+    map_addition = '        if (isAncient) state["agent_map"] = BuildAgentAncientMap(runState);'
+    if map_addition not in text:
+        if text.count(map_anchor) != 1:
+            raise SystemExit("Unsupported STS2MCP source: expected one ancient event anchor.")
+        text = text.replace(map_anchor, map_anchor + "\n" + map_addition)
+        changed = True
     if changed:
         builder.write_text(text, encoding="utf-8")
     shutil.copyfile(Path(__file__).resolve().parents[1] / "mod" / "McpMod.AgentPreview.cs",
                     source / "McpMod.AgentPreview.cs")
-    print("Native combat previews and permanent deck patched; rebuild and install STS2_MCP.dll.")
+    print("Native combat previews, permanent deck and ancient-screen map patched; rebuild and install STS2_MCP.dll.")
 
 
 if __name__ == "__main__":

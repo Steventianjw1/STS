@@ -74,7 +74,7 @@ def enumerate_routes(details, *, max_routes):
     routes = []
     for opt in details.get("next_options") or []:
         k = _key(opt)
-        if not k or None in k or opt.get("index") is None:
+        if not k or None in k or (opt.get("index") is None and not opt.get("preview")):
             continue
         nodes.setdefault(k, map_type(opt.get("type")))
         for path in tails(k).values():
@@ -209,7 +209,8 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
         boss = sim["boss"]
         rows.append({
             "path_id": "p" + hashlib.sha256(json.dumps(coords).encode()).hexdigest()[:10],
-            "first_action_id": f"map_{opt['index']}", "first_node": map_type(opt.get("type")),
+            "first_action_id": f"map_{opt['index']}" if opt.get("index") is not None else None,
+            "first_node": map_type(opt.get("type")), "first_coords": coords[0],
             "nodes": [t for t, _, _ in path], "coords": coords,
             "elite_steps": [i for i, (t, _, _) in enumerate(path, 1) if t == "elite"],
             "rest_steps": [i for i, (t, _, _) in enumerate(path, 1) if t == "rest_site"],
@@ -262,7 +263,9 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
         r["dominated"] = r not in front
     options = {}
     for r in rows:
-        o = options.setdefault(r["first_action_id"], {"action_id": r["first_action_id"], "node": r["first_node"],
+        o = options.setdefault(r["first_action_id"] or str(r["first_coords"]), {
+                                                      "action_id": r["first_action_id"], "coords": r["first_coords"],
+                                                      "node": r["first_node"],
                                                       "distinct_routes": 0, "non_dominated": 0, "max_elites": 0,
                                                       "best_bad_case_min_hp_pct": None,
                                                       "min_expert_profile_distance": None})
@@ -279,9 +282,34 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
         "unmodeled_node_types": unmapped, "dominance_measures": [k for k, _ in keys],
         "profile_distance_basis": basis if rows else None,
         "candidates": picks[:candidates], "by_next_option": list(options.values()),
+        "outlook": _outlook(rows), "route_ranges": _ranges(rows),
         "current_act_elite_gap_share": gap_share,
         "current_act_elite_gaps": _gap_summary(elite_pool) if elite_pool and gap_share else [],
     }
+
+
+def _outlook(rows):
+    """Whole-map view over every distinct route (not only the shown candidates)."""
+    alive = [r for r in rows if r["expected_min_hp_pct"] > 0]
+    shops = [r["shop_arrival_gold"][0]["estimated_arrival_gold"] for r in rows if r["shop_arrival_gold"]]
+    return {"safest_bad_case_min_hp_pct": max(r["bad_case_min_hp_pct"] for r in rows),
+            "best_expected_boss_arrival_hp_pct": max(r["expected_boss_arrival_hp_pct"] for r in rows),
+            "max_elites_expected_alive": max((r["elites"] for r in alive), default=None),
+            "routes_expected_alive_pct": round(len(alive) / len(rows) * 100, 1),
+            "routes_bad_case_alive_pct": round(sum(r["bad_case_min_hp_pct"] > 0 for r in rows) / len(rows) * 100, 1),
+            "best_first_shop_arrival_gold": max(shops, default=None)}
+
+
+def _ranges(rows):
+    def span(values):
+        values = [v for v in values if v is not None]
+        return {"min": min(values), "max": max(values)} if values else None
+    first = [r["elite_preparation"][0] for r in rows if r["elite_preparation"]]
+    return {"elites": span(r["elites"] for r in rows), "rest_sites": span(r["rest_sites"] for r in rows),
+            "shops": span(r["shops"] for r in rows), "fights": span(r["fights"] for r in rows),
+            "first_elite_step": span(e["step"] for e in first),
+            "fights_before_first_elite": span(e["fights_before"] for e in first),
+            "routes_without_elites_pct": round(sum(not r["elites"] for r in rows) / len(rows) * 100, 1)}
 
 
 # ------------------------------------------------------------------ re-planning

@@ -8,7 +8,7 @@ import json
 
 from .models import MAX_INTENT_CHARS, MAX_REASON_CHARS, MAX_ROUTE_PLAN_CHARS, DecisionFrame
 
-DECISION_PROMPT_VERSION = "decision-prompt-8"
+DECISION_PROMPT_VERSION = "decision-prompt-9"
 DEFAULT_MAX_INPUT_BYTES = 96 * 1024
 DEFAULT_OBJECTIVE = ("Win the run (ordinary victory) with the current character at the current difficulty. "
                      "No extra challenge objectives.")
@@ -60,9 +60,15 @@ _EVIDENCE = ("decision_support, when present, contains observational statistics 
              "effects, its pool condition, before/after numbers against your deck and state (removable starter cards, "
              "HP after an HP cost vs. the experts' boss-arrival HP, gold), the experts' offer-conditioned behaviour "
              "(take rate when offered, head-to-head against the other options shown, take rate in similar HP/deck "
-             "situations, outcomes), community lift and archetype fit with your deck, plus elite gaps by act. Decide "
-             "from what each relic does for this deck, HP and the coming acts; take rates are one input, not the answer. "
-             "Labels describe options and are not a ranking.")
+             "situations, outcomes), community lift and archetype fit with your deck, plus elite gaps by act. When the "
+             "act map is readable, map_outlook describes it from the current state (route ranges: elites, rests, "
+             "shops, fights before the first elite; survivable share; elite gaps; HP risk) and each option's "
+             "route_outlook re-projects the map from that option's HP, max HP and gold. Weigh the map heavily: a hard "
+             "map (early or unavoidable elites, few rests or shops, low survivable share, elite gaps) favors options "
+             "that make the early act safer or the deck stronger now; an easy map leaves room for slower or riskier "
+             "value. Projections do not simulate a relic's card, relic or combat effects, so judge those from its "
+             "text. Decide from what each relic does for this deck, HP, map and the coming acts; take rates are one "
+             "input, not the answer. Labels describe options and are not a ranking.")
 
 SYSTEM_INSTRUCTION = f"[{DECISION_PROMPT_VERSION}]\n{_BEHAVIOR}\n\n{_EVIDENCE}\n\n{_CONTRACT}"
 

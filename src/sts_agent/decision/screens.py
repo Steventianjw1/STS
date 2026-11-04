@@ -304,8 +304,7 @@ def _pt(p):
     return {"col": _i(p.get("col")), "row": _i(p.get("row")), "type": _s(p.get("type"), 40)} if isinstance(p, dict) else None
 
 
-def _map(raw, obs):
-    m = raw.get("map") if isinstance(raw.get("map"), dict) else {}
+def _map_details(m):
     opts = []
     for o in m.get("next_options") or []:
         if isinstance(o, dict):
@@ -313,11 +312,38 @@ def _map(raw, obs):
                          "leads_to": [_pt(c) for c in o.get("leads_to") or []]})
     nodes = [{**_pt(n), "children": [c for c in n.get("children") or [] if isinstance(c, list)]}
              for n in m.get("nodes") or [] if isinstance(n, dict)]
-    bosses = [{"name": _s(x.get("name"), 120), "col": _i(x.get("col")), "row": _i(x.get("row"))}
+    bosses = [{"id": _s(x.get("id"), 120), "name": _s(x.get("name"), 120), "col": _i(x.get("col")), "row": _i(x.get("row"))}
               for x in m.get("bosses") or [] if isinstance(x, dict)]
-    details = {"current_position": _pt(m.get("current_position")),
-               "visited": [_pt(x) for x in m.get("visited") or []],
-               "next_options": opts, "nodes": nodes, "bosses": bosses}
+    return {"current_position": _pt(m.get("current_position")),
+            "visited": [_pt(x) for x in m.get("visited") or []],
+            "next_options": opts, "nodes": nodes, "bosses": bosses}
+
+
+def _preview_map(m):
+    """Map seen from a non-map screen: first nodes come from the graph, not travel buttons.
+
+    Starts from the current position, else the parentless starting point. Indices are
+    None because these nodes cannot be travelled to from the current screen.
+    """
+    details = _map_details(m)
+    nodes = {(n["col"], n["row"]): n for n in details["nodes"]}
+    here = details["current_position"]
+    start = (here["col"], here["row"]) if here else None
+    if start not in nodes:
+        children = {tuple(c) for n in details["nodes"] for c in n["children"] if len(c) == 2}
+        roots = [k for k in nodes if k not in children]
+        start = min(roots, key=lambda k: (k[1] if k[1] is not None else 0)) if len(roots) >= 1 else None
+    first = [nodes[tuple(c)] for c in (nodes[start]["children"] if start in nodes else []) if tuple(c) in nodes]
+    details["next_options"] = [{"col": n["col"], "row": n["row"], "type": n["type"], "index": None,
+                                "leads_to": [], "preview": True} for n in sorted(first, key=lambda n: n["col"] or 0)]
+    details["preview_from"] = list(start) if start else None
+    return details
+
+
+def _map(raw, obs):
+    m = raw.get("map") if isinstance(raw.get("map"), dict) else {}
+    details = _map_details(m)
+    opts = details["next_options"]
     v, b = _room("map", raw, obs, details, ready=bool(opts))
     for o in opts:
         if o["index"] is not None:
@@ -344,6 +370,8 @@ def _event(raw, obs):
     details = {"event_id": _s(e.get("event_id"), 80), "event_name": _s(e.get("event_name"), 120),
                "is_ancient": e.get("is_ancient") if isinstance(e.get("is_ancient"), bool) else None,
                "in_dialogue": in_dialogue, "body": _s(e.get("body"), 2000), "options": opts}
+    if details["is_ancient"] and isinstance(e.get("agent_map"), dict):
+        details["map"] = _preview_map(e["agent_map"])  # patched mod only; read-only planning view
     v, b = _room("event", raw, obs, details, ready=in_dialogue or bool(opts))
     if in_dialogue:
         b.add("advance_dialogue", "advance_dialogue", "Advance the dialogue", {}, {"action": "advance_dialogue"})

@@ -392,10 +392,14 @@ class ExpertDecisionStats:
         acts = [a for a in acts if isinstance(a, dict) and _id(a.get("id")) and isinstance(a.get("bosses"), list)]
         return acts, {_id(e["id"]): e for e in encounters if isinstance(e, dict) and _id(e.get("id"))}
 
-    def resolve_act(self, act, boss_names, *, deadline):
-        """Act ID from visible boss names (exact, case-insensitive), else a unique variant
-        for the 1-based act number. Returns (act_id, method, candidates)."""
+    def resolve_act(self, act, boss_names, *, deadline, boss_ids=()):
+        """Act ID from visible boss encounter IDs, else boss names (exact, case-insensitive),
+        else a unique variant for the 1-based act number. Returns (act_id, method, candidates)."""
         acts, encounters = self._catalogs(deadline)
+        ids = {_id(b) for b in boss_ids if _id(b)}
+        by_id = [a for a in acts if ids & {_id(b) for b in a["bosses"]}]
+        if len(by_id) == 1:
+            return _id(by_id[0]["id"]), "visible_boss_id", [_id(by_id[0]["id"])]
         wanted = {_title(n) for n in boss_names if isinstance(n, str) and n.strip()}
         if wanted:
             names = {}
@@ -502,8 +506,8 @@ class ExpertDecisionStats:
             "limitations": ["Effects are text-derived tags from the relic catalog; read each relic's full text.",
                             "Expert rows come from a bounded set of top players' runs; small cells are flagged sparse.",
                             "Outcome win rates are correlations: players in strong positions choose differently.",
-                            "The next act's map is not visible yet, so HP costs are compared with expert checkpoints, "
-                            "not with projected routes."],
+                            "route_outlook re-projects the act map from each option's HP, max HP and gold; card, "
+                            "relic and deck effects of the relic itself are not simulated."],
             "options": []}
         if not character or type(ascension) is not int:
             support["reason"] = "character_or_ascension_unknown"
@@ -546,20 +550,33 @@ class ExpertDecisionStats:
                             "match": "exact_name" if rid else ("no_relic" if not d.get("relic_name") else "unmatched")})
         offered = [o["relic_id"] for o in options if o["relic_id"]]
         # Expert marks for HP/gold comparisons: this act's route profile (all variants if unresolved).
-        marks = {}
+        marks, runs_by_act, profiles, map_act = {}, {}, {}, None
+        amap = details.get("map")
+        if not amap:
+            support["limitations"].append("No map on this screen (needs the patched mod's ancient-screen map); "
+                                          "routes are not projected and the act variant may be unresolved.")
         cohort, scope = [], self._scope(character, ascension, version)
         try:
             cohort = self._cohort(character, {}, deadline=deadline)
             support["cohort"] = [m["username"] for m in cohort]
             support["history_index"] = self.history.sync(self.client, cohort, scope, deadline=deadline, clock=self.clock)
             rows = self.history.ancient_rows(cohort, scope)
+            if amap:  # the act map is readable at the ancient: its boss names the act variant
+                boss_rows = [b for b in amap.get("bosses") or [] if isinstance(b, dict)]
+                map_act, method, _ = self.resolve_act(run.get("act"), [b.get("name") for b in boss_rows],
+                                                      deadline=deadline, boss_ids=[b.get("id") for b in boss_rows])
+                support["scope"].update({"act_id": map_act, "act_resolution": method})
+                if map_act:
+                    self._act_ids[(character, run.get("act"))] = map_act
             act_ids = [self._act_ids.get((character, run.get("act")))]
             if act_ids[0] is None:
                 _, _, act_ids = self.resolve_act(run.get("act"), [], deadline=deadline)
             for act_id in act_ids:
                 runs = self.history.route_rows(cohort, scope, act_id)
+                runs_by_act[act_id] = runs
                 if runs:
                     prof = build_route_profile(runs, act_id, min_samples=self.config.min_context_samples)
+                    profiles[act_id] = prof
                     group = "wins" if not prof["samples"]["sparse"] else "all"
                     marks.setdefault("hp", {})[act_id] = {"group": group, "boss_arrival_hp_pct":
                                                           prof["hp_pct_checkpoints"][group]["boss_arrival"]}
@@ -603,6 +620,9 @@ class ExpertDecisionStats:
             o["experts"] = experts.get(rid)
             o["community"] = community.get(rid)
             o["archetype_fit"] = archetype_fit(rid, archetypes, deck_ids)
+        if amap and map_act:
+            self._ancient_map_outlook(support, options, amap, map_act, runs_by_act.get(map_act) or [],
+                                      profiles.get(map_act), view, character, version, deadline=deadline)
         labels([o for o in options if o["relic_id"]])
         support["options"] = options
         if self.config.elite_readiness_enabled:
@@ -618,6 +638,53 @@ class ExpertDecisionStats:
         if not offered:
             support["reason"] = "no_matched_relic_options"
         return support
+
+    def _ancient_map_outlook(self, support, options, amap, act_id, runs, profile, view, character, version, *, deadline):
+        """Project this act's map from the current state and from each option's resulting HP/max HP/gold."""
+        from .route_paths import plan_paths
+        player = view.facts.get("player") or {}
+        try:
+            act_entry, encounters, weak = self._act_context(act_id, deadline)
+            risk = self._risk_model(runs, act_id, act_entry, encounters, weak, character, player.get("max_hp"),
+                                    version, deadline=deadline)
+        except StatsUnavailable as exc:
+            support["map_outlook"] = {"status": "unavailable", "reason": str(exc)}
+            return
+        pool = None
+        if self.config.elite_readiness_enabled:
+            ready = self._readiness_for_view(view, act_id, deadline=deadline)
+            pool = next((p for p in ready.get("pools") or [] if p["relation"] == "current"), None)
+
+        def project(hp, max_hp, gold):
+            return plan_paths(amap, hp=hp, max_hp=max_hp, gold=gold, risk=risk, profile=profile, candidates=0,
+                              max_routes=self.config.route_max_routes, elite_pool=pool)
+        base = project(player.get("hp"), player.get("max_hp"), player.get("gold"))
+        bosses = [{"id": b.get("id"), "name": b.get("name")} for b in amap.get("bosses") or [] if isinstance(b, dict)]
+        support["map_outlook"] = {
+            "status": base.get("status"), "reason": base.get("reason"), "act_id": act_id, "bosses": bosses,
+            "first_nodes": [{"node": o["node"], "coords": o["coords"], "distinct_routes": o["distinct_routes"],
+                             "max_elites": o["max_elites"], "best_bad_case_min_hp_pct": o["best_bad_case_min_hp_pct"]}
+                            for o in base.get("by_next_option") or []],
+            "distinct_routes": base.get("distinct_routes"), "outlook": base.get("outlook"),
+            "route_ranges": base.get("route_ranges"),
+            "elite_gaps": base.get("current_act_elite_gaps"), "elite_gap_share": base.get("current_act_elite_gap_share"),
+            "hp_risk_classes": {k: {f: c[f] for f in ("mean_pct", "p90_pct", "death_rate_pct", "n", "source")}
+                                for k, c in risk["classes"].items()},
+            "basis": "current HP/max HP/gold; pooled fight damage for this character and act variant"}
+        for o in options:
+            if not o.get("relic_id"):
+                continue
+            sc = o.get("state_comparison") or {}
+            hp = (sc.get("hp") or {}).get("hp_after", player.get("hp"))
+            max_hp = (sc.get("hp") or {}).get("max_hp_after", player.get("max_hp"))
+            gold = (sc.get("gold") or {}).get("gold_after", player.get("gold"))
+            if "hp" in sc or "gold" in sc:
+                after = project(hp, max_hp, gold)
+                o["route_outlook"] = {"start": {"hp": hp, "max_hp": max_hp, "gold": gold}, **(after.get("outlook") or {})}
+            else:
+                o["route_outlook"] = {"start": {"hp": hp, "max_hp": max_hp, "gold": gold}, **(base.get("outlook") or {}),
+                                      "same_as_map_outlook": True,
+                                      "note": "no HP/max HP/gold change detected in the relic text"}
 
     def _encounter_fallback(self, act_entry, encounters, character, max_hp, version, *, deadline):
         """Pooled /api/runs/encounter-stats means and death rates per node class (no percentiles)."""
@@ -660,8 +727,8 @@ class ExpertDecisionStats:
         from .route_profile import build_route_profile
         run = view.facts.get("run") or {}
         character, ascension, version = self._run_scope(run)
-        bosses = [b.get("name") for b in (view.facts.get("screen_details") or {}).get("bosses") or []
-                  if isinstance(b, dict)]
+        boss_rows = [b for b in (view.facts.get("screen_details") or {}).get("bosses") or [] if isinstance(b, dict)]
+        bosses = [b.get("name") for b in boss_rows]
         support = {
             "tool": "get_expert_route_profile", "schema_version": 3, "source": API_ROOT,
             "label": "OBSERVATIONAL ROUTES OF SELECTED HUMAN PLAYERS; descriptive evidence, not a route "
@@ -692,7 +759,8 @@ class ExpertDecisionStats:
             support["reason"] = "character_or_ascension_unknown"
             return support
         try:
-            act_id, method, candidates = self.resolve_act(run.get("act"), bosses, deadline=deadline)
+            act_id, method, candidates = self.resolve_act(run.get("act"), bosses, deadline=deadline,
+                                                          boss_ids=[b.get("id") for b in boss_rows])
             support["scope"].update({"act_id": act_id, "act_resolution": method, "act_candidates": candidates})
             if act_id is None:
                 support["reason"] = method
@@ -723,28 +791,37 @@ class ExpertDecisionStats:
                                  route_state=route_state, deadline=deadline)
         return support
 
-    def _route_planning(self, view, support, runs, act_id, character, version, *, route_state, deadline):
-        from .route_paths import plan_paths, plan_status
+    def _risk_model(self, runs, act_id, act_entry, encounters, weak, character, max_hp, version, *, deadline):
         from .route_risk import build_risk_model
-        player = view.facts.get("player") or {}
-        details = view.facts.get("screen_details") or {}
-        try:
-            acts, encounters = self._catalogs(deadline)
-        except StatsUnavailable as exc:
-            support["paths"] = {"status": "unavailable", "reason": str(exc)}
-            return
-        act_entry = next((a for a in acts if _id(a["id"]) == act_id), {})
-        weak = {_id(e) for e in act_entry.get("encounters") or []
-                if _id(e) and (encounters.get(_id(e)) or {}).get("is_weak") is True}
         min_n = self.config.min_context_samples
         risk = build_risk_model(runs, act_id, weak_ids=weak, min_samples=min_n)
         if any(c["n"] < min_n for c in risk["classes"].values()):
-            fallback, record = self._encounter_fallback(act_entry, encounters, character, player.get("max_hp"),
+            fallback, record = self._encounter_fallback(act_entry, encounters, character, max_hp,
                                                         version, deadline=deadline)
             risk = build_risk_model(runs, act_id, weak_ids=weak, min_samples=min_n, fallback=fallback)
             risk["encounter_stats_fallback"] = record
         risk["basis"] = ("% of max HP per node, from indexed runs of the cohort (n >= "
                          f"{min_n} for p90); encounter_stats fallback has means and death rates only")
+        return risk
+
+    def _act_context(self, act_id, deadline):
+        acts, encounters = self._catalogs(deadline)
+        act_entry = next((a for a in acts if _id(a["id"]) == act_id), {})
+        weak = {_id(e) for e in act_entry.get("encounters") or []
+                if _id(e) and (encounters.get(_id(e)) or {}).get("is_weak") is True}
+        return act_entry, encounters, weak
+
+    def _route_planning(self, view, support, runs, act_id, character, version, *, route_state, deadline):
+        from .route_paths import plan_paths, plan_status
+        player = view.facts.get("player") or {}
+        details = view.facts.get("screen_details") or {}
+        try:
+            act_entry, encounters, weak = self._act_context(act_id, deadline)
+        except StatsUnavailable as exc:
+            support["paths"] = {"status": "unavailable", "reason": str(exc)}
+            return
+        risk = self._risk_model(runs, act_id, act_entry, encounters, weak, character, player.get("max_hp"),
+                                version, deadline=deadline)
         support["hp_risk"] = risk
         plan = (route_state or {}).get("plan")
         here = tuple(c for c in [(details.get("current_position") or {}).get("col"),
