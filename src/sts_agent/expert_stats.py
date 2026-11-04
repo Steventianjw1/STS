@@ -265,7 +265,15 @@ class ExpertDecisionStats:
         self.history = RunHistoryIndex(config)
 
     def for_view(self, view, *, budget_s: float | None = None) -> dict | None:
-        budget = min(self.config.max_fetch_s, max(0, budget_s) if budget_s is not None else self.config.max_fetch_s)
+        """Advisory evidence only: unexpected external data never stops a run."""
+        try:
+            return self._for_view(view, budget_s=budget_s)
+        except Exception as exc:
+            return {"tool": "get_expert_decision_stats", "schema_version": 2, "source": API_ROOT,
+                    "status": "unavailable", "reason": "internal_error:" + type(exc).__name__}
+
+    def _for_view(self, view, *, budget_s: float | None = None) -> dict | None:
+        budget =min(self.config.max_fetch_s, max(0, budget_s) if budget_s is not None else self.config.max_fetch_s)
         deadline = self.clock() + budget
         support = self._profile_view(view, budget_s=budget)
         if support is None:

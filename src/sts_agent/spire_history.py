@@ -201,6 +201,9 @@ class RunHistoryIndex:
               PRIMARY KEY(username, filters));
             CREATE TABLE IF NOT EXISTS rejected (
               hash TEXT PRIMARY KEY, normalizer INTEGER, reason TEXT);
+            CREATE TABLE IF NOT EXISTS skipped (
+              hash TEXT, filters TEXT, normalizer INTEGER, reason TEXT,
+              PRIMARY KEY(hash, filters));
         """)
         return closing(con)
 
@@ -269,8 +272,14 @@ class RunHistoryIndex:
                         if rejected:
                             state["rejected_run_reason"] = rejected[0]
                             continue
+                        skipped = con.execute("SELECT reason FROM skipped WHERE hash=? AND filters=? AND normalizer=?",
+                                              (run_hash, filters, NORMALIZER_VERSION)).fetchone()
+                        if skipped:
+                            state["skipped_run_reason"] = skipped[0]
+                            continue
                         all_indexed = False
-                        if row.get("username", "").casefold() != username.casefold():
+                        owner = row.get("username")
+                        if not isinstance(owner, str) or owner.casefold() != username.casefold():
                             raise StatsUnavailable("run_owner_mismatch")
                         result["fetched_runs"] += 1
                         shared = client.get("/api/runs/shared/" + run_hash, {}, deadline=deadline)
@@ -278,11 +287,17 @@ class RunHistoryIndex:
                             state["normalization_issues"] = self.ingest(con, username, run_hash, shared.data, scope)
                         except StatsUnavailable as exc:
                             # Filter mismatches can be valid in another character/
-                            # patch scope; do not reject those hashes globally.
-                            if str(exc) not in ("run_filter_mismatch", "unsupported_run_shape"):
+                            # patch scope: skip them for this scope only, so the
+                            # same hash cannot block later runs in this listing.
+                            if str(exc) in ("run_filter_mismatch", "unsupported_run_shape"):
                                 with con:
-                                    con.execute("INSERT OR REPLACE INTO rejected VALUES(?,?,?)",
-                                                (run_hash, NORMALIZER_VERSION, str(exc)))
+                                    con.execute("INSERT OR REPLACE INTO skipped VALUES(?,?,?,?)",
+                                                (run_hash, filters, NORMALIZER_VERSION, str(exc)))
+                                state["skipped_run_reason"] = str(exc)
+                                break  # still at most one fetched run per player per decision
+                            with con:
+                                con.execute("INSERT OR REPLACE INTO rejected VALUES(?,?,?)",
+                                            (run_hash, NORMALIZER_VERSION, str(exc)))
                             raise
                         result["new_runs"] += 1
                         state["indexed_runs"] += 1
