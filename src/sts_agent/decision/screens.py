@@ -106,6 +106,9 @@ def _common_facts(obs: dict) -> dict:
 
 def _combat_facts(obs: dict) -> dict:
     f = _common_facts(obs)
+    # In combat the piles describe the cards in play; the permanent deck would
+    # only duplicate them (and omits temporary combat cards).
+    f.pop("deck", None)
     f.update({"combat": obs["combat"], "hand": obs["hand"], "piles": obs["piles"], "enemies": obs["enemies"]})
     return f
 
@@ -143,6 +146,19 @@ def build_view(raw: dict) -> ScreenView:
         v.encounter_key = f"{floor_key}:room"
     else:  # menu / popup / anything unrecognized
         v = ScreenView("menu" if st == "menu" else "unknown", st, False, False, facts=_common_facts(obs))
+    if v.in_combat:
+        piles = obs["piles"]
+        v.limitations.append("piles.draw/discard/exhaust list current pile contents grouped by identical card "
+                             "with counts. Draw order is hidden (as in game): which cards are drawn next is unknown "
+                             "unless a card or effect reveals it.")
+        if piles["draw"] is None:
+            v.limitations.append("Draw pile contents are unavailable in this state; only counts may be known.")
+    elif v.kind not in ("menu", "unknown", "game_over", "combat_ended"):
+        if v.facts.get("deck") is None:
+            v.limitations.append("Permanent deck unavailable: this mod build does not expose it. Install the agent "
+                                 "mod extension (tools/patch_mod_preview.py); do not assume deck contents.")
+        else:
+            v.limitations.append("facts.deck is the complete permanent deck grouped by identical card with counts.")
     cap = CAPABILITIES.get(v.kind)
     if cap and cap["status"] == UNSUPPORTED:
         v.unsupported = f"{v.kind}: {cap['notes']}"

@@ -240,6 +240,18 @@ class RunCoordinator:
             slots = f.get("max_potion_slots")
             potions = {"slots": slots if slots is not None and slots >= len(items) and
                        all(i["slot"] < slots for i in items) else None, "items": items}
+        deck = None  # only the mod-supplied permanent deck; never rebuilt from combat piles
+        if isinstance(f.get("deck"), list):
+            seen, cards = {}, []
+            for c in f["deck"]:
+                key = str(c.get("id") or "UNKNOWN")[:70] + ("+" if c.get("upgraded") else "")
+                seen[key] = seen.get(key, 0) + 1
+                cards.append({"id": key if seen[key] == 1 else f"{key}#{seen[key]}",
+                              "name": _clip(c.get("name") or key, 120), "count": c["count"],
+                              "upgraded": c.get("upgraded"),
+                              "cost": c["cost"][:8] if isinstance(c.get("cost"), str) else None,
+                              "type": _clip(c.get("type"), 80), "description": _clip(c.get("description"))})
+            deck = {"cards": cards[:200]}
         opps = None
         if not v.in_combat:
             items = []
@@ -257,7 +269,7 @@ class RunCoordinator:
             "run": {"character": run.get("character"), "difficulty": run.get("difficulty"), "act": run.get("act"),
                     "floor": run.get("floor"), "encounter_type": v.state_type},
             "resources": {"hp": pl.get("hp"), "max_hp": pl.get("max_hp"), "gold": pl.get("gold"), "max_energy": None},
-            "deck": None,  # the API exposes no permanent deck list; never rebuilt from combat piles
+            "deck": deck,
             "relics": relics, "potions": potions, "opportunities": opps,
             "recent_outcomes": {"items": list(self.recent_outcomes)},
         }
@@ -559,6 +571,8 @@ def _change_reasons(old, new, *, initial, combat_finished) -> list:
     r = []
     if combat_finished:
         r.append("combat_finished")
+    if old.get("deck") != new.get("deck"):
+        r.append("deck_changed")
     if old.get("relics") != new.get("relics"):
         r.append("relic_changed")
     if old.get("potions") != new.get("potions"):

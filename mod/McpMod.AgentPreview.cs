@@ -17,10 +17,13 @@ public static partial class McpMod
         {
             // Read the permanent pile directly, including copies and upgrades.
             // Do not reconstruct it from combat cards or mutate the pile.
-            return player.Deck.Cards.Select(card => new Dictionary<string, object?>
+            // BuildCardInfo is the mod's own reward/preview serializer (id, name,
+            // type, cost, star_cost, description, rarity, is_upgraded).
+            return player.Deck.Cards.Select(card =>
             {
-                ["id"] = card.Id.Entry,
-                ["is_upgraded"] = card.IsUpgraded
+                var info = BuildCardInfo(card);
+                info.Remove("keywords");
+                return info;
             }).ToList();
         }
         catch { return null; }

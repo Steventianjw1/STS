@@ -303,9 +303,10 @@ class ExpertDecisionStats:
         if support is None:
             return None
         support["schema_version"] = 2
-        raw_deck = view.facts.get("deck")
-        deck = ([_id(c.get("id")) for c in raw_deck] if isinstance(raw_deck, list)
-                and all(isinstance(c, dict) and _id(c.get("id")) for c in raw_deck) else None)
+        raw_deck = view.facts.get("deck")  # grouped entries with counts
+        deck = ([_id(c["id"]) for c in raw_deck for _ in range(c["count"])] if isinstance(raw_deck, list)
+                and all(isinstance(c, dict) and _id(c.get("id")) and type(c.get("count")) is int
+                        and c["count"] >= 1 for c in raw_deck) else None)
         if self.config.history_enabled and support["cohort"]["members"]:
             try:
                 cohort, scope = support["cohort"]["members"], support["scope"]

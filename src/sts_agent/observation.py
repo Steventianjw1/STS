@@ -7,8 +7,8 @@ Rules:
   policy or the training-ready trace.
 * ``None`` (JSON ``null``) means *unknown*. Missing numbers are never replaced
   by zero.
-* Draw-pile *order* is not exposed: the draw pile is reduced to a count per
-  card name (the same information the in-game draw-pile viewer shows). The mod
+* Draw-pile *order* is not exposed: every pile is reduced to counts per
+  identical card (name, cost, text), as the in-game pile viewers show. The mod
   already sorts it by rarity; we re-aggregate so order cannot leak.
 * No seed, RNG, map lookahead, or profile/account data is included.
 """
@@ -22,7 +22,7 @@ from typing import Any
 
 from .cards import parse_effects
 
-OBS_SCHEMA_VERSION = "sts2-obs-1"
+OBS_SCHEMA_VERSION = "sts2-obs-2"
 
 COMBAT_STATE_TYPES = {"monster", "elite", "boss"}
 POST_COMBAT_STATE_TYPES = {"rewards", "card_reward", "map", "treasure", "event", "rest_site", "shop",
@@ -184,20 +184,48 @@ def _combat_previews(raw: Any) -> list[dict] | None:
     return result
 
 
-def _pile_counts(raw: Any) -> dict[str, int] | None:
+def _sort_key(entry: tuple) -> tuple:
+    return tuple("" if v is None else str(v) for v in entry)
+
+
+def _pile_groups(raw: Any) -> list[dict] | None:
+    """Pile contents grouped by identical card (name, cost, text) with counts.
+
+    Grouping is sorted, so pile order (hidden in game for the draw pile) cannot leak.
+    """
     if not isinstance(raw, list):
         return None
     c = Counter()
     for card in raw:
         if isinstance(card, dict) and isinstance(card.get("name"), str):
-            c[card["name"]] += 1
-    return dict(sorted(c.items()))
+            c[(card["name"], _str_or_none(card.get("cost")), _str_or_none(card.get("star_cost")),
+               _str_or_none(card.get("description")))] += 1
+    return [{"name": n, "cost": cost, **({"star_cost": star} if star is not None else {}),
+             "description": text, "count": k}
+            for (n, cost, star, text), k in sorted(c.items(), key=lambda kv: _sort_key(kv[0]))]
 
 
-def _pile_list(raw: Any) -> list[str] | None:
-    if not isinstance(raw, list):
+def _deck_groups(raw: Any) -> list[dict] | None:
+    """Permanent deck (patched mod only), grouped by identical card with counts.
+
+    All-or-nothing: one malformed entry makes the deck unknown, never partial.
+    Older patch builds send only id/is_upgraded; missing fields stay null.
+    """
+    if not isinstance(raw, list) or not all(
+            isinstance(c, dict) and isinstance(c.get("id"), str) and c["id"].strip() for c in raw):
         return None
-    return [c.get("name") for c in raw if isinstance(c, dict)]
+    c = Counter()
+    for card in raw:
+        upgraded = card.get("is_upgraded")
+        c[(card["id"], _str_or_none(card.get("name")) or card["id"],
+           upgraded if isinstance(upgraded, bool) else None, _str_or_none(card.get("cost")),
+           _str_or_none(card.get("star_cost")), _str_or_none(card.get("type")),
+           _str_or_none(card.get("rarity")), _str_or_none(card.get("description")))] += 1
+    return [{"id": cid, "name": name, "upgraded": up, "cost": cost,
+             **({"star_cost": star} if star is not None else {}),
+             "type": ctype, "rarity": rarity, "description": text, "count": k}
+            for (cid, name, up, cost, star, ctype, rarity, text), k
+            in sorted(c.items(), key=lambda kv: _sort_key(kv[0]))]
 
 
 def classify_phase(raw: dict) -> str:
@@ -298,10 +326,10 @@ def normalize(raw: dict) -> dict:
             "draw_count": _int_or_none(player.get("draw_pile_count")),
             "discard_count": _int_or_none(player.get("discard_pile_count")),
             "exhaust_count": _int_or_none(player.get("exhaust_pile_count")),
-            # Composition only (no order): what the in-game pile viewer shows.
-            "draw_composition": _pile_counts(player.get("draw_pile")),
-            "discard": _pile_list(player.get("discard_pile")),
-            "exhaust": _pile_list(player.get("exhaust_pile")),
+            # Contents grouped by identical card, no order: what the in-game pile viewers show.
+            "draw": _pile_groups(player.get("draw_pile")),
+            "discard": _pile_groups(player.get("discard_pile")),
+            "exhaust": _pile_groups(player.get("exhaust_pile")),
         },
         "enemies": enemies,
         "relics": relics,
@@ -312,10 +340,7 @@ def normalize(raw: dict) -> dict:
     # Read the permanent deck only when explicitly supplied by the mod. Combat
     # piles are not a permanent deck and must never be substituted here.
     if isinstance(player.get("deck"), list):
-        deck = player["deck"]
-        obs["deck"] = ([{"id": c["id"], "is_upgraded": c.get("is_upgraded")
-                          if isinstance(c.get("is_upgraded"), bool) else None} for c in deck]
-                       if all(isinstance(c, dict) and isinstance(c.get("id"), str) for c in deck) else None)
+        obs["deck"] = _deck_groups(player["deck"])
     obs["fingerprint"] = fingerprint(obs)
     return obs
 
