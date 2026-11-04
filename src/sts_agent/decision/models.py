@@ -16,6 +16,7 @@ FRAME_SCHEMA_VERSION = "sts2-decision-frame-1"
 MAX_RESPONSE_BYTES = 8 * 1024
 MAX_REASON_CHARS = 500
 MAX_INTENT_CHARS = 300
+MAX_ROUTE_PLAN_CHARS = 300
 MAX_HISTORY = 8
 
 FACT_SOURCES = ("observed", "manual", "synthetic")
@@ -129,6 +130,7 @@ class Choice:
     action_id: str
     reason: str
     turn_intent: str
+    route_plan: dict | None = None   # map screens only: {"path_id", "plan", "change_course_if"}
 
 
 def _no_dupes(pairs):
@@ -159,12 +161,15 @@ def parse_choice(text: Any, frame: DecisionFrame) -> Choice:
     if not isinstance(data, dict):
         raise ChoiceError("response must be a JSON object")
     want = {"frame_id", "action_id", "reason", "turn_intent"}
+    is_map = (frame.screen or {}).get("kind") == "map"
+    if is_map and "route_plan" in data:
+        want = want | {"route_plan"}
     if set(data) != want:
         missing, extra = want - set(data), set(data) - want
         raise ChoiceError(f"keys must be exactly {sorted(want)}"
                           + (f"; missing {sorted(missing)}" if missing else "")
                           + (f"; unexpected {sorted(extra)}" if extra else ""))
-    for k in want:
+    for k in want - {"route_plan"}:
         if not isinstance(data[k], str):
             raise ChoiceError(f"{k} must be a string")
     if data["frame_id"] != frame.frame_id:
@@ -179,4 +184,26 @@ def parse_choice(text: Any, frame: DecisionFrame) -> Choice:
     intent = data["turn_intent"].strip()
     if len(intent) > MAX_INTENT_CHARS:
         raise ChoiceError(f"turn_intent longer than {MAX_INTENT_CHARS} characters")
-    return Choice(frame.frame_id, data["action_id"], reason, intent)
+    return Choice(frame.frame_id, data["action_id"], reason, intent,
+                  _route_plan(data["route_plan"], frame, data["action_id"]) if "route_plan" in want else None)
+
+
+def _route_plan(plan, frame, action_id):
+    keys = {"path_id", "plan", "change_course_if"}
+    if not isinstance(plan, dict) or set(plan) != keys or not all(isinstance(plan[k], str) for k in keys):
+        raise ChoiceError(f"route_plan must be an object with exactly string keys {sorted(keys)}")
+    plan = {k: plan[k].strip() for k in keys}
+    for k in ("plan", "change_course_if"):
+        if len(plan[k]) > MAX_ROUTE_PLAN_CHARS:
+            raise ChoiceError(f"route_plan.{k} longer than {MAX_ROUTE_PLAN_CHARS} characters")
+    if not plan["plan"]:
+        raise ChoiceError("route_plan.plan must not be empty")
+    if plan["path_id"]:
+        paths = ((frame.decision_support or {}).get("paths") or {}).get("candidates") or []
+        path = next((p for p in paths if p.get("path_id") == plan["path_id"]), None)
+        if path is None:
+            raise ChoiceError("route_plan.path_id must be one of decision_support.paths.candidates, or empty")
+        if path.get("first_action_id") != action_id:
+            raise ChoiceError(f"route_plan.path_id starts with {path.get('first_action_id')}, "
+                              f"but action_id is {action_id}")
+    return plan

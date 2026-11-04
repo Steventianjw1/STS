@@ -267,11 +267,12 @@ class ExpertDecisionStats:
         from .spire_history import RunHistoryIndex
         self.history = RunHistoryIndex(config)
 
-    def for_view(self, view, *, budget_s: float | None = None) -> dict | None:
+    def for_view(self, view, *, budget_s: float | None = None, route_state: dict | None = None) -> dict | None:
         budget = min(self.config.max_fetch_s, max(0, budget_s) if budget_s is not None else self.config.max_fetch_s)
         deadline = self.clock() + budget
         if view.kind == "map":
-            return self._route_view(view, deadline=deadline) if self.config.enabled and self.config.history_enabled else None
+            return (self._route_view(view, deadline=deadline, route_state=route_state)
+                    if self.config.enabled and self.config.history_enabled else None)
         support = self._profile_view(view, budget_s=budget)
         if support is None:
             return None
@@ -372,24 +373,26 @@ class ExpertDecisionStats:
         version = self.game_build if self.config.match_version else None
         return character, ascension, version
 
-    def resolve_act(self, act, boss_names, *, deadline):
-        """Act ID from visible boss names (exact, case-insensitive), else a unique variant
-        for the 1-based act number. Returns (act_id, method, candidates)."""
+    def _catalogs(self, deadline):
         acts = self.client.get("/api/acts", {"lang": self.config.lang}, deadline=deadline).data.get("items")
         if not isinstance(acts, list):
             raise StatsUnavailable("invalid_act_catalog")
+        encounters = self.client.get("/api/encounters", {"lang": self.config.lang}, deadline=deadline).data.get("items")
+        if not isinstance(encounters, list):
+            raise StatsUnavailable("invalid_encounter_catalog")
         acts = [a for a in acts if isinstance(a, dict) and _id(a.get("id")) and isinstance(a.get("bosses"), list)]
+        return acts, {_id(e["id"]): e for e in encounters if isinstance(e, dict) and _id(e.get("id"))}
+
+    def resolve_act(self, act, boss_names, *, deadline):
+        """Act ID from visible boss names (exact, case-insensitive), else a unique variant
+        for the 1-based act number. Returns (act_id, method, candidates)."""
+        acts, encounters = self._catalogs(deadline)
         wanted = {_title(n) for n in boss_names if isinstance(n, str) and n.strip()}
         if wanted:
-            encounters = self.client.get("/api/encounters", {"lang": self.config.lang, "room_type": "Boss"},
-                                         deadline=deadline).data.get("items")
-            if not isinstance(encounters, list):
-                raise StatsUnavailable("invalid_encounter_catalog")
             names = {}
-            for e in encounters:
-                if isinstance(e, dict) and _id(e.get("id")):
-                    monsters = [m.get("name") for m in e.get("monsters") or [] if isinstance(m, dict)]
-                    names[_id(e["id"])] = {_title(x) for x in [e.get("name"), *monsters] if isinstance(x, str)}
+            for eid, e in encounters.items():
+                monsters = [m.get("name") for m in e.get("monsters") or [] if isinstance(m, dict)]
+                names[eid] = {_title(x) for x in [e.get("name"), *monsters] if isinstance(x, str)}
             matched = [a for a in acts if any(wanted & names.get(_id(b), set()) for b in a["bosses"])]
             if len(matched) == 1:
                 return _id(matched[0]["id"]), "visible_boss_name", [_id(a["id"]) for a in matched]
@@ -400,14 +403,51 @@ class ExpertDecisionStats:
             return _id(same_index[0]["id"]), "single_variant_for_act_number", [_id(same_index[0]["id"])]
         return None, "act_variant_unresolved", [_id(a["id"]) for a in same_index]
 
-    def _route_view(self, view, *, deadline):
+    def _encounter_fallback(self, act_entry, encounters, character, max_hp, version, *, deadline):
+        """Pooled /api/runs/encounter-stats means and death rates per node class (no percentiles)."""
+        from .route_risk import CLASSES
+        ids = [_id(e) for e in act_entry.get("encounters") or [] if _id(e)]
+        if not ids or not max_hp or type(act_entry.get("index")) is not int:
+            return None, {"status": "unavailable", "reason": "act_encounters_or_max_hp_unknown"}
+        params = {"act": act_entry["index"] + 1, "room_type": "monster,elite,boss", "encounter": ",".join(ids[:50]),
+                  "bracket": self.config.encounter_stats_bracket, "build_id": version, "limit": 200}
+        try:
+            response = self.client.get("/api/runs/encounter-stats", params, deadline=deadline)
+        except StatsUnavailable as exc:
+            return None, {"status": "unavailable", "reason": str(exc)}
+        rows = response.data.get("encounters")
+        if not isinstance(rows, list):
+            return None, {"status": "unavailable", "reason": "invalid_encounter_stats"}
+        acc = {c: [0, 0.0, 0] for c in CLASSES}
+        for row in rows:
+            eid = _id(row.get("encounter_id")) if isinstance(row, dict) else None
+            room = str(row.get("room_type", "")).lower() if eid else ""
+            mine = next((c for c in row.get("characters") or [] if isinstance(c, dict)
+                         and _character(c.get("character")) == character), None) if eid else None
+            if not mine or _count(mine.get("total")) in (None, 0) or type(mine.get("avg_damage")) not in (int, float):
+                continue
+            cls = {"elite": "elite", "boss": "boss"}.get(room) or (
+                ("early_hallway" if (encounters.get(eid) or {}).get("is_weak") else "later_hallway")
+                if room == "monster" else None)
+            if cls:
+                a = acc[cls]
+                a[0] += mine["total"]
+                a[1] += mine["avg_damage"] * mine["total"]
+                a[2] += _count(mine.get("fatal")) or 0
+        result = {c: {"n": n, "mean_pct": round(dmg / n / max_hp * 100, 1), "death_rate_pct": round(f / n * 100, 2)}
+                  for c, (n, dmg, f) in acc.items() if n}
+        return result, {"status": "available", "bracket": self.config.encounter_stats_bracket, "build_id": version,
+                        "percent_basis": f"absolute average damage / current max HP {max_hp} (approximate)",
+                        "split": "early = encounters flagged is_weak in the catalog", **response.provenance()}
+
+    def _route_view(self, view, *, deadline, route_state=None):
         from .route_profile import build_route_profile
         run = view.facts.get("run") or {}
         character, ascension, version = self._run_scope(run)
         bosses = [b.get("name") for b in (view.facts.get("screen_details") or {}).get("bosses") or []
                   if isinstance(b, dict)]
         support = {
-            "tool": "get_expert_route_profile", "schema_version": 1, "source": API_ROOT,
+            "tool": "get_expert_route_profile", "schema_version": 2, "source": API_ROOT,
             "label": "OBSERVATIONAL ROUTES OF SELECTED HUMAN PLAYERS; descriptive evidence, not a route "
                      "recommendation, instruction or causal effect",
             "status": "unavailable",
@@ -456,12 +496,65 @@ class ExpertDecisionStats:
         except (OSError, sqlite3.Error) as exc:
             support["reason"] = "history_index_" + type(exc).__name__
             return support
-        if not runs:
+        if runs:
+            support["profile"] = build_route_profile(runs, act_id, min_samples=self.config.min_context_samples)
+            support["status"] = "partial" if support["profile"]["samples"]["sparse"] else "available"
+        else:
             support["reason"] = "no_indexed_runs_for_act"
-            return support
-        support["profile"] = build_route_profile(runs, act_id, min_samples=self.config.min_context_samples)
-        support["status"] = "partial" if support["profile"]["samples"]["sparse"] else "available"
+        if self.config.route_planning_enabled:
+            self._route_planning(view, support, runs, act_id, character, version,
+                                 route_state=route_state, deadline=deadline)
         return support
+
+    def _route_planning(self, view, support, runs, act_id, character, version, *, route_state, deadline):
+        from .route_paths import plan_paths, plan_status
+        from .route_risk import build_risk_model
+        player = view.facts.get("player") or {}
+        details = view.facts.get("screen_details") or {}
+        try:
+            acts, encounters = self._catalogs(deadline)
+        except StatsUnavailable as exc:
+            support["paths"] = {"status": "unavailable", "reason": str(exc)}
+            return
+        act_entry = next((a for a in acts if _id(a["id"]) == act_id), {})
+        weak = {_id(e) for e in act_entry.get("encounters") or []
+                if _id(e) and (encounters.get(_id(e)) or {}).get("is_weak") is True}
+        min_n = self.config.min_context_samples
+        risk = build_risk_model(runs, act_id, weak_ids=weak, min_samples=min_n)
+        if any(c["n"] < min_n for c in risk["classes"].values()):
+            fallback, record = self._encounter_fallback(act_entry, encounters, character, player.get("max_hp"),
+                                                        version, deadline=deadline)
+            risk = build_risk_model(runs, act_id, weak_ids=weak, min_samples=min_n, fallback=fallback)
+            risk["encounter_stats_fallback"] = record
+        risk["basis"] = ("% of max HP per node, from indexed runs of the cohort (n >= "
+                         f"{min_n} for p90); encounter_stats fallback has means and death rates only")
+        support["hp_risk"] = risk
+        plan = (route_state or {}).get("plan")
+        here = tuple(c for c in [(details.get("current_position") or {}).get("col"),
+                                 (details.get("current_position") or {}).get("row")])
+        coords = [tuple(c) for c in (plan or {}).get("coords") or []]
+        previous = ([list(c) for c in coords[coords.index(here) + 1:]] if plan and plan["act"] == view.facts["run"].get("act")
+                    and here in coords else None)
+        support["paths"] = plan_paths(details, hp=player.get("hp"), max_hp=player.get("max_hp"), gold=player.get("gold"),
+                                      risk=risk, profile=support.get("profile"),
+                                      candidates=self.config.route_candidates, max_routes=self.config.route_max_routes,
+                                      previous_nodes=previous)
+        support["paths"]["limitations"] = [
+            "Projections assume current max HP, pooled class damage and independent fights; deck, relics, potions "
+            "and event effects beyond recorded HP loss are not modeled.",
+            "bad_case applies the 90th percentile to every fight: a stress test, not a likely outcome.",
+            "Simulated rest choices follow the experts' HEAL share in that HP band; heal size is measured, not assumed.",
+            "selected_for labels say what a path is best at; there is no combined score. Python never chooses."]
+        if route_state is not None:
+            support["route_plan_status"] = plan_status(
+                plan, act=view.facts["run"].get("act"), details=details, hp=player.get("hp"),
+                max_hp=player.get("max_hp"), gold=player.get("gold"),
+                relics=[str(r.get("id") or r.get("name")) for r in view.facts.get("relics") or []],
+                potions=[str(p.get("id") or p.get("name")) for p in view.facts.get("potions") or []],
+                outcomes=route_state.get("outcomes") or [], risk=risk,
+                hp_tolerance=self.config.replan_hp_tolerance_pct, gold_tolerance=self.config.replan_gold_tolerance)
+        if support["status"] == "unavailable" and support["paths"].get("status") == "available":
+            support["status"] = "partial"
 
     def bulk_sync(self, character, ascension, *, max_new_runs, max_seconds, progress=None):
         """Fill the local run corpus before play (the per-decision sync is deliberately small)."""

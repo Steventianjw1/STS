@@ -58,6 +58,12 @@ class ExpertStatsConfig:
     min_context_samples: int = 20
     deck_similarity_min: float = 0.5      # multiset Jaccard over base card IDs
     deck_advice_enabled: bool = True
+    route_planning_enabled: bool = True    # map screens: HP-loss model + path enumeration
+    route_candidates: int = 5              # non-dominated paths shown to the model
+    route_max_routes: int = 2000           # distinct node-type sequences kept per map node
+    encounter_stats_bracket: str = "solo"  # /api/runs/encounter-stats fallback bracket
+    replan_hp_tolerance_pct: float = 15.0  # % of max HP away from the projection
+    replan_gold_tolerance: int = 100
 
 
 @dataclass
