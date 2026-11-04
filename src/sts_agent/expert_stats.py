@@ -56,6 +56,30 @@ def _character(value):
     return _id(value)
 
 
+MAX_CONTRIBUTORS = 3
+
+
+def _bounded(value, depth=3):
+    """Size-bound untrusted external JSON: scalars kept, strings/lists/keys capped."""
+    if isinstance(value, str):
+        return value[:160]
+    if value is None or type(value) in (bool, int) or (type(value) is float and math.isfinite(value)):
+        return value
+    if depth <= 0 or not isinstance(value, (list, dict)):
+        return None
+    if isinstance(value, list):
+        return [_bounded(v, depth - 1) for v in value[:5]]
+    return {str(k)[:40]: _bounded(v, depth - 1) for k, v in list(value.items())[:12]}
+
+
+def _top_contributors(rows):
+    """Largest samples by denominator; the remainder is summarized, not listed."""
+    rows = sorted(rows, key=lambda r: (-r["denominator"], r["username"].casefold()))
+    rest = rows[MAX_CONTRIBUTORS:]
+    return rows[:MAX_CONTRIBUTORS], ({"players": len(rest), "numerator": sum(r["numerator"] for r in rest),
+                                      "denominator": sum(r["denominator"] for r in rest)} if rest else None)
+
+
 def _iso(stamp):
     return datetime.fromtimestamp(stamp, timezone.utc).isoformat()
 
@@ -324,7 +348,7 @@ class ExpertDecisionStats:
                 if not isinstance(ranked, list):
                     raise StatsUnavailable("invalid_draft_advice")
                 # Restrict results to offered IDs; scores remain raw scores.
-                rows = [{k: r[k] for k in ("id", "score", "base", "reasons") if k in r}
+                rows = [{k: _bounded(r[k]) for k in ("id", "score", "base", "reasons") if k in r}
                         for r in ranked if isinstance(r, dict) and r.get("id") in offer]
                 result["draft_advice"] = {"status": "available" if rows else "unavailable", "ranked": rows,
                                           **response.provenance()}
@@ -342,9 +366,9 @@ class ExpertDecisionStats:
             if not isinstance(candidates, list) or not isinstance(offers, list):
                 raise StatsUnavailable("invalid_pick_coach")
             fields = ("id", "coach_score", "commitment_delta", "winner_support", "take_score", "take_base")
-            result["pick_coach"] = {"status": "available", "target": response.data.get("target"),
-                                     "candidates": candidates[:3],
-                                     "offers": [{k: r[k] for k in fields if k in r} for r in offers
+            result["pick_coach"] = {"status": "available", "target": _bounded(response.data.get("target")),
+                                     "candidates": _bounded(candidates[:3]),
+                                     "offers": [{k: _bounded(r[k]) for k in fields if k in r} for r in offers
                                                 if isinstance(r, dict) and r.get("id") in offer[:5]],
                                      "offer_limit": 5, **response.provenance()}
         except StatsUnavailable as exc:
@@ -475,10 +499,13 @@ class ExpertDecisionStats:
                         observations.append({"username": username, "numerator": num, "denominator": den})
                 numerator = sum(o["numerator"] for o in observations)
                 denominator = sum(o["denominator"] for o in observations)
+                top, other = _top_contributors(observations)
                 row.update({"metric": metric, "numerator": numerator if observations else None,
                             "denominator": denominator if observations else None,
                             "rate_pct": round(numerator / denominator * 100, 2) if denominator else None,
-                            "contributing_players": len(observations), "contributors": observations})
+                            "contributing_players": len(observations), "contributors": top})
+                if other:
+                    row["other_contributors"] = other
                 if observations:
                     row.update({"status": "available", "largest_player_sample_share_pct":
                                 round(max(o["denominator"] for o in observations) / denominator * 100, 2)})

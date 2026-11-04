@@ -10,7 +10,7 @@ import sqlite3
 import time
 import urllib.parse
 
-from .expert_stats import StatsUnavailable, _character, _count, _id
+from .expert_stats import StatsUnavailable, _character, _count, _id, _top_contributors
 
 NORMALIZER_VERSION = 1
 
@@ -365,7 +365,8 @@ class RunHistoryIndex:
             if selected and len(selected) >= self.config.min_context_samples:
                 break
         if not selected:
-            return {"status": "unavailable", "reason": "no_indexed_observations", "attempts": attempts}
+            return {"status": "unavailable", "reason": "no_indexed_observations",
+                    "attempts": [a["level"] + ("+deck" if a["deck_conditioned"] else "") + ":0" for a in attempts]}
         contributions = {}
         for row in selected:
             n = int(row["entity_id"] == option["option_id"]) if kind == "event" else row["chosen"]
@@ -373,14 +374,19 @@ class RunHistoryIndex:
             counts[0] += n
             counts[1] += 1
         numerator, denominator = sum(c[0] for c in contributions.values()), len(selected)
+        top, other = _top_contributors([{"username": u, "numerator": c[0], "denominator": c[1]}
+                                        for u, c in contributions.items()])
         return {"status": "available", "metric": option["metric"], "numerator": numerator,
                 "denominator": denominator, "rate_pct": round(numerator / denominator * 100, 2),
                 "scope": {**chosen_scope, "game_mode": "standard", "context_basis": "before_floor",
                           "similarity": "base_card_multiset_jaccard", "similarity_min": self.config.deck_similarity_min},
-                "sparse": denominator < self.config.min_context_samples, "attempts": attempts,
+                "sparse": denominator < self.config.min_context_samples,
+                # Compact widening trail: level[+deck]:samples, in the order tried.
+                "attempts": [a["level"] + ("+deck" if a["deck_conditioned"] else "") + ":" + str(a["samples"])
+                             for a in attempts],
                 "contributing_runs": len({r["run_hash"] for r in selected}),
                 "contributing_players": len(contributions),
-                "contributors": [{"username": u, "numerator": c[0], "denominator": c[1]} for u, c in sorted(contributions.items())],
+                "contributors": top, **({"other_contributors": other} if other else {}),
                 "candidate_contexts": len(rows), "complete_identity_contexts": complete,
                 "incomplete_identity_contexts": len(rows) - complete,
                 "normalization_issues": sorted({i for r in selected for i in json.loads(r["run_issues"])}),

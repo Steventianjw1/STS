@@ -367,7 +367,7 @@ class RunCoordinator:
                                                                "reason": result.choice.reason,
                                                                "turn_intent": result.choice.turn_intent},
                             attempts=result.attempts, error_kind=result.error_kind, diagnostic=result.diagnostic,
-                            history_dropped=result.history_dropped)
+                            history_dropped=result.history_dropped, support_trim=result.support_trim)
         if not result.ok:
             reason = {"input_too_large": STOP_INPUT_TOO_LARGE, "invalid_output": STOP_INVALID_MODEL_OUTPUT}.get(
                 result.error_kind, STOP_MODEL_FAILED)

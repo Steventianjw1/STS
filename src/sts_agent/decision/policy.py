@@ -21,6 +21,7 @@ class ChoiceResult:
     diagnostic: str | None = None
     attempts: list = field(default_factory=list)   # [{"response_text", "error", "call"}]
     history_dropped: int = 0
+    support_trim: str | None = None      # decision_support reduction step used for this prompt
 
     @property
     def ok(self) -> bool:
@@ -51,7 +52,7 @@ class LLMDecisionPolicy:
         correction = None
         for attempt in (1, 2):
             try:
-                user, res.history_dropped = build_user_message(frame, correction=correction,
+                user, res.history_dropped, res.support_trim = build_user_message(frame, correction=correction,
                                                                max_bytes=self.max_input_bytes)
             except ValueError as e:
                 res.error_kind, res.diagnostic = "input_too_large", str(e)
