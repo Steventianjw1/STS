@@ -59,11 +59,14 @@ class ExpertStatsConfig:
     deck_similarity_min: float = 0.5      # multiset Jaccard over base card IDs
     deck_advice_enabled: bool = True
     route_planning_enabled: bool = True    # map screens: HP-loss model + path enumeration
-    route_candidates: int = 5              # non-dominated paths shown to the model
+    route_candidates: int = 6              # non-dominated paths shown to the model
     route_max_routes: int = 2000           # distinct node-type sequences kept per map node
     encounter_stats_bracket: str = "solo"  # /api/runs/encounter-stats fallback bracket
     replan_hp_tolerance_pct: float = 15.0  # % of max HP away from the projection
     replan_gold_tolerance: int = 100
+    elite_readiness_enabled: bool = True   # elite threats vs. observed deck (needs the patched mod's deck)
+    elite_block_attack_pct: float = 20.0   # block gap: elite attack turn >= this % of max HP (or Strength gain)
+    elite_trigger_steps: int = 3           # re-plan trigger: planned elite this close while gaps remain
 
 
 @dataclass

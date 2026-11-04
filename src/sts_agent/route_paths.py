@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 
+from .elite_readiness import pool_gap_share
 from .route_risk import node_class
 
 FIGHTS = ("monster", "elite")
@@ -168,7 +169,23 @@ def _dominates(a, b, keys):
     return better
 
 
-def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_routes, previous_nodes=None):
+def _elite_preparation(path):
+    """Chances to fix the deck before each elite on a path: card-reward fights, ? nodes, shops, rests."""
+    out, seen = [], {"fights": 0, "unknown": 0, "shops": 0, "rest_sites": 0}
+    for i, (t, _, _) in enumerate(path, 1):
+        if t == "elite":
+            out.append({"step": i, **{k + "_before": v for k, v in seen.items()}})
+        key = {"monster": "fights", "elite": "fights", "unknown": "unknown", "shop": "shops", "rest_site": "rest_sites"}.get(t)
+        if key:
+            seen[key] += 1
+    return out
+
+
+def _gap_summary(pool):
+    return sorted({f"{g['need']} ({e['name']})" for e in pool["elites"] for g in e.get("gaps") or []})
+
+
+def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_routes, previous_nodes=None, elite_pool=None):
     if not max_hp or hp is None:
         return {"status": "unavailable", "reason": "current_hp_unknown"}
     routes, truncated, unmapped = enumerate_routes(details, max_routes=max_routes)
@@ -206,6 +223,7 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
             "elites": sum(t == "elite" for t, _, _ in path), "fights": sum(t in FIGHTS for t, _, _ in path),
             "rest_sites": sum(t == "rest_site" for t, _, _ in path), "shops": sum(t == "shop" for t, _, _ in path),
             "expert_profile_distance": distance if distance is not None else 0.0,
+            "elite_preparation": _elite_preparation(path),
             "bad_case_uses_mean_for": sorted(sim["bad_uses_mean"]),
             "trajectory": sim["steps"],
         })
@@ -231,6 +249,15 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
     take("most_elites_expected_alive", alive, lambda r: (r["elites"], r["bad_case_min_hp_pct"]))
     take("best_expected_boss_arrival_hp", front, lambda r: (r["expected_boss_arrival_hp_pct"], -r["death_risk_before_boss_pct"]))
     take("most_fights_expected_alive", alive, lambda r: (r["fights"], r["bad_case_min_hp_pct"]))
+    gap_share = pool_gap_share(elite_pool) if elite_pool else None
+    if gap_share:  # the deck lacks something some act elites demand: show the elite-light and best-prepared routes
+        take("fewest_elites_given_deck_gaps", front, lambda r: (-r["elites"], r["bad_case_min_hp_pct"]))
+        prep = [r for r in alive if r["elite_preparation"]]
+
+        def first_prep(r):
+            e = r["elite_preparation"][0]
+            return (e["fights_before"] + e["shops_before"] + e["unknown_before"], r["bad_case_min_hp_pct"])
+        take("most_preparation_before_first_elite", prep, first_prep)
     for r in picks:
         r["dominated"] = r not in front
     options = {}
@@ -252,11 +279,14 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
         "unmodeled_node_types": unmapped, "dominance_measures": [k for k, _ in keys],
         "profile_distance_basis": basis if rows else None,
         "candidates": picks[:candidates], "by_next_option": list(options.values()),
+        "current_act_elite_gap_share": gap_share,
+        "current_act_elite_gaps": _gap_summary(elite_pool) if elite_pool and gap_share else [],
     }
 
 
 # ------------------------------------------------------------------ re-planning
-def plan_status(plan, *, act, details, hp, max_hp, gold, relics, potions, outcomes, risk, hp_tolerance, gold_tolerance):
+def plan_status(plan, *, act, details, hp, max_hp, gold, relics, potions, outcomes, risk, hp_tolerance, gold_tolerance,
+                elite_pool=None, elite_steps=3):
     """Python-detected reasons to revisit a stored route plan. Never changes the plan."""
     if not plan:
         return {"status": "no_previous_plan", "triggers": ["no_plan_yet"], "replan_suggested": True}
@@ -286,6 +316,13 @@ def plan_status(plan, *, act, details, hp, max_hp, gold, relics, potions, outcom
         triggers.append("relics_changed")
     if sorted(set(potions) - set(plan["potions"])):
         triggers.append("new_potion")
+    share = pool_gap_share(elite_pool) if elite_pool else None
+    if share and coords and plan["act"] == act and plan.get("trajectory"):
+        start = coords.index(here) + 1 if here in coords else 0
+        ahead = [s["type"] for s in plan["trajectory"][start:start + elite_steps]]
+        if "elite" in ahead:
+            triggers.append(f"elite_unprepared: planned elite in {ahead.index('elite') + 1} step(s); deck gaps for "
+                            f"{share:.0%} of this act's elites: " + ", ".join(_gap_summary(elite_pool)))
     expected_gold = at.get("estimated_gold") if at else plan.get("gold")
     if gold is not None and expected_gold is not None and abs(gold - expected_gold) >= gold_tolerance:
         triggers.append(f"gold_off_projection: now {gold} vs about {expected_gold}")

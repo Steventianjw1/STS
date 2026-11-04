@@ -27,7 +27,7 @@ from .config import ExpertStatsConfig
 
 API_ROOT = "https://spire-codex.com"
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-LIST_CATALOGS = {"/api/acts", "/api/encounters"}  # list responses, wrapped as {"items": [...]}
+LIST_CATALOGS = {"/api/acts", "/api/encounters", "/api/cards", "/api/monsters", "/api/powers"}  # wrapped as {"items": [...]}
 
 
 class StatsUnavailable(Exception):
@@ -266,6 +266,7 @@ class ExpertDecisionStats:
         self.client = client or SpireCodexClient(config, clock=clock)
         from .spire_history import RunHistoryIndex
         self.history = RunHistoryIndex(config)
+        self._act_ids: dict = {}   # (character, act number) -> act ID resolved on a map screen
 
     def for_view(self, view, *, budget_s: float | None = None, route_state: dict | None = None) -> dict | None:
         budget = min(self.config.max_fetch_s, max(0, budget_s) if budget_s is not None else self.config.max_fetch_s)
@@ -293,6 +294,11 @@ class ExpertDecisionStats:
                 support["history_index"] = {"status": "unavailable", "reason": type(exc).__name__}
         if self.config.deck_advice_enabled:
             support["supplementary_deck_advice"] = self._deck_advice(view, deck, deadline=deadline)
+        if self.config.elite_readiness_enabled and view.kind in ("card_reward", "shop"):
+            offered = [_id(c["details"].get("id") if c["kind"] == "select_card_reward" else c["details"].get("card_id"))
+                       for c in view.candidates if c["kind"] in ("select_card_reward", "shop_purchase")]
+            support["elite_readiness"] = self._readiness_for_view(view, None, deadline=deadline,
+                                                                  offered=[o for o in offered if o])
         if support["status"] == "unavailable" and any(
                 o.get("history_context", {}).get("status") == "available" for o in support["options"]):
             support["status"] = "partial"
@@ -403,6 +409,79 @@ class ExpertDecisionStats:
             return _id(same_index[0]["id"]), "single_variant_for_act_number", [_id(same_index[0]["id"])]
         return None, "act_variant_unresolved", [_id(a["id"]) for a in same_index]
 
+    def _combat_catalogs(self, deadline):
+        out = []
+        for path in ("/api/cards", "/api/monsters", "/api/powers"):
+            items = self.client.get(path, {"lang": self.config.lang}, deadline=deadline).data.get("items")
+            if not isinstance(items, list):
+                raise StatsUnavailable("invalid_catalog:" + path)
+            out.append({_id(x["id"]): x for x in items if isinstance(x, dict) and _id(x.get("id"))})
+        return out
+
+    def _readiness_for_view(self, view, act_id, *, deadline, offered=None):
+        """Elite threats of this act and later acts vs. the observed deck (Spire Codex data only)."""
+        from .elite_readiness import builds_summary, deck_coverage, gaps, offered_fit, pool_gap_share, threat_profile
+        run, player = view.facts.get("run") or {}, view.facts.get("player") or {}
+        character, ascension, _ = self._run_scope(run)
+        result = {"tool": "get_elite_readiness", "source": API_ROOT, "status": "unavailable",
+                  "label": "SPIRE CODEX ELITE FACTS VS. YOUR OBSERVED DECK; rule-based gaps, not instructions",
+                  "rules": {"aoe": "multiple enemies or summons, and no AllEnemies attack in the deck",
+                            "block": f"largest attack turn >= {self.config.elite_block_attack_pct:g}% of max HP or the "
+                                     "elite gains Strength, and no non-starter block card in the deck",
+                            "damage_or_scaling": "no non-starter attack and no Power card in the deck"},
+                  "limitations": ["Card coverage uses catalog fields (target, damage, block, type), not rules text; "
+                                  "relics, potions, enchantments and card synergies are not counted.",
+                                  "Which elite appears behind an elite node is unknown; the act's whole pool is shown.",
+                                  "Build death rates are community correlations, not proof that a card beats an elite."]}
+        try:
+            act_id = act_id or self._act_ids.get((character, run.get("act")))
+            if act_id is None:
+                act_id, method, _ = self.resolve_act(run.get("act"), [], deadline=deadline)
+                if act_id is None:
+                    result["reason"] = method
+                    return result
+            acts, encounters = self._catalogs(deadline)
+            cards, monsters, powers = self._combat_catalogs(deadline)
+        except StatsUnavailable as exc:
+            result["reason"] = str(exc)
+            return result
+        current = next((a for a in acts if _id(a["id"]) == act_id), None)
+        if current is None or type(ascension) is not int:
+            result["reason"] = "act_or_ascension_unknown"
+            return result
+        deck = view.facts.get("deck")
+        coverage = deck_coverage(deck, cards) if isinstance(deck, list) else None
+        deck_ids = {c for c in (_id(x.get("id")) for x in deck) if c} if isinstance(deck, list) else None
+        later = sorted((a for a in acts if type(a.get("index")) is int and type(current.get("index")) is int
+                        and a["index"] > current["index"]), key=lambda a: a["index"])
+        pools = []
+        for act, relation in [(current, "current")] + [(a, "later") for a in later]:
+            elites = []
+            for eid in act.get("encounters") or []:
+                enc = encounters.get(_id(eid))
+                if not enc or str(enc.get("room_type", "")).lower() != "elite":
+                    continue
+                threat = threat_profile(enc, monsters, powers, ascension)
+                threat["gaps"] = gaps(threat, coverage, max_hp=player.get("max_hp"),
+                                      block_attack_pct=self.config.elite_block_attack_pct)
+                try:
+                    payload = self.client.get("/api/runs/encounter-builds", {"encounter": threat["encounter_id"],
+                                              "lang": self.config.lang}, deadline=deadline).data
+                    threat["builds"] = builds_summary(payload, character, deck_ids)
+                except StatsUnavailable as exc:
+                    threat["builds"] = {"status": "unavailable", "reason": str(exc)}
+                elites.append(threat)
+            pool = {"act_id": _id(act["id"]), "relation": relation, "elites": elites}
+            pool["elite_gap_share"] = pool_gap_share(pool)
+            pools.append(pool)
+        result.update({"status": "available" if coverage is not None else "partial",
+                       "deck_status": "observed" if coverage is not None else
+                       "unknown: the permanent deck needs the patched mod (tools/patch_mod_preview.py); gaps not evaluated",
+                       "deck_coverage": coverage, "pools": pools})
+        if offered:
+            result["offered_cards"] = offered_fit(offered, cards, pools)
+        return result
+
     def _encounter_fallback(self, act_entry, encounters, character, max_hp, version, *, deadline):
         """Pooled /api/runs/encounter-stats means and death rates per node class (no percentiles)."""
         from .route_risk import CLASSES
@@ -447,7 +526,7 @@ class ExpertDecisionStats:
         bosses = [b.get("name") for b in (view.facts.get("screen_details") or {}).get("bosses") or []
                   if isinstance(b, dict)]
         support = {
-            "tool": "get_expert_route_profile", "schema_version": 2, "source": API_ROOT,
+            "tool": "get_expert_route_profile", "schema_version": 3, "source": API_ROOT,
             "label": "OBSERVATIONAL ROUTES OF SELECTED HUMAN PLAYERS; descriptive evidence, not a route "
                      "recommendation, instruction or causal effect",
             "status": "unavailable",
@@ -481,6 +560,7 @@ class ExpertDecisionStats:
             if act_id is None:
                 support["reason"] = method
                 return support
+            self._act_ids[(character, run.get("act"))] = act_id
             cohort = self._cohort(character, support["cohort"], deadline=deadline)
         except StatsUnavailable as exc:
             support["reason"] = str(exc)
@@ -535,10 +615,14 @@ class ExpertDecisionStats:
         coords = [tuple(c) for c in (plan or {}).get("coords") or []]
         previous = ([list(c) for c in coords[coords.index(here) + 1:]] if plan and plan["act"] == view.facts["run"].get("act")
                     and here in coords else None)
+        pool = None
+        if self.config.elite_readiness_enabled:
+            support["elite_readiness"] = self._readiness_for_view(view, act_id, deadline=deadline)
+            pool = next((p for p in support["elite_readiness"].get("pools") or [] if p["relation"] == "current"), None)
         support["paths"] = plan_paths(details, hp=player.get("hp"), max_hp=player.get("max_hp"), gold=player.get("gold"),
                                       risk=risk, profile=support.get("profile"),
                                       candidates=self.config.route_candidates, max_routes=self.config.route_max_routes,
-                                      previous_nodes=previous)
+                                      previous_nodes=previous, elite_pool=pool)
         support["paths"]["limitations"] = [
             "Projections assume current max HP, pooled class damage and independent fights; deck, relics, potions "
             "and event effects beyond recorded HP loss are not modeled.",
@@ -552,7 +636,8 @@ class ExpertDecisionStats:
                 relics=[str(r.get("id") or r.get("name")) for r in view.facts.get("relics") or []],
                 potions=[str(p.get("id") or p.get("name")) for p in view.facts.get("potions") or []],
                 outcomes=route_state.get("outcomes") or [], risk=risk,
-                hp_tolerance=self.config.replan_hp_tolerance_pct, gold_tolerance=self.config.replan_gold_tolerance)
+                hp_tolerance=self.config.replan_hp_tolerance_pct, gold_tolerance=self.config.replan_gold_tolerance,
+                elite_pool=pool, elite_steps=self.config.elite_trigger_steps)
         if support["status"] == "unavailable" and support["paths"].get("status") == "available":
             support["status"] = "partial"
 

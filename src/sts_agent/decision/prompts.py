@@ -8,7 +8,7 @@ import json
 
 from .models import MAX_INTENT_CHARS, MAX_REASON_CHARS, MAX_ROUTE_PLAN_CHARS, DecisionFrame
 
-DECISION_PROMPT_VERSION = "decision-prompt-6"
+DECISION_PROMPT_VERSION = "decision-prompt-7"
 DEFAULT_MAX_INPUT_BYTES = 96 * 1024
 DEFAULT_OBJECTIVE = ("Win the run (ordinary victory) with the current character at the current difficulty. "
                      "No extra challenge objectives.")
@@ -44,10 +44,18 @@ _EVIDENCE = ("decision_support, when present, contains observational statistics 
              "hp_risk gives pooled HP loss per node class (% of max HP: mean, p90, death rate) and its source; "
              "paths lists up to a few non-dominated routes to the boss with projected HP (expected and an "
              "every-fight-p90 bad case), gold at shops, elite/rest positions and distance from the expert profile. "
-             "selected_for says what a path is best at; it is not a ranking, and projections ignore your deck, "
-             "relics and potions, so judge them against the current run. route_plan_status shows your previous "
-             "route_plan as a hypothesis plus Python-detected triggers (HP or gold off projection, a fight worse "
-             "than p90, relic/potion changes, a new act, leaving the planned path) that warrant re-planning.")
+             "selected_for says what a path is best at; it is not a ranking. HP projections use pooled fight "
+             "statistics; elite_readiness adds your actual deck: it lists each Spire Codex elite of this act and later "
+             "acts (enemies, summons, largest attack turn, Strength gain, community builds with low and high death "
+             "rates) and rule-based deck gaps (aoe, block, damage_or_scaling). When gaps exist: at card rewards and "
+             "shops, favor offered cards whose fills_gaps addresses them (current act first, later acts next) unless a "
+             "clearly stronger choice exists; on maps, if no fix has appeared, weigh the fewest_elites_given_deck_gaps "
+             "and most_preparation_before_first_elite paths and each path's elite_preparation before committing to "
+             "elites. Gaps are rules over catalog fields and ignore relics, potions and synergies, so overrule them when "
+             "your deck clearly covers the need. route_plan_status shows your previous route_plan as a hypothesis plus "
+             "Python-detected triggers (HP or gold off projection, a fight worse than p90, relic/potion changes, a new "
+             "act, leaving the planned path, a planned elite within a few steps while deck gaps remain) that warrant "
+             "re-planning.")
 
 SYSTEM_INSTRUCTION = f"[{DECISION_PROMPT_VERSION}]\n{_BEHAVIOR}\n\n{_EVIDENCE}\n\n{_CONTRACT}"
 
