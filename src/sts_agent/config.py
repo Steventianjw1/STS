@@ -67,6 +67,7 @@ class ExpertStatsConfig:
     elite_readiness_enabled: bool = True   # elite threats vs. observed deck (needs the patched mod's deck)
     elite_block_attack_pct: float = 20.0   # block gap: elite attack turn >= this % of max HP (or Strength gain)
     elite_trigger_steps: int = 3           # re-plan trigger: planned elite this close while gaps remain
+    ancient_advisor_enabled: bool = True   # ancient screens: relic effects vs. deck/state + offer-conditioned stats
 
 
 @dataclass

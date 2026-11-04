@@ -78,4 +78,5 @@ replan_gold_tolerance = 100       # re-plan trigger: gold this far from the proj
 elite_readiness_enabled = true    # elite threats (Spire Codex catalogs) vs. the patched mod's permanent deck
 elite_block_attack_pct = 20.0     # block gap rule: elite attack turn >= this % of max HP, or it gains Strength
 elite_trigger_steps = 3           # re-plan trigger: planned elite within this many steps while gaps remain
+ancient_advisor_enabled = true    # ancient screens: relic effects vs. deck/state, expert offer stats, community lift
 # Optional SPIRE_CODEX_API_KEY belongs in .env, never in this file.

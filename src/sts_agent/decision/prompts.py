@@ -8,7 +8,7 @@ import json
 
 from .models import MAX_INTENT_CHARS, MAX_REASON_CHARS, MAX_ROUTE_PLAN_CHARS, DecisionFrame
 
-DECISION_PROMPT_VERSION = "decision-prompt-7"
+DECISION_PROMPT_VERSION = "decision-prompt-8"
 DEFAULT_MAX_INPUT_BYTES = 96 * 1024
 DEFAULT_OBJECTIVE = ("Win the run (ordinary victory) with the current character at the current difficulty. "
                      "No extra challenge objectives.")
@@ -55,7 +55,14 @@ _EVIDENCE = ("decision_support, when present, contains observational statistics 
              "your deck clearly covers the need. route_plan_status shows your previous route_plan as a hypothesis plus "
              "Python-detected triggers (HP or gold off projection, a fight worse than p90, relic/potion changes, a new "
              "act, leaving the planned path, a planned elite within a few steps while deck gaps remain) that warrant "
-             "re-planning.")
+             "re-planning. "
+             "On ancient screens, decision_support is get_ancient_offer_evidence: per option the relic's text-derived "
+             "effects, its pool condition, before/after numbers against your deck and state (removable starter cards, "
+             "HP after an HP cost vs. the experts' boss-arrival HP, gold), the experts' offer-conditioned behaviour "
+             "(take rate when offered, head-to-head against the other options shown, take rate in similar HP/deck "
+             "situations, outcomes), community lift and archetype fit with your deck, plus elite gaps by act. Decide "
+             "from what each relic does for this deck, HP and the coming acts; take rates are one input, not the answer. "
+             "Labels describe options and are not a ranking.")
 
 SYSTEM_INSTRUCTION = f"[{DECISION_PROMPT_VERSION}]\n{_BEHAVIOR}\n\n{_EVIDENCE}\n\n{_CONTRACT}"
 

@@ -260,7 +260,7 @@ class RunCoordinator:
             "run": {"character": run.get("character"), "difficulty": run.get("difficulty"), "act": run.get("act"),
                     "floor": run.get("floor"), "encounter_type": v.state_type},
             "resources": {"hp": pl.get("hp"), "max_hp": pl.get("max_hp"), "gold": pl.get("gold"), "max_energy": None},
-            "deck": None,  # the API exposes no permanent deck list; never rebuilt from combat piles
+            "deck": _planner_deck(f.get("deck")),  # patched mod's permanent deck; never rebuilt from combat piles
             "relics": relics, "potions": potions, "opportunities": opps,
             "recent_outcomes": {"items": list(self.recent_outcomes)},
         }
@@ -560,12 +560,28 @@ def _last_call(model):
     return lc.to_dict() if hasattr(lc, "to_dict") else None
 
 
+def _planner_deck(deck):
+    """Observed permanent deck -> planner shape (counts per card id and upgrade); None stays unknown."""
+    if not isinstance(deck, list) or not all(isinstance(c, dict) and isinstance(c.get("id"), str) for c in deck):
+        return None
+    counts = {}
+    for c in deck:
+        key = (c["id"], c.get("is_upgraded") is True)
+        counts[key] = counts.get(key, 0) + 1
+    cards = [{"id": cid + ("+" if up else ""), "name": cid, "count": n, "upgraded": up,
+              "cost": None, "type": None, "description": None}
+             for (cid, up), n in sorted(counts.items())]
+    return {"cards": cards[:200]} if len(cards) <= 200 else None
+
+
 def _change_reasons(old, new, *, initial, combat_finished) -> list:
     if initial or old is None:
         return ["initial"]
     r = []
     if combat_finished:
         r.append("combat_finished")
+    if old.get("deck") != new.get("deck"):
+        r.append("deck_changed")
     if old.get("relics") != new.get("relics"):
         r.append("relic_changed")
     if old.get("potions") != new.get("potions"):

@@ -27,7 +27,7 @@ from .config import ExpertStatsConfig
 
 API_ROOT = "https://spire-codex.com"
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-LIST_CATALOGS = {"/api/acts", "/api/encounters", "/api/cards", "/api/monsters", "/api/powers"}  # wrapped as {"items": [...]}
+LIST_CATALOGS = {"/api/acts", "/api/encounters", "/api/cards", "/api/monsters", "/api/powers", "/api/relics"}  # wrapped as {"items": [...]}
 
 
 class StatsUnavailable(Exception):
@@ -274,6 +274,9 @@ class ExpertDecisionStats:
         if view.kind == "map":
             return (self._route_view(view, deadline=deadline, route_state=route_state)
                     if self.config.enabled and self.config.history_enabled else None)
+        if (view.kind == "event" and (view.facts.get("screen_details") or {}).get("is_ancient") is True
+                and self.config.ancient_advisor_enabled):
+            return self._ancient_view(view, deadline=deadline) if self.config.enabled else None
         support = self._profile_view(view, budget_s=budget)
         if support is None:
             return None
@@ -481,6 +484,140 @@ class ExpertDecisionStats:
         if offered:
             result["offered_cards"] = offered_fit(offered, cards, pools)
         return result
+
+    def _ancient_view(self, view, *, deadline):
+        """Ancient offers vs. the observed deck and state, plus Spire Codex expert and community evidence."""
+        from .ancient_advisor import (archetype_fit, deck_facts, expert_offer_stats, labels, relic_effects,
+                                      state_comparison)
+        from .route_profile import build_route_profile
+        run, player = view.facts.get("run") or {}, view.facts.get("player") or {}
+        details = view.facts.get("screen_details") or {}
+        character, ascension, version = self._run_scope(run)
+        ancient_id = _id(details.get("event_id"))
+        support = {
+            "tool": "get_ancient_offer_evidence", "schema_version": 1, "source": API_ROOT, "status": "unavailable",
+            "label": "SPIRE CODEX ANCIENT EVIDENCE COMPARED WITH YOUR DECK AND STATE; not instructions or causal effects",
+            "scope": {"character": character, "ascension": ascension, "version": version, "ancient_id": ancient_id,
+                      "act": run.get("act")},
+            "limitations": ["Effects are text-derived tags from the relic catalog; read each relic's full text.",
+                            "Expert rows come from a bounded set of top players' runs; small cells are flagged sparse.",
+                            "Outcome win rates are correlations: players in strong positions choose differently.",
+                            "The next act's map is not visible yet, so HP costs are compared with expert checkpoints, "
+                            "not with projected routes."],
+            "options": []}
+        if not character or type(ascension) is not int:
+            support["reason"] = "character_or_ascension_unknown"
+            return support
+        try:
+            relics = {_id(r["id"]): r for r in self.client.get("/api/relics", {"lang": self.config.lang},
+                      deadline=deadline).data.get("items") or [] if isinstance(r, dict) and _id(r.get("id"))}
+            cards = self._combat_catalogs(deadline)[0]
+        except StatsUnavailable as exc:
+            support["reason"] = str(exc)
+            return support
+        by_name = {}
+        for rid, r in relics.items():
+            by_name.setdefault(_title(r.get("name")), set()).add(rid)
+        try:
+            pool = self.client.get("/api/ancient-pools/" + urllib.parse.quote(ancient_id or "", safe=""), {},
+                                   deadline=deadline).data if ancient_id else {}
+        except StatsUnavailable as exc:
+            pool, support["ancient_pool_error"] = {}, str(exc)
+        entries = {}
+        for group in pool.get("pools") or []:
+            for e in (group.get("relics") or []) if isinstance(group, dict) else []:
+                if isinstance(e, dict) and _id(e.get("id")):
+                    entries[_id(e["id"])] = {"pool": group.get("name"), "condition": e.get("condition")}
+        support["ancient_pool"] = {"name": pool.get("name"), "selection": pool.get("selection"),
+                                   "description": pool.get("description")}
+        deck = view.facts.get("deck")
+        deck_ids = {c for c in (_id(x.get("id")) for x in deck) if c} if isinstance(deck, list) else None
+        facts = deck_facts(deck, cards)
+        support["deck_facts"] = facts if facts is not None else {
+            "status": "unknown: the permanent deck needs the patched mod (tools/patch_mod_preview.py)"}
+        options = []
+        for c in view.candidates:
+            if c["kind"] != "choose_event_option":
+                continue
+            d = c["details"]
+            matches = by_name.get(_title(d.get("relic_name")), set()) if d.get("relic_name") else set()
+            rid = next(iter(matches)) if len(matches) == 1 else None
+            options.append({"action_id": c["action_id"], "title": d.get("title"), "relic_id": rid,
+                            "match": "exact_name" if rid else ("no_relic" if not d.get("relic_name") else "unmatched")})
+        offered = [o["relic_id"] for o in options if o["relic_id"]]
+        # Expert marks for HP/gold comparisons: this act's route profile (all variants if unresolved).
+        marks = {}
+        cohort, scope = [], self._scope(character, ascension, version)
+        try:
+            cohort = self._cohort(character, {}, deadline=deadline)
+            support["cohort"] = [m["username"] for m in cohort]
+            support["history_index"] = self.history.sync(self.client, cohort, scope, deadline=deadline, clock=self.clock)
+            rows = self.history.ancient_rows(cohort, scope)
+            act_ids = [self._act_ids.get((character, run.get("act")))]
+            if act_ids[0] is None:
+                _, _, act_ids = self.resolve_act(run.get("act"), [], deadline=deadline)
+            for act_id in act_ids:
+                runs = self.history.route_rows(cohort, scope, act_id)
+                if runs:
+                    prof = build_route_profile(runs, act_id, min_samples=self.config.min_context_samples)
+                    group = "wins" if not prof["samples"]["sparse"] else "all"
+                    marks.setdefault("hp", {})[act_id] = {"group": group, "boss_arrival_hp_pct":
+                                                          prof["hp_pct_checkpoints"][group]["boss_arrival"]}
+                    marks.setdefault("gold", {})[act_id] = {"group": group, "shop_arrival_gold":
+                                                            prof["shops"][group]["arrival_gold_per_visit"]}
+        except StatsUnavailable as exc:
+            rows, support["history_reason"] = [], str(exc)
+        except (OSError, sqlite3.Error) as exc:
+            rows, support["history_reason"] = [], "history_index_" + type(exc).__name__
+        hp_pct = player.get("hp") / player["max_hp"] * 100 if player.get("hp") is not None and player.get("max_hp") else None
+        experts = expert_offer_stats(rows, offered, hp_pct=hp_pct, act=run.get("act"), floor=run.get("floor"),
+                                     deck_ids=deck_ids,
+                                     similarity_min=self.config.deck_similarity_min,
+                                     min_samples=self.config.min_context_samples) if offered else {}
+        community, archetypes = {}, []
+        try:
+            table = self.client.get("/api/runs/metrics/relics", {"bracket": self.config.encounter_stats_bracket,
+                                    "character": character}, deadline=deadline).data
+            keep = ("win_rate", "win_rate_ci", "lift", "lift_n", "pick_rate", "pick_rate_by_act", "picks", "offered")
+            community = {_id(r.get("id")): {k: r[k] for k in keep if k in r} for r in table.get("rows") or []
+                         if isinstance(r, dict) and _id(r.get("id")) in offered}
+            support["community_scope"] = {"bracket": self.config.encounter_stats_bracket, "character": character,
+                                          "baseline_win_rate": table.get("baseline_win_rate"),
+                                          "note": "all patches; lift = floor-adjusted win-rate gain in points"}
+        except StatsUnavailable as exc:
+            support["community_reason"] = str(exc)
+        try:
+            data = self.client.get("/api/runs/archetypes", {"lang": self.config.lang}, deadline=deadline).data
+            archetypes = next((v for k, v in (data.get("characters") or {}).items() if _character(k) == character), [])
+        except StatsUnavailable as exc:
+            support["archetype_reason"] = str(exc)
+        for o in options:
+            rid = o["relic_id"]
+            if rid is None:
+                continue
+            relic = relics[rid]
+            o.update({"name": relic.get("name"), "rarity": relic.get("rarity"), "description": relic.get("description"),
+                      "pool_entry": entries.get(rid), "effects": relic_effects(relic)})
+            o["state_comparison"] = state_comparison(o["effects"], facts, hp=player.get("hp"), max_hp=player.get("max_hp"),
+                                                     gold=player.get("gold"), expert_marks=marks)
+            o["experts"] = experts.get(rid)
+            o["community"] = community.get(rid)
+            o["archetype_fit"] = archetype_fit(rid, archetypes, deck_ids)
+        labels([o for o in options if o["relic_id"]])
+        support["options"] = options
+        if self.config.elite_readiness_enabled:
+            ready = self._readiness_for_view(view, None, deadline=deadline)
+            if ready.get("reason"):
+                support["elite_gaps_reason"] = ready["reason"]
+            support["elite_gaps_by_act"] = {p["act_id"]: sorted({f"{g['need']} ({e['name']})" for e in p["elites"]
+                                                                 for g in e.get("gaps") or []})
+                                            for p in ready.get("pools") or []}
+        matched = sum(o["relic_id"] is not None for o in options)
+        support["status"] = "available" if offered and matched == len([o for o in options if o["match"] != "no_relic"]) \
+            else "partial" if offered else "unavailable"
+        if not offered:
+            support["reason"] = "no_matched_relic_options"
+        return support
 
     def _encounter_fallback(self, act_entry, encounters, character, max_hp, version, *, deadline):
         """Pooled /api/runs/encounter-stats means and death rates per node class (no percentiles)."""
