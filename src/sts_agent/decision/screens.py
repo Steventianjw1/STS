@@ -12,6 +12,7 @@ from typing import Any
 
 from ..observation import PHASE_COMBAT_ENDED, PHASE_COMBAT_READY, normalize
 from ..combat_preview import action_preview
+from .. import enemy_patterns
 from .models import sha
 
 SOURCE_INSPECTED = "source_inspected"
@@ -106,8 +107,21 @@ def _common_facts(obs: dict) -> dict:
 
 def _combat_facts(obs: dict) -> dict:
     f = _common_facts(obs)
-    f.update({"combat": obs["combat"], "hand": obs["hand"], "piles": obs["piles"], "enemies": obs["enemies"]})
+    f.update({"combat": obs["combat"], "hand": obs["hand"], "piles": obs["piles"],
+              "enemies": _enemies_with_patterns(obs)})
     return f
+
+
+def _enemies_with_patterns(obs: dict):
+    """Attach each enemy's reference move pattern and fill intent_forecast offsets 2-3 from it."""
+    ref = enemy_patterns.active()
+    if obs["enemies"] is None or ref is None:
+        return obs["enemies"]
+    out = []
+    for e in obs["enemies"]:
+        forecast, pattern = ref.annotate(e, ascension=obs["run"]["ascension"])
+        out.append({**e, "intent_forecast": forecast, "move_pattern": pattern})
+    return out
 
 
 def _discard_potions(b: _Builder, obs: dict):
@@ -159,9 +173,17 @@ def _combat_view(obs: dict, st: str) -> ScreenView:
     v = ScreenView("combat", st, ready, True, facts=_combat_facts(obs),
                    combat_round=(obs["combat"] or {}).get("round"))
     v.limitations.append("Card 'effects' fields are a partial text-parser hint; the description is authoritative.")
+    if enemy_patterns.active() is None:
+        v.limitations.append("Enemy reference move data is not installed (tools/fetch_monster_data.py): "
+                             "intent_forecast offsets 2 and 3 are unknown.")
+    else:
+        v.limitations.append(
+            f"intent_forecast offsets 2-3 are predictions from static {enemy_patterns.DATA_VERSION} move-pattern data, "
+            "starting at move_pattern.current_move. Their numbers are base values before Strength, Weak, Vulnerable "
+            "or other modifiers. The data omits conditional transitions (HP thresholds, phases, deaths, stuns, "
+            "player effects). The current move is exact only when position_source is mod_next_move_id.")
     v.limitations.extend([
-        "Enemy intents are simultaneous parts of the next enemy move, not successive rounds. "
-        "intent_forecast offsets 2 and 3 are unknown: the API exposes no three-turn lookahead.",
+        "Enemy intents are simultaneous parts of the next enemy move, not successive rounds.",
         "effect_preview contains game-native current-state damage/block variables for each target. "
         "Player and target status/relic modifiers are already included; do not apply them twice. "
         "This is not a simulation: triggers, status changes between hits, replay, and later actions can change outcomes. "

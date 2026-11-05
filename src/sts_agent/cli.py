@@ -27,6 +27,7 @@ from pathlib import Path
 from . import AGENT_VERSION, STS2MCP_SOURCE_DESCRIBE
 from .client import GameClient, GameClientError, parse_mod_version
 from .config import load_config
+from . import enemy_patterns
 from .decision.coordinator import LLM_PROVENANCE_LIVE, LLM_PROVENANCE_SCRIPTED, RunCoordinator
 from .decision.models import DecisionFrame
 from .decision.offline import ScriptedTextModel
@@ -68,6 +69,7 @@ def _build(args):
         cfg.policy = args.policy
     if getattr(args, "model", None):
         cfg.llm.model = args.model
+    enemy_patterns.configure(cfg.monster_data_path, game_build=cfg.game_build)
     client = GameClient(cfg.base_url, cfg.read_timeout_s, cfg.action_timeout_s)
     return cfg, used, client
 

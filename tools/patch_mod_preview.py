@@ -26,11 +26,18 @@ def patch(source: Path) -> None:
             raise SystemExit("Unsupported STS2MCP source: expected one player gold anchor.")
         text = text.replace(deck_anchor, deck_anchor + "\n" + deck_addition)
         changed = True
+    enemy_anchor = '            ["status"] = BuildPowersState(creature)\n        };'
+    enemy_addition = '        AddAgentMoveState(creature, state);'
+    if enemy_addition not in text:
+        if text.count(enemy_anchor) != 1:
+            raise SystemExit("Unsupported STS2MCP source: expected one enemy status anchor.")
+        text = text.replace(enemy_anchor, enemy_anchor + "\n" + enemy_addition)
+        changed = True
     if changed:
         builder.write_text(text, encoding="utf-8")
     shutil.copyfile(Path(__file__).resolve().parents[1] / "mod" / "McpMod.AgentPreview.cs",
                     source / "McpMod.AgentPreview.cs")
-    print("Native combat previews and permanent deck patched; rebuild and install STS2_MCP.dll.")
+    print("Native combat previews, permanent deck and enemy move ids patched; rebuild and install STS2_MCP.dll.")
 
 
 if __name__ == "__main__":

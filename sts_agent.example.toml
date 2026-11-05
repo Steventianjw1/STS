@@ -21,6 +21,10 @@ record_raw = true         # also write debug_raw.jsonl (raw API responses; not t
 # Optional: lets `doctor` read <game_dir>/mods/STS2_MCP.json. This path is never written to traces.
 # game_dir = 'D:\SteamLibrary\steamapps\common\Slay the Spire 2'
 
+# Enemy move-pattern reference (fetch with `python tools/fetch_monster_data.py`). Fills the
+# combat prompt's next-turn enemy predictions. A missing file leaves offsets 2-3 unknown.
+monster_data_path = "data/monster_reference/monsters.json"
+
 [limits]
 max_actions = 300                  # card plays + end turns per play-combat session
 max_elapsed_s = 1200.0             # wall clock per session
