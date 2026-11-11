@@ -120,6 +120,8 @@ class RunCoordinator:
         self.encounter_key: str | None = None
         self.history: list = []
         self.turn_intent: str | None = None
+        self.route_plan: dict | None = None   # survives encounters; a hypothesis shown back on map screens
+        self.route_outcomes: list = []        # every finished combat this run, for re-plan triggers
         self.combat: _Combat | None = None
         self.seen_combat = False
         self.recent_outcomes: deque = deque(maxlen=10)
@@ -215,6 +217,7 @@ class RunCoordinator:
                           f"post-combat screen (includes end-of-combat effects); potions used by this agent: "
                           f"{c.potions_used}.")}
         self.recent_outcomes.append(item)
+        self.route_outcomes.append({"encounter_type": c.encounter_type, "hp_lost": item["hp_lost"]})
         self.pending_combat_finished = True
         self.stats.combats_finished += 1
         if self.rec:
@@ -342,7 +345,8 @@ class RunCoordinator:
         if self.expert_stats is not None:
             started = self.clock()
             support = self.expert_stats.for_view(
-                v, budget_s=max(0.0, self._deadline() - started - self.model_timeout_s))
+                v, budget_s=max(0.0, self._deadline() - started - self.model_timeout_s),
+                route_state={"plan": self.route_plan, "outcomes": self.route_outcomes})
             self.last_progress += self.clock() - started  # evidence latency is not a game stall
         return DecisionFrame(
             run_id=self.run_id, run_id_source=self.run_id_source, objective=self.objective,
@@ -377,7 +381,8 @@ class RunCoordinator:
                             frame=frame.to_record(),
                             choice=None if not result.ok else {"action_id": result.choice.action_id,
                                                                "reason": result.choice.reason,
-                                                               "turn_intent": result.choice.turn_intent},
+                                                               "turn_intent": result.choice.turn_intent,
+                                                               "route_plan": result.choice.route_plan},
                             attempts=result.attempts, error_kind=result.error_kind, diagnostic=result.diagnostic,
                             history_dropped=result.history_dropped, support_trim=result.support_trim)
         if not result.ok:
@@ -391,6 +396,8 @@ class RunCoordinator:
         cand = frame.candidate(ch.action_id)
         binding = frame.bindings[ch.action_id]
         self.turn_intent = ch.turn_intent or None
+        if v.kind == "map" and ch.route_plan is not None:
+            self.route_plan = _stored_route_plan(ch.route_plan, frame, v, len(self.route_outcomes))
         self.log(f"[{seq}] {v.kind}: {cand['description']} - {ch.reason}")
 
         # Fresh validation: same screen state and the same binding must still exist.
@@ -564,7 +571,6 @@ def _last_call(model):
     lc = getattr(model, "last_call", None)
     return lc.to_dict() if hasattr(lc, "to_dict") else None
 
-
 def _change_reasons(old, new, *, initial, combat_finished) -> list:
     if initial or old is None:
         return ["initial"]
@@ -584,3 +590,20 @@ def _change_reasons(old, new, *, initial, combat_finished) -> list:
     if old.get("opportunities") != new.get("opportunities"):
         r.append("opportunities_changed")
     return r or ["corrected_facts"]
+
+
+def _stored_route_plan(plan: dict, frame, v: ScreenView, outcomes_seen: int) -> dict:
+    """Snapshot what the plan assumed, so later map screens can detect when it no longer holds."""
+    support = frame.decision_support or {}
+    path = next((p for p in (support.get("paths") or {}).get("candidates") or []
+                 if plan["path_id"] and p.get("path_id") == plan["path_id"]), None)
+    run, player = v.facts.get("run") or {}, v.facts.get("player") or {}
+    here = (v.facts.get("screen_details") or {}).get("current_position") or {}
+    hp, max_hp = player.get("hp"), player.get("max_hp")
+    return {**plan, "act": run.get("act"), "floor": run.get("floor"),
+            "coords": path["coords"] if path else None, "trajectory": path["trajectory"] if path else None,
+            "start": [here.get("col"), here.get("row")],
+            "hp_pct": hp / max_hp * 100 if hp is not None and max_hp else None, "gold": player.get("gold"),
+            "relics": sorted(str(r.get("id") or r.get("name")) for r in v.facts.get("relics") or []),
+            "potions": [str(p.get("id") or p.get("name")) for p in v.facts.get("potions") or []],
+            "outcomes_seen": outcomes_seen}

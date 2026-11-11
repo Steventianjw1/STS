@@ -132,7 +132,8 @@ class MonsterReference:
                     "intents": enemy.get("intents")}
         rec, matched_by = self._record(enemy)
         if rec is None:
-            unknown = [{"enemy_turn_offset": k, "source": "unknown", "reason": "enemy_not_in_reference_data"}
+            unknown = [{"enemy_turn_offset": k, "source": "unknown", "intents": None,
+                        "reason": "enemy_not_in_reference_data"}
                        for k in range(2, FORECAST_TURNS + 1)]
             return [observed, *unknown], {"available": False, "reason": "enemy_not_in_reference_data"}
         moves = {m["id"]: m for m in rec["moves"] if isinstance(m, dict) and m.get("id")}
@@ -146,7 +147,7 @@ class MonsterReference:
         dist = {current: 1.0} if current else None
         for k in range(2, FORECAST_TURNS + 1):
             if dist is None:
-                forecast.append({"enemy_turn_offset": k, "source": "unknown",
+                forecast.append({"enemy_turn_offset": k, "source": "unknown", "intents": None,
                                  "reason": f"current pattern position unknown ({position_source})" if k == 2
                                  else "previous turn not predictable from the data"})
                 continue
@@ -160,7 +161,7 @@ class MonsterReference:
                     nxt[m2] = nxt.get(m2, 0.0) + p * p2
             nxt = {m: p for m, p in nxt.items() if p > _MIN_PROB}
             if not nxt:
-                forecast.append({"enemy_turn_offset": k, "source": "unknown",
+                forecast.append({"enemy_turn_offset": k, "source": "unknown", "intents": None,
                                  "reason": "the data gives no single next move (conditional or missing transition)"})
                 dist = None
                 continue

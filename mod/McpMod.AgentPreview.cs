@@ -8,6 +8,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Runs;
 
 namespace STS2_MCP;
 
@@ -46,6 +47,15 @@ public static partial class McpMod
                     .Where(e => e.Monster == monster).Select(e => e.Move.Id).TakeLast(5).ToList();
         }
         catch { }
+    }
+
+    private static Dictionary<string, object?>? BuildAgentAncientMap(RunState runState)
+    {
+        // Read-only copy of the current act's map for planning before an ancient choice.
+        // Same builder as the map screen; it reads run state and never opens the map
+        // or changes UI state. Travel options are not actionable from the event screen.
+        try { return BuildMapState(runState); }
+        catch { return null; }
     }
 
     private static Dictionary<string, object?> BuildAgentPreview(CardModel card, Creature? target)

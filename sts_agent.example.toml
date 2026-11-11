@@ -73,4 +73,14 @@ floor_window = 3                  # nearby floor +/- 3, then act, then indexed c
 min_context_samples = 20          # report widening and sparse final samples
 deck_similarity_min = 0.5         # base-card multiset Jaccard; excludes incomplete card identities
 deck_advice_enabled = true        # requires an explicit permanent deck from the patched mod
+route_planning_enabled = true     # map screens: HP-loss model per node class + path enumeration
+route_candidates = 6              # non-dominated paths shown to the model (labeled, never scored)
+route_max_routes = 2000           # distinct node-type sequences kept per map node
+encounter_stats_bracket = "solo"  # fallback when own runs are too few: solo, a10, wr30, wr50, wr75
+replan_hp_tolerance_pct = 15.0    # re-plan trigger: HP this far (% of max HP) from the projection
+replan_gold_tolerance = 100       # re-plan trigger: gold this far from the projection
+elite_readiness_enabled = true    # elite threats (Spire Codex catalogs) vs. the patched mod's permanent deck
+elite_block_attack_pct = 20.0     # block gap rule: elite attack turn >= this % of max HP, or it gains Strength
+elite_trigger_steps = 3           # re-plan trigger: planned elite within this many steps while gaps remain
+ancient_advisor_enabled = true    # ancient screens: relic effects vs. deck/state, expert offer stats, community lift
 # Optional SPIRE_CODEX_API_KEY belongs in .env, never in this file.
