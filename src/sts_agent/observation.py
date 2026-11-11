@@ -119,6 +119,11 @@ def _enemy(raw: dict) -> dict:
         "max_hp": _int_or_none(raw.get("max_hp")),
         "block": _int_or_none(raw.get("block")),
         "statuses": _statuses(raw.get("status")),
+        # From the agent mod extension; None = extension not installed or not readable.
+        "monster_id": _str_or_none(raw.get("monster_id")),
+        "next_move_id": _str_or_none(raw.get("next_move_id")),
+        "move_history": ([m for m in raw["move_history"] if isinstance(m, str)]
+                         if isinstance(raw.get("move_history"), list) else None),
         "intents": intents,
         # Multiple intents describe ONE move, not successive rounds.
         "intent_forecast": [

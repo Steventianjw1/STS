@@ -2,6 +2,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Combat.History.Entries;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
@@ -27,6 +29,23 @@ public static partial class McpMod
             }).ToList();
         }
         catch { return null; }
+    }
+
+    private static void AddAgentMoveState(Creature creature, Dictionary<string, object?> state)
+    {
+        // Read-only: the monster id, the id of the move behind the shown intent, and
+        // this combat's performed moves. Unreadable values stay null (unknown).
+        var monster = creature.Monster;
+        try { state["monster_id"] = monster?.Id.Entry; } catch { }
+        try { state["next_move_id"] = monster?.NextMove?.Id; } catch { }
+        try
+        {
+            var history = CombatManager.Instance?.History;
+            if (monster != null && history != null)
+                state["move_history"] = history.Entries.OfType<MonsterPerformedMoveEntry>()
+                    .Where(e => e.Monster == monster).Select(e => e.Move.Id).TakeLast(5).ToList();
+        }
+        catch { }
     }
 
     private static Dictionary<string, object?> BuildAgentPreview(CardModel card, Creature? target)

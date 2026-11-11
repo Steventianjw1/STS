@@ -14,6 +14,7 @@ conftest.py
 htmlcov/
 coverage.xml
 traces/
+data/
 sts_agent.toml
 .env
 .env.*
