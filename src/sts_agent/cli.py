@@ -473,7 +473,7 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
         f"{', SCRIPTED' if scripted else ''})")
     scope = {"step": "step", "play-combat": "combat", "play-run": "run"}[command]
     coord = RunCoordinator(client, policy, planner=planner, recorder=rec, limits=cfg.limits, scope=scope, autobattle=autobattle,
-                           offer_handoff=cfg.combat_search.offer_handoff,
+                           offer_handoff=cfg.combat_search.offer_handoff, what_if_tools=cfg.llm.what_if_tools,
                            expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build)
                            if facts_source != "synthetic" and not scripted else None,
                            run_id=run_id, run_id_source=run_id_source, facts_source=facts_source,

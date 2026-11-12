@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 SNAPSHOT_SCHEMA_VERSION = "sts2-strategic-snapshot-0"
-ASSESSMENT_SCHEMA_VERSION = "sts2-strategic-assessment-0"
+ASSESSMENT_SCHEMA_VERSION = "sts2-strategic-assessment-1"
 
 MAX_SNAPSHOT_BYTES = 64 * 1024
 MAX_MODEL_TEXT_BYTES = 16 * 1024
@@ -56,6 +56,10 @@ FACT_KEYS = ("run", "resources", "deck", "relics", "potions", "opportunities", "
 DIMENSIONS = ("immediate_threats", "damage", "defense", "scaling", "draw_consistency",
               "potion_needs", "upcoming_opportunities")
 CONFIDENCE = ("low", "medium", "high")
+# standing_plan: the maintained deck plan every later choice is checked against.
+PLAN_LISTS = {"deck_needs": 160, "avoid": 160, "removal_targets": 80, "upgrade_targets": 80}   # key -> item chars
+PLAN_TEXTS = {"skip_rule": 240, "boss_prep": 240}
+MAX_PLAN_ITEMS = 4
 
 _SHORT, _NAME, _TEXT = 80, 120, 1000
 MAX_GLOSSARY_TERMS = 60
@@ -457,7 +461,7 @@ def parse_assessment(text: Any, facts: dict) -> dict:
         raise OutputError(f"malformed JSON: {e}") from None
 
     E = OutputError
-    _obj(data, "", ("summary", "dimensions", "priorities", "uncertainties", "change_note"), err=E)
+    _obj(data, "", ("summary", "dimensions", "priorities", "standing_plan", "uncertainties", "change_note"), err=E)
     _str(data["summary"], "/summary", maxlen=600, nullable=False, nonempty=True, err=E)
     if len(data["summary"].split()) > 60:
         _fail(E, "/summary", "more than 60 words")
@@ -484,6 +488,13 @@ def parse_assessment(text: Any, facts: dict) -> dict:
         _str(it["tradeoff"], p + "/tradeoff", maxlen=160, nullable=False, err=E)
         _str(it["reconsider_when"], p + "/reconsider_when", maxlen=160, nullable=False, err=E)
         _evidence(it["evidence"], p + "/evidence", facts)
+
+    plan = _obj(data["standing_plan"], "/standing_plan", tuple(PLAN_LISTS) + tuple(PLAN_TEXTS), err=E)
+    for key, chars in PLAN_LISTS.items():
+        for i, it in enumerate(_list(plan[key], f"/standing_plan/{key}", maxlen=MAX_PLAN_ITEMS, err=E)):
+            _str(it, f"/standing_plan/{key}/{i}", maxlen=chars, nullable=False, nonempty=True, err=E)
+    for key, chars in PLAN_TEXTS.items():
+        _str(plan[key], f"/standing_plan/{key}", maxlen=chars, nullable=False, nonempty=True, err=E)
 
     unc = _list(data["uncertainties"], "/uncertainties", maxlen=5, err=E)
     for i, u in enumerate(unc):

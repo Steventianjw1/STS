@@ -5,7 +5,8 @@ of the run. It is integrated with `decision/coordinator.py`; the same configured
 DeepSeek or Anthropic provider makes assessment and action calls. This reference
 replaces the original standalone-planner implementation handoff.
 
-The assessor describes needs and threats. The [decision engine](LLM_DECISION_ENGINE.md)
+The assessor describes needs and threats and maintains a standing plan for the
+deck. The [decision engine](LLM_DECISION_ENGINE.md)
 selects an offered action and the coordinator validates and executes it. The
 assessment is labeled model judgment, not a fact or an instruction that overrides
 the current position.
@@ -45,7 +46,7 @@ with the identical snapshot. All memory remains session-local in the CLI.
 ## Snapshot contract
 
 Current schemas are `sts2-strategic-snapshot-0` and
-`sts2-strategic-assessment-0`; see `strategic/prompts.py` for the current prompt
+`sts2-strategic-assessment-1`; see `strategic/prompts.py` for the current prompt
 version. Snapshot fields include caller-owned `run_id`, nonnegative `revision`,
 `data_source` (`observed`, `manual`, `synthetic`), `live_validated`, `facts`, and
 bounded `change_reasons`. Synthetic input cannot be live validated.
@@ -68,6 +69,10 @@ Every top-level fact key is required, with an object or null value:
 | `opportunities` | `{items: [...]}` for current non-combat candidates; null during combat. |
 | `recent_outcomes` | `{items: [...]}` containing up to ten observed combat summaries retained by the coordinator. |
 
+One optional key may be present and is never null: `glossary`, `{items: [{term,
+definition}]}` with up to 60 entries of the game's own tooltip text for terms on
+the cards, relics, potions, and offers above (the coordinator sends at most 40).
+
 Deck cards carry `id`, `name`, `count`, `upgraded`, `cost`, `type`, and
 `description`. The coordinator creates unique list-entry IDs using card ID,
 an upgrade suffix, and an occurrence suffix when needed; these are not game
@@ -78,13 +83,16 @@ and have a separate prompt-size limit.
 Opportunities carry `id`, `kind`, `description`, and `details` (a bounded string).
 Kinds include rewards, shop items/removals, rest sites, routes, events,
 encounters, and other visible choices. The coordinator takes at most 40 items.
-It passes immediate offered choices, not the full external evidence package or
-an entire future map, into the assessment. Route and ancient evidence are
+It passes immediate offered choices, not the full external evidence package,
+into the assessment. In a room reached from an observed map it appends one
+`route` opportunity with id `map_after_this_room`: the next rooms, the act boss,
+and ranges over every continuation. That entry is not a choice on the screen. Route and ancient evidence are
 attached separately to action decision frames.
 
 Recent outcomes carry `id`, `encounter_type`, `result`, `hp_lost`, `turns`, and
 `notes`. HP loss is the nonnegative net drop measured at the first post-combat
-screen, including end-of-combat effects. Potion counts cover use by this agent;
+screen, including end-of-combat effects; the notes also give HP removed and
+regained during the fight. Potion counts cover use by this agent;
 these summaries do not prove why combat went well or badly.
 
 Complete nested shapes and limits are in the `strategic/models.py` module
@@ -103,6 +111,10 @@ dimensions: exactly the seven keys listed below
 priorities: 0..3 items
   each: need (<=160), horizon (<=80), tradeoff (<=160),
         reconsider_when (<=160), evidence (0..3 JSON Pointer paths)
+standing_plan: exactly these six keys
+  deck_needs, avoid: 0..4 strings each, each <=160 characters
+  removal_targets, upgrade_targets: 0..4 strings each, each <=80 characters
+  skip_rule, boss_prep: nonempty strings, each <=240 characters
 uncertainties: 0..5 strings, each <=160 characters
 change_note: <=240 characters
 ```
@@ -116,6 +128,22 @@ change_note: <=240 characters
 | `draw_consistency` | Can it reliably find and play what it needs? |
 | `potion_needs` | What needs temporary coverage, and when should reserves be used or replenished? |
 | `upcoming_opportunities` | Which visible choices can address current needs? |
+
+`standing_plan` is the maintained part of the assessment. Every later reward,
+shop, rest, event, and removal decision is told to check its choice against it,
+and the planner is told to start from the previous plan and change an entry only
+for a stated reason.
+
+| Field | Meaning |
+| --- | --- |
+| `deck_needs` | Capabilities the deck still lacks for the fights ahead, most urgent first. |
+| `avoid` | What more of would now make the deck worse. |
+| `removal_targets`, `upgrade_targets` | Names of current deck cards, best first. A card that cannot be removed is never a removal target. |
+| `skip_rule` | The test an offered card must pass to be added instead of skipping or keeping gold. |
+| `boss_prep` | What the act boss demands of deck, HP, and potions; says unknown when no boss has been observed. |
+
+The plan is phrased as needs and anti-needs, never as a named archetype. Its
+strings are not validated against the deck or the map.
 
 Evidence pointers resolve relative to the supplied facts, for example
 `/resources/hp` or `/deck/cards/0/description`, with JSON Pointer escaping.

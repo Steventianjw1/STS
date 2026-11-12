@@ -34,6 +34,7 @@ from ..strategic import StrategicSnapshot
 from .models import Choice, DecisionFrame
 from .policy import LLMDecisionPolicy, model_identity
 from .screens import CAPABILITIES, MOD_REVISION, ScreenView, automatic_action, build_view
+from .whatif import WhatIfTools
 
 # stop reasons (shared names with the baseline runner where they mean the same thing)
 STOP_COMBAT_ENDED = "combat_ended"
@@ -121,6 +122,7 @@ class CoordStats:
     autobattle_combats: int = 0
     offer_handoffs: int = 0       # in-fight offers Mentor held that this agent's model decided
     offer_ai_picks: int = 0       # held in-fight offers handed back to Mentor's own recommendation
+    tool_calls: int = 0           # what-if tool requests answered
     blocked: set = field(default_factory=set)   # (view fingerprint, action_id)
 
 
@@ -133,7 +135,7 @@ _REWARD_KIND = {"gold": "gold_reward", "potion": "potion_reward", "relic": "reli
 class RunCoordinator:
     def __init__(self, client, policy: LLMDecisionPolicy, *, planner=None, recorder=None, expert_stats=None, autobattle=None,
                  offer_handoff: bool = False, limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
-                 facts_source: str = "observed", objective: str,
+                 facts_source: str = "observed", objective: str, what_if_tools: bool = True,
                  state_path=None, clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
                  log: Callable[[str], None] = print):
         if scope not in ("run", "combat", "step"):
@@ -145,6 +147,7 @@ class RunCoordinator:
         self._offer_hold: bool | None = None         # Mentor's answer to the last hold request (None: not asked)
         self._offers_answered: dict = {}             # held offer id -> clock time one answer was sent
         self._handoff = False                        # True only while deciding a held offer
+        self.whatif = WhatIfTools(self) if what_if_tools else None
         self.lim = limits or Limits()
         self.scope, self.run_id, self.run_id_source = scope, run_id, run_id_source
         self.facts_source, self.objective = facts_source, objective
@@ -819,11 +822,12 @@ class RunCoordinator:
 
         self.seq += 1
         seq = self.seq
-        result = self.policy.choose(frame)
+        result = self.policy.choose(frame, tools=self.whatif) if self.whatif else self.policy.choose(frame)
         self.last_progress = self.clock()
         self.stats.decisions += 1
         self.stats.provider_retries += result.provider_retries
-        self.stats.model_retries += max(0, len(result.attempts) - 1 - result.provider_retries)
+        self.stats.tool_calls += result.tool_calls
+        self.stats.model_retries += max(0, len(result.attempts) - 1 - result.provider_retries - result.tool_calls)
         if result.search is not None:
             if result.source == "llm":
                 self.stats.search_misses += 1
@@ -843,7 +847,8 @@ class RunCoordinator:
                                                                "shop_plan": result.choice.shop_plan},
                             attempts=result.attempts, error_kind=result.error_kind, diagnostic=result.diagnostic,
                             history_dropped=result.history_dropped, support_trim=result.support_trim,
-                            provider_retries=result.provider_retries)
+                            provider_retries=result.provider_retries, tool_calls=result.tool_calls,
+                            prompt_modules=result.prompt_modules)
         if not result.ok:
             reason = {"input_too_large": STOP_INPUT_TOO_LARGE, "invalid_output": STOP_INVALID_MODEL_OUTPUT}.get(
                 result.error_kind, STOP_MODEL_FAILED)
@@ -1280,6 +1285,7 @@ class RunCoordinator:
             "decisions": s.decisions, "actions_sent": s.actions_sent, "actions_resolved": s.actions_resolved,
             "rejections": s.rejections, "stale_decisions": s.stale, "ambiguous_responses": s.ambiguous,
             "model_corrective_retries": s.model_retries, "model_provider_retries": s.provider_retries,
+            "what_if_tool_calls": s.tool_calls,
             "strategic_model_updates": s.strategic_updates,
             "strategic_failures": s.strategic_failures, "combats_finished": s.combats_finished,
             "evaluation": self._evaluation(),

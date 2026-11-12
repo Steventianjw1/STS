@@ -38,6 +38,7 @@ class LLMConfig:
     max_input_bytes: int = 96 * 1024       # decision prompt size; oldest history is trimmed first
     objective: str | None = None           # None = ordinary victory at current character/difficulty
     strategic_planner: bool = True
+    what_if_tools: bool = True             # the model may spend one extra call per decision on a what-if calculation
 
 
 @dataclass

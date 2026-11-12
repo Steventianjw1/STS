@@ -72,7 +72,7 @@ running game; a trace label does not automatically certify a screen.
 
 | Type | Contents |
 | --- | --- |
-| `llm_decision` | `seq`, provenance, policy/prompt/model identity, full `frame`, `choice` or null, `attempts`, `error_kind`, `diagnostic`, `history_dropped`, and `support_trim`. Written before action execution. |
+| `llm_decision` | `seq`, provenance, policy/prompt/model identity, full `frame`, `choice` or null, `attempts`, `error_kind`, `diagnostic`, `history_dropped`, `support_trim`, `provider_retries`, `tool_calls`, and `prompt_modules`. Written before action execution. |
 | `outcome` | Same `seq`, verdict, game response, `timing.since_send_s`, `observation_after` (kind/fingerprint/facts), and detail. |
 | `strategic_update` | Revision/snapshot ID/change reasons, status, whether a model was called, diagnostic, assessment, applicability, call metadata, and attempts. |
 | `event` | Session start and `combat_finished` with observed HP change, turns, and agent potion-use notes. |
@@ -85,10 +85,12 @@ facts, candidates, private `bindings`, limitations, assessment, previous turn
 intent, history, and optional `decision_support`. Bindings contain executable
 payloads and resolution modes; the public LLM message omits them and labels facts
 as `current_facts`. Frames carry at most eight recent encounter history entries.
-The current decision prompt version is `decision-prompt-10`.
+The current decision prompt version is `decision-prompt-18`. `prompt_modules`
+names the instruction modules assembled for that screen.
 
-A successful recorded choice has `action_id`, `reason`, `turn_intent`, and
-`route_plan` (null or the optional map-only plan). Plans have `path_id`, `plan`,
+A successful recorded choice has `action_id`, `reason`, `turn_intent`,
+`route_plan` (null or the optional map-only plan), and `shop_plan` (null or the
+ordered shop actions). Plans have `path_id`, `plan`,
 and `change_course_if`; supplied path IDs must be compatible with the chosen
 map action. The coordinator keeps additional plan state/trajectory in memory;
 that internal state is not the choice object. Applicable route-plan status and
@@ -96,7 +98,9 @@ triggers reappear inside later map support.
 
 Attempt records hold bounded response text (up to 8 KiB for decisions), a
 validation error, and provider call usage/stop reason/request ID/latency when
-available. Strategic attempts have their separate 16 KiB text bound. No private
+available. An attempt that was a what-if tool request also has `tool_call` with
+the parsed `request` and the computed `result`; a failed provider call that was
+retried is an attempt with an error and no response text. Strategic attempts have their separate 16 KiB text bound. No private
 reasoning transcript is requested; DeepSeek `reasoning_content` is discarded.
 Reasons and conditional plans are the contracted public explanation.
 

@@ -64,6 +64,7 @@ max_calls_per_run = 2000           # shared per session: decisions + strategy + 
 max_input_bytes = 98304            # trim support detail, community advice, history, then all support; preserve facts/candidates
 # objective = "Win the run (ordinary victory) with the current character at the current difficulty."
 strategic_planner = true
+what_if_tools = true               # the model may spend one extra call per decision on deck_after / route_projection
 
 [expert_stats]
 enabled = true

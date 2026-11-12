@@ -21,7 +21,10 @@ fallback for an LLM failure.
   contents during combat, grouped with counts and without hidden draw order.
 - Optional game-native, target-specific damage/block previews and static enemy
   move-pattern forecasts for the two enemy turns after the observed next move.
-- A shared-provider strategic assessor with seven dimensions and deck-aware refreshes.
+- A shared-provider strategic assessor with seven dimensions, a maintained
+  standing plan for the deck, and deck-aware refreshes.
+- Per-screen instructions, the observed map ahead of each room, the game's own
+  keyword tooltips, and two optional what-if calculations.
 - Spire Codex expert rates, floor/deck-conditioned history, route HP-risk and path
   projections, elite-readiness analysis, and ancient-offer evidence using the act map.
 - Bounded prompts, model-call/token budgets, JSONL traces, and offline validation
@@ -105,7 +108,8 @@ without shell expansion. Credentials belong outside TOML; key-like fields are re
 `sts-agent doctor` checks local provider setup and game connectivity without a
 model call. Missing model, key, or SDK stops gameplay commands without a baseline
 fallback. Configure call/token budgets and optional token prices under `[llm]`.
-Decision calls, strategic calls, and corrective retries share one provider budget.
+Decision calls, strategic calls, corrective and provider retries, and what-if
+tool calls share one provider budget.
 
 ## Install the mod and optional data
 
@@ -193,10 +197,14 @@ observe and settle -> refresh strategy when needed -> attach advisory evidence
 
 The model chooses confirmations, rewards, end turn, and leaving as well as card
 plays. At most one corrective retry is allowed for invalid decision output;
-provider failures stop. An ambiguous gameplay request is inspected and never resent.
+transient provider failures are retried up to `[llm].provider_retries` times and
+other provider failures stop. The model may spend one extra call per decision on
+a what-if tool (`[llm].what_if_tools`). An ambiguous gameplay request is inspected and never resent.
 Rejected candidates are withheld for that exact state.
 
-The seven-dimension strategic assessment persists for the session. Encounter
+The seven-dimension strategic assessment and its standing plan (deck needs, what
+to avoid, removal and upgrade targets, a skip rule, boss preparation) persist for
+the session and are shown on every decision. Encounter
 memory keeps up to eight decisions/outcomes and a conditional turn intent.
 Recent combat summaries supplied to the assessor are capped at ten.
 An optional map-only `route_plan` persists across encounters and is revisited
