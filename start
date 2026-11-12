@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
+for python in .venv/bin/python .venv/Scripts/python.exe .venv/python.exe; do
+    if [[ -x "$python" ]]; then
+        exec "$python" -m sts_agent start-run "$@"
+    fi
+done
+if command -v python3 >/dev/null 2>&1; then
+    exec python3 -m sts_agent start-run "$@"
+fi
+exec python -m sts_agent start-run "$@"

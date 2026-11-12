@@ -7,13 +7,14 @@
     sts-agent step            execute exactly ONE decision on the current screen and record it
     sts-agent play-combat     act until the current fight ends or a stop condition triggers
     sts-agent play-run        continue an already-started run across supported screens (LLM only)
+    sts-agent start-run       prompt for character/ascension, replace the old run, then play from Neow
     sts-agent decide-frame F  choose from a saved decision frame offline (never executes)
     sts-agent replay PATH     baseline: re-run the policy; LLM: validate recorded decisions (no model call)
     sts-agent capabilities    print the screen capability table
 
 The gameplay policy defaults to "llm". "baseline" is an explicit comparison mode
 (--policy baseline or policy = "baseline"); it is never used as a fallback.
-Nothing is sent to the game unless you run step, play-combat or play-run.
+Nothing is sent to the game unless you run step, play-combat, play-run or start-run.
 """
 from __future__ import annotations
 
@@ -43,6 +44,7 @@ from .expert_stats import ExpertDecisionStats, StatsUnavailable
 from .replay import decide_from_observation_file, replay_trace
 from .runner import Runner
 from .strategic import StrategicPlanner
+from .startup import RunStartup, StartupError, ascension_level, character_id, prompt_settings
 from .trace import LLM_TRACE_FORMAT_VERSION, TraceRecorder, new_session_id
 
 # What this adapter has actually been checked against.
@@ -61,7 +63,7 @@ def _build(args):
     for name in ("max_actions", "max_elapsed_s", "max_no_progress_s"):
         v = getattr(args, name, None)
         if v is not None:
-            target = "max_run_actions" if (name == "max_actions" and getattr(args, "cmd", None) == "play-run") else name
+            target = "max_run_actions" if (name == "max_actions" and getattr(args, "cmd", None) in ("play-run", "start-run")) else name
             setattr(cfg.limits, target, v)
     if getattr(args, "no_raw", False):
         cfg.record_raw = False
@@ -427,6 +429,25 @@ def cmd_play_run(args) -> int:
     return _run(args, "play-run")
 
 
+def cmd_start_run(args) -> int:
+    try:
+        character, ascension = prompt_settings(args.character, args.ascension)
+        cfg, _, client = _build(args)
+        if cfg.policy != "llm":
+            raise SetupError("start-run requires policy 'llm'.")
+        model = _build_model(cfg)  # Validate provider before replacing the current run; no model call.
+        client.hello()
+        RunStartup(client, timeout_s=args.setup_timeout_s,
+                   poll_interval_s=cfg.limits.poll_interval_s).start(character, ascension)
+    except (EOFError, KeyboardInterrupt):
+        print("Run setup cancelled.", file=sys.stderr)
+        return 130
+    except (StartupError, SetupError, GameClientError, OSError, ValueError) as exc:
+        print(f"Cannot start run: {exc}", file=sys.stderr)
+        return 2
+    return run_llm_session(cfg, client, model, "play-run")
+
+
 # -- replay ----------------------------------------------------------------------
 def cmd_replay(args) -> int:
     p = Path(args.path)
@@ -525,6 +546,19 @@ def main(argv=None) -> int:
     h.add_argument("--max-new-runs", type=int, default=500)
     h.add_argument("--max-seconds", type=float, default=600.0)
     h.set_defaults(fn=cmd_sync_history)
+
+    s = sub.add_parser("start-run", help="replace the current run and automatically set up a new run through Neow dialogue")
+    for flag in ("config", "base-url", "model"):
+        s.add_argument("--" + flag, default=argparse.SUPPRESS)
+    s.add_argument("--character", type=character_id, help="character name or number (default: prompt)")
+    s.add_argument("--ascension", type=ascension_level, help="0-10 (default: prompt)")
+    s.add_argument("--setup-timeout-s", type=float, default=120.0)
+    s.add_argument("--trace-dir")
+    s.add_argument("--no-raw", action="store_true")
+    s.add_argument("--max-actions", type=int)
+    s.add_argument("--max-elapsed-s", type=float)
+    s.add_argument("--max-no-progress-s", type=float)
+    s.set_defaults(fn=cmd_start_run)
 
     args = ap.parse_args(argv)
     return args.fn(args)
