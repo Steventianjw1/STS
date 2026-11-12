@@ -88,8 +88,11 @@ def _build_model(cfg):
                          price_input_usd_per_mtok=cfg.llm.price_input_usd_per_mtok,
                          price_output_usd_per_mtok=cfg.llm.price_output_usd_per_mtok)
     try:
+        options = {}
+        if cfg.llm.provider == "deepseek" and cfg.llm.deepseek_reasoning_effort is not None:
+            options["reasoning_effort"] = cfg.llm.deepseek_reasoning_effort
         return providers[cfg.llm.provider](cfg.llm.model, max_output_tokens=cfg.llm.max_output_tokens,
-                                  timeout_s=cfg.llm.timeout_s, budget=budget)
+                                  timeout_s=cfg.llm.timeout_s, budget=budget, **options)
     except ProviderConfigError as e:
         raise SetupError(f"LLM policy is not set up: {e}. Nothing was sent. "
                          "(Use --policy baseline only if you explicitly want the heuristic comparison mode.)") from None

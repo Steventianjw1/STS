@@ -21,12 +21,16 @@ class DeepSeekTextModel:
 
     def __init__(self, model: str | None, *, max_output_tokens: int = 4096,
                  timeout_s: float = 60.0, budget: UsageBudget | None = None,
+                 reasoning_effort: str | None = None,
                  client: Any = None, clock: Callable[[], float] = time.monotonic):
         if not isinstance(model, str) or not model.strip():
             raise ProviderConfigError("set DEEPSEEK_MODEL in .env, [llm] model, or --model")
         self.model = model.strip()
         self.max_output_tokens = int(max_output_tokens)
         self.timeout_s = float(timeout_s)
+        if reasoning_effort is not None and reasoning_effort not in ("low", "high", "max"):
+            raise ProviderConfigError("DeepSeek reasoning effort must be low, high, or max")
+        self.reasoning_effort = reasoning_effort
         self.budget = budget or UsageBudget()
         self.clock = clock
         self.last_call: CallRecord | None = None
@@ -48,7 +52,11 @@ class DeepSeekTextModel:
     def identity(self) -> dict:
         return {"provider": self.provider, "model": self.model,
                 "max_output_tokens": self.max_output_tokens, "timeout_s": self.timeout_s,
+                **self._reasoning_options(),
                 "sdk_retries": 0, "scripted": False}
+
+    def _reasoning_options(self) -> dict:
+        return {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort is not None else {}
 
     def complete(self, *, system: str, user: str) -> str:
         self.budget.check_before_call()
@@ -59,7 +67,7 @@ class DeepSeekTextModel:
                 model=self.model, messages=[{"role": "system", "content": system},
                                             {"role": "user", "content": user}],
                 max_tokens=self.max_output_tokens, stream=False,
-                response_format={"type": "json_object"})
+                response_format={"type": "json_object"}, **self._reasoning_options())
         except Exception as exc:
             status = getattr(exc, "status_code", None)
             kind = "timeout" if "Timeout" in type(exc).__name__ else (f"http_{status}" if status else "transport")

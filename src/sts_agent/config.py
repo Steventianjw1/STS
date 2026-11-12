@@ -29,6 +29,7 @@ class LLMConfig:
     model: str | None = None               # REQUIRED for policy="llm"; no default model is assumed
     max_output_tokens: int = 1024
     timeout_s: float = 60.0                # whole-call budget; SDK retries are disabled
+    deepseek_reasoning_effort: str | None = None  # None uses the provider default
     max_calls_per_run: int | None = 2000
     max_input_tokens_per_run: int | None = None
     max_output_tokens_per_run: int | None = None

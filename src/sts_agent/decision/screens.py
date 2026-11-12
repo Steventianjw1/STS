@@ -427,12 +427,14 @@ def _rest(raw, obs):
     opts = [{"index": _i(o.get("index")), "id": _s(o.get("id"), 40), "name": _s(o.get("name"), 120),
              "description": _s(o.get("description")), "is_enabled": o.get("is_enabled") is True}
             for o in r.get("options") or [] if isinstance(o, dict)]
-    v, b = _room("rest_site", raw, obs, {"options": opts, "can_proceed": r.get("can_proceed")})
-    for o in opts:
-        if o["index"] is not None and o["is_enabled"]:
-            b.add(f"rest_{o['index']}", "choose_rest_option", f"Rest site: {o['name']}", o,
-                  {"action": "choose_rest_option", "index": o["index"]})
-    if r.get("can_proceed") is True:
+    available = [o for o in opts if o["index"] is not None and o["is_enabled"]]
+    can_proceed = r.get("can_proceed") is True
+    v, b = _room("rest_site", raw, obs, {"options": opts, "can_proceed": r.get("can_proceed")},
+                 ready=bool(available) or can_proceed)
+    for o in available:
+        b.add(f"rest_{o['index']}", "choose_rest_option", f"Rest site: {o['name']}", o,
+              {"action": "choose_rest_option", "index": o["index"]})
+    if can_proceed:
         b.add("proceed", "proceed", "Leave the rest site", {}, {"action": "proceed"})
     v.limitations.append(CAPABILITIES["rest_site"]["notes"])
     return _finish(v, b, obs)
@@ -455,16 +457,24 @@ def _shop(raw, obs):
             items.append(it)
     not_ready = isinstance(s.get("error"), str)
     v, b = _room("shop", raw, obs, {"items": items, "can_proceed": s.get("can_proceed")}, ready=not not_ready)
+    slots, potions = obs["max_potion_slots"], obs["potions"]
+    potions_full = slots is not None and potions is not None and len(potions) >= slots
     for it in items:
         if it["index"] is None or it["is_stocked"] is not True or it["can_afford"] is not True:
+            continue
+        if it["category"] == "potion" and potions_full:
             continue
         label = it["card_name"] or it["relic_name"] or it["potion_name"] or it["category"]
         b.add(f"buy_{it['index']}", "shop_purchase", f"Buy {it['category']} '{label}' for {it['price']} gold", it,
               {"action": "shop_purchase", "index": it["index"]}, resolution=f"shop:{it['index']}")
-    if s.get("can_proceed") is True:
+    # Reading a regular shop opens its inventory and can disable the room's
+    # proceed button. The mod's proceed action closes that inventory first.
+    if not not_ready:
         b.add("proceed", "proceed", "Leave the shop", {}, {"action": "proceed"})
     v.shop_stock = [(it["index"], it["is_stocked"]) for it in items]
     v.limitations.append(CAPABILITIES["shop"]["notes"])
+    if potions_full:
+        v.limitations.append("Potion slots are full. A potion purchase requires a free slot.")
     return _finish(v, b, obs)
 
 
