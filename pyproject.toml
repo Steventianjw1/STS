@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sts-agent"
 version = "0.1.0"
-description = "Day-1 Slay the Spire 2 combat agent (Ironclad, A0) on top of the STS2MCP HTTP API"
+description = "LLM-driven Slay the Spire 2 agent with strategic assessment and decision support over the STS2MCP HTTP API"
 requires-python = ">=3.11"
 # Runtime uses only the standard library (urllib for HTTP, tomllib for config).
 dependencies = []

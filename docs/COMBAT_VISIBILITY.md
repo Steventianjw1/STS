@@ -1,95 +1,134 @@
-# Combat information available to the LLM
+# Combat and deck information available to the LLM
 
-Every combat decision includes player and enemy HP, block, and visible statuses
-(`id`, `name`, `amount`, `type`, `description`). These statuses were already
-included before the preview extension. The decision prompt now explicitly tells
-the LLM to compare targets and their status-adjusted previews.
+The adapter exposes current player/enemy HP, block, visible statuses (`id`,
+`name`, `amount`, `type`, `description`), card descriptions, and supported
+candidates. Unknown values remain null. The mod extension adds information;
+missing extension fields do not become guessed mechanics.
 
-## Enemy intent horizon
+## Deck and pile contents
 
-STS2MCP reads `monster.NextMove.Intents`. This is **one upcoming enemy move**.
-Multiple entries (for example attack and buff) are simultaneous components of
-that move, not separate future rounds. Intent labels and hover descriptions are
-retained. Parsed incoming damage uses the game's displayed label, without
-reapplying Weak, Vulnerable, or other modifiers.
+Outside combat, `facts.deck` is the complete permanent deck supplied by the
+patched mod, grouped by identity, upgrade state, cost, type, rarity, and text,
+with `count`. Optional star cost is preserved. A missing deck or malformed card
+identity makes it unavailable; combat piles are never used to reconstruct it.
+The strategic assessor can use this deck on non-combat refreshes.
 
-Each enemy now has an explicit three-entry `intent_forecast`:
+During combat, the frame omits the duplicate permanent deck and includes the
+hand plus `piles.draw`, `piles.discard`, and `piles.exhaust`. Piles contain full
+contents grouped by name/cost/text with counts (and star cost where supplied),
+not just a truncated sample or a list of names. Draw order is hidden. The
+normalization schema is `sts2-obs-2`; saved normalized observations may include
+the permanent deck when the mod supplies it, even when combat frames omit it.
 
-| `enemy_turn_offset` | Information |
+## Observed intents and static forecasts
+
+STS2MCP's `monster.NextMove.Intents` describes **one upcoming enemy move**.
+Multiple entries, such as attack and buff, are simultaneous parts of that move,
+not successive turns. Intent labels/descriptions are retained; incoming damage
+is parsed from the displayed label without applying modifiers again.
+
+In combat decision frames, each enemy has a three-entry `intent_forecast`:
+
+| Offset | Meaning |
 | --- | --- |
-| 1 | Observed next move, when exposed by the mod |
-| 2 | `intents: null`, `source: not_exposed` |
-| 3 | `intents: null`, `source: not_exposed` |
+| 1 | Observed next move, or unknown if not exposed. |
+| 2 | Predicted following enemy turn when a reference transition can be resolved; otherwise unknown. |
+| 3 | One further predicted turn when the reference remains resolvable; otherwise unknown. |
 
-There is no exact three-round forecast. Future moves can depend on random
-choices and intervening actions. The agent does not advance the game or consume
-RNG to predict them. The LLM is instructed to plan those turns conditionally.
+`enemy_patterns.py` annotates the normalized enemies when building the screen
+view. The raw normalized observation alone retains unknown offsets 2–3.
+Forecasts do not advance the game or consume RNG.
+
+Fetch the local reference with:
+
+```sh
+python tools/fetch_monster_data.py
+```
+
+The downloader pins `tfriedel/spire-mentor` commit `d3115ef`, file
+`sts2-wiki/data/v0.107.1/monsters.json`, to ignored
+`data/monster_reference/monsters.json`. Configure `monster_data_path` if using a
+different local location. Missing/unreadable data disables reference forecasts.
+A configured build differing from v0.107.1 produces a warning in pattern metadata;
+it does not disable predictions automatically.
+
+The extension supplies `monster_id`, `next_move_id`, and up to five recent
+performed `move_history` IDs. Reference matching falls back to entity ID or
+unique displayed name. Without an exposed move ID, current position may be
+inferred from a unique intent-type/hit signature; ambiguous matches stay unknown.
+`move_pattern` includes match/position provenance, cycle/transition information,
+weighted random choices, and recent moves when supplied.
+
+Future entries use `reference_pattern_prediction`, with deterministic-per-data
+or random alternatives/probabilities. Unresolved probability mass is labeled;
+conditional/missing transitions leave later turns unknown. The reference omits
+some HP thresholds, phase changes, deaths, stuns, and player-effect conditions.
+Prediction damage is **base reference data** adjusted for ascension when known,
+not for current Strength, Weak, Vulnerable, or other modifiers. The model is
+instructed to account for those and re-check each new observed move. These are
+conditional forecasts, not guaranteed three-turn outcomes.
 
 ## Target-specific native previews
 
-The additive extension in `mod/McpMod.AgentPreview.cs` produces
-`player.hand[].combat_previews`. For each enemy target (including each enemy
-affected by an AoE card), it:
+`mod/McpMod.AgentPreview.cs` adds `player.hand[].combat_previews`. For each enemy
+target (including each AoE target), it clones dynamic variables using the real
+card identity and calls
+`UpdateDynamicVarPreview(CardPreviewMode.Normal, target, vars)`. It serializes
+each variable's name, base value, and integer preview value. Self cards have a
+null target. Live card variables and selected UI targets are not overwritten.
 
-1. Clones the card's dynamic variables, keeping the real card as their owner.
-2. Calls the game's `UpdateDynamicVarPreview(CardPreviewMode.Normal, target, vars)`.
-3. Exposes each variable's name, base value, and integer preview value.
+These are the installed game's damage/block hooks, including current player,
+target, and relic modifiers. Candidate `details.effect_preview.targets` binds
+values to numeric `target_combat_id`. For simple fully parsed descriptions,
+summary fields include `damage_per_hit`, `hits_from_text`,
+`total_damage_if_unchanged`, `hp_loss_if_unchanged` after block, and `block_gain`.
+Complex cards still expose available native variables while unsupported summaries
+stay null. Potions expose descriptions rather than native card previews.
 
-This uses the installed game's damage/block hooks, including player modifiers,
-target modifiers and relics. It avoids hardcoding formulas from another version
-and avoids changing the live card's variables or the selected UI target. For
-example, a Strike can expose `Damage: 9` against a Vulnerable enemy and
-`Damage: 6` against an ordinary enemy. These are illustrative numbers, not a
-claim that every attack or version uses that formula.
-
-Each candidate card action includes `details.effect_preview.targets`, bound by
-numeric `target_combat_id`. Self cards use a null target ID. The original
-description and complete visible status lists remain available. For simple,
-fully parsed descriptions, the adapter also exposes `damage_per_hit`,
-`hits_from_text`, `total_damage_if_unchanged`, `hp_loss_if_unchanged` after current
-block, and `block_gain`. For complex cards, the native variables still reach the
-LLM, while unsupported summaries remain null.
-
-These are UI previews, **not full simulations**. Triggers, retaliation, block
-changes, card replay, and status changes between hits can change the outcome.
-Totals assume unchanged modifiers across hits. Potions currently expose their
-descriptions, not native card previews. The LLM is instructed not to apply status
-modifiers a second time and to reconsider its choice after every resolved action.
-Statuses and previews participate in the decision fingerprint, so changes
-invalidate a previously chosen action.
-
-If the extension is missing or a native preview throws, its values stay unknown.
-The adapter reports the missing capability instead of treating base card text
-as an exact target-specific prediction. Old mod builds remain usable.
+Native values already include current modifiers; do not apply them twice.
+They are UI previews, not full simulations: triggers, retaliation, changes between
+hits, card replay, and later actions can change results. Missing/failed previews
+are unknown, not zero or a guaranteed base-text result. Statuses and previews
+participate in the fingerprint, so changed values invalidate a pending choice.
 
 ## Rebuilding the mod with the extension
 
-Apply this repository's additive patch to the source-inspected STS2MCP checkout
-(`55e064850a68f3b4cde7e5fd525bf9b2dec4e885`), then build normally:
+Use the source-inspected upstream revision
+`55e064850a68f3b4cde7e5fd525bf9b2dec4e885`, .NET 9, and compatible installed
+game assemblies. From this repository root, for example in PowerShell:
 
 ```powershell
-.\.venv\python.exe tools\patch_mod_preview.py PATH_TO_STS2MCP_SOURCE
-.\.venv\dotnet\dotnet.exe build PATH_TO_STS2MCP_SOURCE\STS2_MCP.csproj `
+python tools/patch_mod_preview.py .venv/mod-build/STS2MCP
+dotnet build .venv/mod-build/STS2MCP/STS2_MCP.csproj `
   '-p:STS2GameDir=C:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2' `
   -o .venv/mod-build/out-preview
 ```
 
+Clone/check out the pinned upstream source first as shown in the [README](../README.md).
+Use the Python/.NET executable paths installed locally; the old portable setup
+used `.venv\python.exe` and `.venv\dotnet\dotnet.exe`.
+
+The patcher copies the repository extension and adds hooks for hand previews,
+player deck, enemy move state, and `event.agent_map` on ancient screens. It is
+idempotent for its expected source layout and refuses missing/nonunique anchors.
+Ancient map data uses the existing read-only map builder and does not provide
+travel actions during the event.
+
 With the game closed, back up its existing `mods/STS2_MCP.dll`, copy the rebuilt
-DLL into that location, and reopen the game. The patch script is idempotent and
-refuses a source layout without its expected hand-card serialization anchor.
-Rebuild against the installed game after version changes.
+DLL and upstream manifest (`mod_manifest.json` as `STS2_MCP.json`) into `mods`,
+then reopen with mods enabled. Rebuild and verify after game/version changes.
+A prior preview-only DLL is not evidence that all current extension fields are
+installed; confirm them in a saved observation/frame.
 
-## Verification
+## Verification scope
 
-Source inspection: the installed v0.107.1 game assembly confirms the native
-preview API, damage/block hooks, dynamic-variable cloning, and integer display
-conversion. STS2MCP's source confirms the next-move intent horizon.
+Historical v0.107.1 assembly inspection/build records establish the native
+preview API and compilation of the then-current extension. Synthetic local
+checks exercised transport of target-specific damage, block, AoE/multi-hit,
+complex/missing previews, statuses, and invalidation. They do not verify game
+formulas or model reasoning. Later deck/move/map hooks require verification in
+the installed DLL; do not extend an older build result to newer code implicitly.
 
-Synthetic checks in the existing ignored local decision tests verify that
-target-specific damage, block, status stacks and descriptions reach the actual
-serialized LLM message, including AoE/multi-hit and missing/complex previews.
-They also verify decision invalidation and unknown later intents. Synthetic
-native values test transport, not game formulas or model reasoning.
-
-The preview-enabled mod compiles against the installed v0.107.1 game with zero
-warnings/errors. Live validation is recorded separately in `LOCAL_VALIDATION.md`.
+Current capability flags remain `live_validated=false`. See
+[LOCAL_VALIDATION.md](LOCAL_VALIDATION.md) for historical startup/read results,
+known build failures, and the limits of the current documentation review.

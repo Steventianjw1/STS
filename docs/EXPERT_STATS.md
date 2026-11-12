@@ -1,106 +1,235 @@
-# Expert decision statistics
+# Expert statistics and decision support
 
-`get_expert_decision_stats` is a read-only Python adapter in
-`src/sts_agent/expert_stats.py`. In normal LLM sessions the coordinator calls it
-before decisions on card rewards, event options and shop purchases. Its compact
-result is included as `decision_support` in the model's decision frame and trace.
-The model still selects a legal action; the adapter never performs game actions.
+`ExpertDecisionStats` in `src/sts_agent/expert_stats.py` supplies read-only
+advisory evidence from [Spire Codex](https://spire-codex.com). It never performs
+gameplay actions. The coordinator calls `for_view` before relevant decisions and
+includes the result in `decision_support`, separate from observed game facts.
+The configured model still selects one offered action.
 
-`observe --save-frame traces/frame.json` and `observe --preview-decision` include
-the same evidence. Saving a frame makes no model call. `decide-frame` and replay
-use the saved evidence without contacting Codex. Scripted/synthetic CLI sessions
-do not automatically contact Codex. Combat selections, removals, upgrades and
-transformations do not use reward pick rates.
+| Screen | Main evidence |
+| --- | --- |
+| Card reward, ordinary event, regular shop | `get_expert_decision_stats` (schema 2): profile rates, indexed floor/deck context, optional community advice; card rewards/shops can also carry elite readiness. |
+| Map | `get_expert_route_profile` (schema 3): routes, HP risk, path projections, elite readiness, and reconsideration triggers. |
+| Ancient event | `get_ancient_offer_evidence` (schema 1): offer-conditioned history, relic effects versus deck/resources, elite threats, and map outlook. |
+
+`observe --save-frame` and `observe --preview-decision` fetch applicable evidence
+but have no prior coordinator route plan or strategic assessment. Saving makes no
+model call; previewing a decision is billable. `decide-frame` and replay reuse
+saved evidence without contacting Spire Codex. Scripted/synthetic CLI gameplay
+sessions do not automatically fetch evidence. Combat card selections, upgrades,
+removals, and transformations do not use card-reward pick rates.
 
 ## Cohort and filters
 
-1. Request `GET /api/leaderboards/elo?limit=100&min_runs=30` (the minimum is configurable).
-2. Keep returned public accounts with at least `min_character_runs` rated runs
-   on the observed character. Sort by that character's Elo, breaking ties by
-   character run count and username. Select up to `cohort_size` accounts.
-3. Fetch `GET /api/players/{username}/stats` for each selected account with
-   `character`, `ascension`, `players=1`, and `version` when configured.
+The client requests `GET /api/leaderboards/elo?limit=100&min_runs=30` (minimum
+configurable), then selects up to `cohort_size` public accounts with at least
+`min_character_runs` rated runs on the observed character. Accounts are sorted
+by character Elo, then character run count and username. This selects within
+the global top 100 solo A10 standard leaderboard, not an exhaustive character
+ranking or a submitter win-rate bracket. English display names and canonical
+character IDs are accepted.
 
-The board is a global top 100 over solo A10 standard play. The cohort is selected
-within that board, not an exhaustive ranking of everyone playing the character.
-It does not use `wr75` or other submitter win-rate brackets. English display
-names such as `The Ironclad` and canonical character IDs are accepted.
+Profiles are fetched through `GET /api/players/{username}/stats` with character,
+ascension, `players=1`, and version when configured. Defaults match observed
+ascension and declared `game_build`. `[expert_stats].ascension` explicitly
+overrides difficulty; `match_version=false` or an unknown build spans versions
+and is labeled. An empty exact scope is not automatically broadened.
 
-By default profiles match the observed ascension and configured `game_build`.
-An explicit `[expert_stats].ascension` overrides the profile ascension, for
-example to compare an A0 position with experts' A10 decisions. The returned scope
-records the actual filter. The tool never broadens an empty filter automatically.
-Without a known `game_build`, or with `match_version=false`, profiles span all
-versions and this limitation is reported. Profiles cannot filter game mode, so
-their counts can include daily/custom runs despite the board's standard-only
-qualification. Snapshot lag and no runs for the exact filters are reported.
+Profile counts cannot be restricted by game mode and can include daily/custom
+runs despite the board's standard-play qualification. The local indexed corpus
+separately filters for standard solo runs, character, ascension, and configured
+version. Scope, sparse samples, missing profiles, and normalization issues must
+be considered before applying evidence.
 
-## Rates and missing data
+## Profile rates
 
-For every matching candidate the adapter pools counts across available profiles:
+| Metric | Pooled numerator | Pooled denominator |
+| --- | --- | --- |
+| Card reward pick rate | `taken` | `offered` |
+| Merchant purchase rate | `bought` | `seen` |
+| Event choice share | `chosen` for the option | All recorded choices at the event |
 
-| Metric | Numerator | Denominator |
-|---|---|---|
-| Card reward pick rate | Sum of `taken` | Sum of `offered` |
-| Merchant purchase rate | Sum of `bought` | Sum of `seen` |
-| Event choice share | Sum of `chosen` for this option | Sum of all recorded choices at this event |
+Percentages use summed counts, not averaged player percentages. Rows retain raw
+counts, contributor counts, compact contributor detail, and concentration information.
+Missing card/shop rows remain unknown. A player with recorded choices at an
+event contributes the event denominator and zero to an option they never chose.
+Repeated stages are recorded choices, not necessarily distinct visits.
 
-Each row includes the raw numerator/denominator, percentage, contributing player
-count, per-player counts and the largest player's share of the denominator.
-Percentages are never averaged. Card and shop rows missing from a profile remain
-unknown; they do not contribute zero observations. For events, a player with
-other recorded choices at the event contributes zero choices of an unchosen
-option and their full event denominator. Repeated stages count as recorded
-choices, not distinct visits. Event shares do not account for which options were
-available, and purchase rates do not account for affordability or prices.
+Events match observed `option_id` when present; otherwise they require a unique
+exact normalized title from the event catalog, including later option pages.
+Formatting tags, whitespace, and case are ignored. Indices/fuzzy similarity are
+not historical identifiers. Unmatched or ambiguous buttons have unavailable evidence.
 
-Event buttons are matched using an observed `option_id` when available, otherwise
-by an exact, unique normalized title from `GET /api/events/{id}?lang=eng`, including
-options on subsequent pages. Formatting tags/whitespace/case are ignored. Button
-indices and fuzzy text similarities are never used to identify historical options.
-Unmatched or ambiguous options have unavailable evidence.
+Profile rates are overall rates without floor/deck conditioning. Event shares
+do not establish which buttons were offered; shop rates do not account for price
+or affordability. High rates and correlated win rates are not causal utility scores.
 
-The response labels partial cohorts, missing rows and unavailable profiles.
-It contains no floor/deck conditioning, recommendations to buy a particular item,
-or inferred causal win-rate gains. The model must still consider current needs,
-resources, skipping and leaving.
+## Local history and contextual rates
 
-## Configuration and cache
+`spire_history.py` maintains `run_history.sqlite3` under `cache_dir`. It indexes
+bounded submitted runs, decision rows, reconstructed pre-floor deck contexts,
+route floors/outcomes, and ancient offers. Normalizer versions prevent reuse of
+incompatible entries. Rejected data and per-scope skipped runs are recorded so
+filter mismatches or unsupported shapes do not block later runs indefinitely.
+Route records can be retained when card-history reconstruction is unavailable.
 
-Defaults are shown in `sts_agent.example.toml` under `[expert_stats]`:
+Incremental sync rotates players, fetches at most one run per player per pass,
+and respects `history_new_runs_per_decision`, `history_runs_per_player`, and the
+fetch deadline. To populate the corpus ahead of play:
 
-```toml
-[expert_stats]
-enabled = true
-cohort_size = 5
-min_character_runs = 30
-# ascension = 10             # omit to match the observed difficulty
-match_version = true
-lang = "eng"                # match the game's language for event titles
-cache_dir = "traces/spire_codex_cache"
-cache_ttl_s = 86400.0
-request_timeout_s = 3.0
-max_fetch_s = 12.0
+```sh
+sts-agent sync-history --character IRONCLAD --ascension 0 --max-new-runs 100 --max-seconds 120
 ```
 
+The CLI's ascension is explicit; match it to the desired decision-evidence scope.
+Bulk sync makes network requests but no game or model calls. Its run/time values
+bound the sync loop; a sync pass can finish after the requested new-run target.
+
+Per-option `history_context` tries nearby floor (within the same act when known),
+then act, then cohort. With a complete observed deck, it first tries these scopes
+with deck similarity, then without. It stops at `min_context_samples` or reports
+the available sparse final scope. Widening attempts and selected scope are explicit.
+Deck similarity is multiset Jaccard over base card IDs and copies; upgrades,
+relics, resources, and within-room changes are not matched. Historical deck
+snapshots are from before the floor and carry completeness/reconstruction issues.
+This is context evidence, not an exact simulation of the current decision.
+
+## Community advice
+
+When an explicit permanent deck and relic identities are available,
+`supplementary_deck_advice` can call `POST /api/draft-advice` and
+`GET /api/runs/pick-coach`. The POST requests advice and does not change game state.
+Responses are restricted to offered card IDs; pick-coach receives at most five
+offered cards and exposes bounded archetype suggestions.
+
+These broader community scores cannot be restricted to the expert cohort or
+exact patch and are not calibrated probabilities. Archetypes are optional
+suggestions. Unknown deck/relic identities produce unavailable advice rather
+than a reconstructed deck or a guessed score.
+
+## Route profiles, HP risk, and paths
+
+The map adapter supplies visible nodes, edges, travel options, current/visited
+positions, and boss identities. The evidence adapter resolves the act variant
+from the catalogs and visible boss identity when possible. Unresolved acts are
+reported instead of silently choosing a variant.
+
+`route_profile.py` compares all non-abandoned indexed runs entering the act with
+the subset that won the whole run. It reports first nodes, node-count quantiles,
+first elite/shop positions, hallway fights before elites, shop gold, rest choices
+by arrival HP band, and HP checkpoints. Complete-act route-count statistics use
+runs that reached the boss. The sparse flag is based on winning sample size.
+Run files lack the offered map, so these patterns mix preference, available
+paths, and deck strength; they are not causal recommendations.
+
+`route_risk.py` pools mean HP loss, p90 when sufficiently sampled, and death rate
+for early/later hallways, elites, bosses, and question-mark nodes. Damage is a
+percentage of max HP. Early hallway splitting uses observed weak-encounter shares;
+when unavailable, the hallway sample is pooled. Rest healing, gold changes, and
+shop spending are measured from the indexed data rather than assumed constants.
+Sparse classes may use `/api/runs/encounter-stats` means/death rates. Fallback
+scope and sample counts are labeled; fallback does not supply a p90 estimate.
+
+`route_paths.py` enumerates visible paths using a cap on distinct node-type
+sequences per node (default 2000), merging equivalent type sequences after the
+same first node. It projects HP/gold, boss arrival, fight/elite/rest/shop positions,
+and distance from expert median node counts. Most representatives come from the
+non-dominated set; a continued prior plan and preparation alternatives can be
+retained even when dominated, and carry `dominated`. At most `route_candidates`
+paths (default six) are shown with `selected_for` labels, not a combined ranking.
+
+Expected HP uses pooled mean losses. The bad case applies p90 to every fight
+(or mean where p90 is missing), which is a stress test rather than a likely
+outcome. Simulated rest choices follow measured expert HEAL shares by arrival
+HP band. Missing means and death rates can behave as zero contributions inside
+the projection; missing healing provides no modeled recovery. Check source,
+sparse/unavailable classes, `bad_case_uses_mean_for`, truncation, and unmodeled
+node types before interpreting apparently safe paths. Projections assume current
+max HP and pooled independent fight outcomes, excluding deck/relic/potion combat
+effects and most event consequences. They are not a combat simulator.
+
+The map-only model `route_plan` is retained by the coordinator with its starting
+state and available trajectory. `route_plan_status` reports no plan or triggers:
+new act, leaving the planned path, HP/gold off projection, a fight worse than p90,
+relic changes, a new potion, or a nearby planned elite with deck gaps. The model
+replans; Python never chooses a map action. See the
+[response contract](LLM_DECISION_ENGINE.md#response-contract).
+
+## Elite readiness
+
+`elite_readiness.py` compares catalog threats for this act and later acts with
+observed permanent-deck coverage. It exposes enemies/summons, large attack turns,
+Strength gain, and community encounter-build summaries. The actual elite behind
+a map node remains unknown.
+
+The gap rules are deliberately limited:
+
+- `aoe`: multiple enemies/summons with no AllEnemies attack in the deck.
+- `block`: a largest attack turn at least `elite_block_attack_pct` of max HP,
+  or Strength gain, with no non-starter block card.
+- `damage_or_scaling`: neither a non-starter attack nor a Power card.
+
+Card rewards/shops show offered cards' `fills_gaps`. Routes can include
+fewest-elites and most-preparation alternatives, and planned elites within
+`elite_trigger_steps` can trigger reconsideration. Coverage ignores relics,
+potions, enchantments, and synergies; community build outcomes are correlations.
+Without observed deck facts, threats may still be available while gaps stay unknown.
+
+## Ancient choices and the act map
+
+For `event.is_ancient=true`, `ancient_advisor.py` and the evidence adapter resolve
+offered relics from catalog identity/name, fetch pool conditions, and compare
+text-derived effects with deck counts, HP/max HP, gold, and expert checkpoints.
+Indexed ancient offers supply take-when-offered, head-to-head co-offer counts,
+similar HP/deck situations, sparse flags, and observed outcomes. Community lift
+and archetype fit are separate evidence. Labels describe options without ranking them.
+
+The patched mod can expose `event.agent_map`. The screen adapter constructs a
+read-only planning graph from current/root position, with no actionable travel
+indices. `map_outlook` summarizes route ranges, early/unavoidable elites, rests,
+shops, survivable shares, and elite gaps. Each option's `route_outlook` reprojects
+from recognized HP/max-HP/gold changes; options without detected resource changes
+reuse the baseline outlook. This does not simulate a relic's card, combat,
+healing, or other effects beyond the recognized resource comparisons. Read the
+full relic text; regex tags and projections can be incomplete.
+
+## Configuration, caching, and failures
+
+All fields and example values are in
+[`sts_agent.example.toml`](../sts_agent.example.toml). Feature switches include
+`enabled`, `history_enabled`, `deck_advice_enabled`, `route_planning_enabled`,
+`elite_readiness_enabled`, and `ancient_advisor_enabled`. Map evidence currently
+requires both statistics and history enabled; route planning is nested under it.
+Ancient advice has its own switch and can still report partial evidence.
+
+Key defaults: cohort 5, minimum character runs 30, corpus cap 100 runs/player,
+3 new runs/decision, floor window ±3, minimum context samples 20, deck similarity
+0.5, six route candidates, 2000 route sequences/node, HP replan tolerance 15
+percentage points, gold tolerance 100, block threshold 20% max HP, elite horizon
+three steps. `encounter_stats_bracket` defaults to `solo`; broader fallback
+brackets are separate from expert-cohort evidence.
+
 The optional `SPIRE_CODEX_API_KEY` comes from the environment/ignored `.env`.
-Credentials are not saved in frames, cache files or manifests. Public responses
-are cached in memory and atomically on disk, keyed by the full endpoint and
-filters. The default cache directory is Git-ignored. Keep custom cache paths
-ignored too. Cache write failures do not discard a usable response.
+Cached responses use the full endpoint and request parameters/body, are kept in
+memory and atomically on disk, and expire after `cache_ttl_s` (default one day).
+Custom cache locations should remain ignored. Cache write failures do not
+discard usable responses. Local history is a bounded indexed corpus, not merely
+an expiring HTTP response cache.
 
-Expired data is not served. HTTP/network failures and private/missing profiles
-are reported rather than treated as zero. Errors are briefly held in memory to
-avoid repeated failed fetches. A 429 honors `Retry-After` by deferring further
-network requests; it never sleeps/retries during the decision. Each fetch has a
-timeout and a total decision fetch budget, reduced by the remaining run time.
-Fresh game-state validation still runs before sending any chosen action.
+Fetches use `request_timeout_s` (default three seconds) and total `max_fetch_s`
+(default twelve seconds), reduced by remaining session time. A 429 honors
+`Retry-After` by deferring requests, without sleeping/retrying during the decision.
+Network/private/missing data are labeled unavailable/partial. Unexpected
+external-data exceptions are caught at `for_view` and reported as unavailable
+support, allowing a decision from current game facts. Fresh game validation
+still occurs before execution.
 
-API responses have a local fetch timestamp/cache source. The public profile API
-does not expose its own data-through timestamp, so a recent fetch does not imply
-a recently rebuilt statistics snapshot. Existing frames without evidence retain
-their original hashes; new evidence participates in the frame hash and replay.
+The public API has no data-through timestamp; recent fetching does not establish
+recent source statistics. Evidence participates in the frame hash and trace.
+Prompt-size handling can drop detail/community advice or all support while
+preserving facts/candidates and recording the reduction. See
+[trace format](TRACE_FORMAT.md) and [decision engine](LLM_DECISION_ENGINE.md).
 
 Sources: [API documentation](https://spire-codex.com/docs),
-[developer documentation](https://spire-codex.com/developers),
+[developer documentation](https://spire-codex.com/developers), and
 [player statistics implementation](https://github.com/ptrlrd/spire-codex/blob/main/backend/app/services/player_stats.py).

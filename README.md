@@ -1,250 +1,258 @@
 # STS Agent
 
-DeepSeek support is available through `src/sts_agent/providers/deepseek.py`, using
-[DeepSeek Chat Completions](https://api-docs.deepseek.com/).
-Install with `python -m pip install -e ".[deepseek]"` and fill in the ignored `.env`:
-`DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL` (API root, e.g. `https://api.deepseek.com`),
-and `DEEPSEEK_MODEL` (e.g. `deepseek-flash`; check availability on your account).
-All three values are initially blank. An empty base URL uses the official endpoint.
-The default provider is `deepseek`; `[llm] model` or `--model` overrides the .env model.
-Existing environment variables take precedence over .env; this file supports plain
-or quoted values and full-line comments, without shell expansion.
-The compatible OpenAI SDK is used only as a transport library: no OpenAI key or
-account is used. SDK retries are disabled; decision validation and the shared
-call/token budget also apply to DeepSeek. Anthropic remains available via
-`provider = "anthropic"` and the `llm` install extra.
+An LLM-driven agent for **Slay the Spire 2**, using the
+[STS2MCP](https://github.com/Gennadiyev/STS2MCP) mod's localhost HTTP API.
+Development has focused on single-player Ironclad at Ascension 0. The agent
+continues an already-started run across supported screens; it does not start
+runs or manage profiles or difficulty.
 
-For the local portable Python setup, use `.\.venv\python.exe` and
-`.\.venv\Scripts\sts-agent.exe` directly. Start with `doctor`, then
-`observe --save-frame traces/live-frame.json` before a bounded `step`.
-Live testing is now authorized; historical validation statements below describe
-the original reconstruction, not a guarantee of compatibility with a new build.
+The configured model chooses each gameplay action. Python supplies allowlisted
+facts and supported candidates, validates the choice against a fresh state,
+sends the action once, observes resolution, and records the result. The default
+policy is `llm` and the default provider is `deepseek`. Anthropic is also supported.
+`--policy baseline` explicitly selects a combat-only heuristic; it is never a
+fallback for an LLM failure.
 
-An LLM-driven agent for Slay the Spire 2 (single-player; developed for Ironclad at Ascension 0). It
-is built on the [STS2MCP](https://github.com/Gennadiyev/STS2MCP) mod's localhost HTTP API.
+## Current capabilities
 
-**By default, the configured LLM chooses every gameplay action** on the screens the adapter supports:
+- Combat cards, targets, potions, end turn, and in-combat card selections.
+- Rewards, maps, events, rest sites, shops, card grids, relic choices, and treasure.
+- Full permanent-deck facts outside combat and full draw/discard/exhaust pile
+  contents during combat, grouped with counts and without hidden draw order.
+- Optional game-native, target-specific damage/block previews and static enemy
+  move-pattern forecasts for the two enemy turns after the observed next move.
+- A shared-provider strategic assessor with seven dimensions and deck-aware refreshes.
+- Spire Codex expert rates, floor/deck-conditioned history, route HP-risk and path
+  projections, elite-readiness analysis, and ancient-offer evidence using the act map.
+- Bounded prompts, model-call/token budgets, JSONL traces, and offline validation
+  of recorded decisions.
 
-- combat card plays, targets, potions and end turn
-- in-combat card selections
-- rewards and card rewards
-- the map
-- events
-- rest sites
-- shops
-- deck card-selection screens
-- relic choices and treasure rooms
+`bundle_select`, `crystal_sphere`, `fake_merchant`, menus, and unrecognized
+popups remain unsupported. A regular merchant is supported; the fake merchant
+is a separate event. Run `sts-agent capabilities` for the source-derived table.
 
-Python observes the game, offers only legal and verified actions, validates the model's choice
-against a fresh observation, executes it once, confirms the result, and records everything. The old
-rule-based heuristic is kept only as an explicit comparison mode (`--policy baseline`), for combat
-only. It is never a fallback.
+Support is not a claim of verified play strength or compatibility with every
+build. Capability flags remain `live_validated=false`. Historical records include
+v0.107.1 mod compilation, startup, and API reads; the latest code includes fixes
+for live merchant/rest behavior. See [compatibility](docs/COMPATIBILITY.md) and
+[validation records](docs/LOCAL_VALIDATION.md) for the evidence and its limits.
 
-Combat frames include player/enemy statuses and the next enemy move. The optional
-native-preview mod extension adds current damage/block variables per card and
-target, so the LLM can directly compare a Vulnerable enemy with another target.
-Rounds beyond the next enemy move are explicitly unknown. See
-[combat visibility and mod setup](docs/COMBAT_VISIBILITY.md) for the data contract
-and limits of these previews.
+## Install
 
-> **What is implemented, what is checked, and what is pending**
->
-> | | Status |
-> |---|---|
-> | **Decision engine** | Implemented. Covers frames, screen adapters, LLM selection with one corrective retry, the run coordinator (`play-run`), strategic-planner integration, and traces with recorded-decision validation. |
-> | **Claude provider adapter** | Implemented (`anthropic` SDK, optional extra). It has been checked only against an injected fake SDK client. **No real model call has been made.** |
-> | **Screen adapters** | Built from the STS2MCP source at commit `55e0648` (*source-inspected*). Three screens are unsupported: bundle selection, Crystal Sphere and the fake merchant. The agent stops on them before sending anything. Run `sts-agent capabilities` for the table. |
-> | **Checks** | 62 local tests (48 original, 5 planner, 9 decision engine), all using **synthetic** states and **scripted** model replies. They verify the harness, not play strength or real-game compatibility. |
-> | **Live game** | **Not validated.** The game and mod cannot be run on the development device. Every screen is `live_validated = false`. |
+Python 3.11+ is required. The core and offline components use the standard
+library; each real provider needs its optional SDK extra.
 
-```
-src/sts_agent/
-  client.py            game HTTP client (stdlib urllib): timeouts, ambiguous vs undelivered
-  observation.py       allowlisted combat/run observation (null = unknown)
-  decision/
-    screens.py         screen adapters + capability table: raw state -> facts + candidate actions
-    models.py          DecisionFrame (frame_id over the whole context) and the choice contract
-    prompts.py         versioned decision instruction + size-bounded user message
-    policy.py          LLM selection: one validated action id per call, <= 1 corrective retry
-    coordinator.py     run loop: ready -> strategy refresh -> decide -> fresh validation -> send once -> resolve
-    offline.py         SYNTHETIC test doubles: scripted game client and scripted text model
-  providers/anthropic.py   Claude adapter for TextModel.complete(system=, user=)
-  strategic/           strategic assessor (seven dimensions), refreshed by the coordinator
-  trace.py, replay.py  JSONL traces (LLM: sts2-trace-2) and offline replay/validation
-  actions.py, cards.py, policy.py, runner.py   baseline comparison mode (combat only)
-  cli.py               commands
-```
-
-The core runs on the standard library alone. The real provider needs the optional `anthropic`
-package.
-
----
-
-## 1. Install (Windows, PowerShell)
-
-You need Python 3.11 or newer.
+Windows PowerShell:
 
 ```powershell
-cd "D:\Users\Documents\ChatGPT\STS Agent"
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1          # if blocked: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-pip install -e ".[llm,dev]"           # sts-agent command + Claude SDK + pytest
-copy sts_agent.example.toml sts_agent.toml
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[deepseek]"
+Copy-Item sts_agent.example.toml sts_agent.toml
+Copy-Item .env.example .env
 ```
 
-## 2. Configure Claude
+On Linux/macOS:
 
-1. In `sts_agent.toml`, under `[llm]`, set `model` to a current model ID from the
-   [Claude model documentation](https://platform.claude.com/docs/en/about-claude/models/overview).
-   There is no built-in default model.
-2. Put your API key **only** in the environment. Never put it in TOML; the loader rejects key-like
-   fields.
-   ```powershell
-   $env:ANTHROPIC_API_KEY = "<your key>"
-   ```
-3. Optionally, set limits for each run: `max_calls_per_run` and the token caps. If you also set
-   prices per million tokens, the run summary includes an estimated cost.
-4. Run `sts-agent doctor`. It checks the model ID, the SDK and the key, and makes **no** model calls.
-
-If the model, SDK or key is missing, `step`, `play-combat` and `play-run` exit with an error before
-contacting the game. They never fall back to the baseline.
-
-## 3. Install the STS2MCP mod (on a machine that can run the game)
-
-Check your game build on the main menu, and put it in `sts_agent.toml` as `game_build`. The mod's
-latest release, **0.4.0, predates its STS2 v0.107 fix** (commit `55e0648`, which this adapter was
-written against).
-
-- **Game older than v0.107:** copy `STS2_MCP.dll` and `STS2_MCP.json` from
-  <https://github.com/Gennadiyev/STS2MCP/releases/tag/0.4.0> into `<game install>\mods\`.
-- **Game v0.107 or newer:** build from source with the .NET 9 SDK:
-  ```powershell
-  git clone https://github.com/Gennadiyev/STS2MCP.git; cd STS2MCP
-  git checkout 55e064850a68f3b4cde7e5fd525bf9b2dec4e885
-  .\build.ps1 -GameDir "<game install>"
-  copy out\STS2_MCP\STS2_MCP.dll "<game install>\mods\STS2_MCP.dll"
-  copy mod_manifest.json         "<game install>\mods\STS2_MCP.json"
-  ```
-
-Then enable mods in the game's settings and check the mod is running:
-`Invoke-RestMethod http://127.0.0.1:15526/`.
-
-English game text is recommended. The LLM can read other languages, but the baseline's parser and
-some diagnostics assume English.
-
-## 4. Commands
-
-Nothing is sent to the game unless you run `step`, `play-combat` or `play-run`.
-
-| Command | What it does |
-|---|---|
-| `sts-agent doctor` | Checks the config, connectivity, mod build, current screen, model ID, SDK and API key. Read-only; makes no model calls. |
-| `sts-agent observe [--save F] [--save-raw F] [--json]` | Prints the current state, read-only. Also shows the baseline's choice, labeled as comparison mode. |
-| `sts-agent observe --save-frame frame.json` | Saves the LLM decision frame for the current screen. No model call. |
-| `sts-agent observe --preview-decision` | Asks the configured model what it *would* choose. **Billable.** Never executes. |
-| `sts-agent decide-frame frame.json [--scripted-reply TEXT]` | Runs a decision offline on a saved frame. It uses the configured model (billable), or a literal scripted reply (synthetic). Never executes. |
-| `sts-agent step` | Makes **one** LLM decision on the current supported screen, executes it once, and records it. |
-| `sts-agent play-combat` | The LLM plays until the current fight ends. |
-| `sts-agent play-run` | The LLM continues an **already started** run across supported screens. It stops on defeat, the end of the run, an unsupported screen, a limit, or an unresolved action. It never starts runs, changes difficulty or manages profiles. |
-| `sts-agent replay PATH [-v]` | For LLM traces, validates the recorded decisions without calling a model. For baseline traces, re-runs the deterministic policy. |
-| `sts-agent capabilities` | Prints the screen capability table. |
-
-Global options: `--config`, `--base-url`, `--policy llm|baseline`, `--model ID`.
-`play-combat` and `play-run` also take `--max-actions`, `--max-elapsed-s` and `--max-no-progress-s`.
-
-Exit codes: `0` means the expected end (`step_done`, `combat_ended`, or `run_over_unconfirmed` for
-`play-run`). `1` means it stopped for another reason. `2` means a setup error or the game could not
-be reached.
-
-### Stop reasons
-
-| stop_reason | meaning |
-|---|---|
-| `combat_ended` | The fight is over (`play-combat`). |
-| `player_defeated` | The game-over screen appeared with HP 0. |
-| `run_over_unconfirmed` | The game-over screen appeared with HP above 0. Victory is not confirmed by the API. |
-| `unsupported_decision_screen` | The screen has no verified adapter, such as a bundle choice, Crystal Sphere, fake merchant, menu or popup. `detail` names the missing capability. Nothing was sent. |
-| `model_failed`, `model_budget_exhausted` | The provider call failed, or the run budget is used up. Nothing was sent. |
-| `invalid_model_output` | The model's reply was still invalid after one corrective retry. Nothing was sent. |
-| `decision_input_too_large` | The facts and candidates don't fit the prompt limit, even with no history. Nothing is trimmed silently. |
-| `no_actions_on_actionable_screen` | A ready screen offered no supported actions. This is a diagnostic; there is no automatic leave or end turn. |
-| `adapter_index_mismatch` | After a purchase, a different shop item changed. The shop index alignment assumption failed. |
-| `unresolved_action`, `ambiguous_outcome_unresolved` | An action was not confirmed. The agent never resends. |
-| `repeated_rejections`, `ready_timeout`, `no_progress`, `max_actions`, `max_elapsed`, `game_unavailable`, `interrupted` | As in the baseline runner. |
-
-## 5. How an LLM decision is made and executed
-
-```
-observe -> wait until a supported screen is ready AND two consecutive reads are identical
-        -> combat finished? record observed outcome (HP change, turns, potions used) to recent_outcomes
-        -> refresh strategic assessment if strategic facts changed (never mid-combat for card plays)
-        -> DecisionFrame: allowlisted facts + candidates (ids only; payloads stay private)
-           + adapter limitations + labeled assessment + previous turn intent + <= 8 recent outcomes
-        -> model returns {"frame_id","action_id","reason","turn_intent"}; <= 1 corrective retry
-        -> write `llm_decision` record (input + choice) BEFORE sending
-        -> re-read the game: the screen fingerprint and that action's binding must be unchanged,
-           and the session deadline not passed
-        -> POST once; rejected -> that action is withheld for this exact state; timeout -> inspect, never resend
-        -> wait for screen-specific resolution (end_turn: next round; shop: stock check;
-           card grid toggles may be unobservable) -> write `outcome` record -> repeat
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[deepseek]'
+cp sts_agent.example.toml sts_agent.toml
+cp .env.example .env
 ```
 
-The model chooses every gameplay action, including end turn, taking gold, single-option choices and
-confirmations. Code only waits and observes. Two caveats: the mod itself opens shop inventories and
-treasure chests when their state is read, and the agent doesn't manage menus or popups.
+Activate the environment or invoke its `sts-agent` executable directly. A
+portable Windows environment may instead have `.venv\python.exe`; use the path
+that exists locally. For Anthropic install `.[llm]`; `.[dev]` adds pytest.
+Tests and fixtures are local and Git-ignored, so a clean clone need not contain them.
 
-**Memory:**
-- The strategic assessment persists for the whole run.
-- The last turn intent and up to 8 recent decisions and outcomes are kept per encounter, and cleared
-  when the encounter changes.
-- There is no cross-run learning.
-- The run ID comes from the mod's compendium endpoint when available, otherwise
-  `session:<session_id>`. Resuming a run across sessions doesn't preserve its identity.
+## Configure the provider
 
-## 6. Baseline comparison mode
+Fill in the ignored `.env` locally:
 
-`--policy baseline` runs the Day-1 deterministic heuristic, which plays combat only (`step` and
-`play-combat`). It plays lethal first, then kills of attacking enemies, then block, then damage,
-then end turn, using card numbers parsed from English text. It never runs unless you select it.
+```dotenv
+DEEPSEEK_API_KEY=<your key>
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=<model available on your account>
+```
 
-## 7. Live validation checklist (pending; needs a machine with the game)
+A blank base URL uses the official endpoint. A configured URL must be an HTTPS
+API root without embedded credentials, query, or fragment. There is no assumed
+model ID. The OpenAI-compatible SDK is only the DeepSeek transport; it does not
+use an OpenAI account or key.
 
-1. `sts-agent doctor` on the main menu and inside a fight.
-2. `sts-agent observe --save-raw tests\fixtures\live_combat_1.json --save-frame traces\frame1.json`.
-   Check the facts against the screen.
-3. `sts-agent decide-frame traces\frame1.json`. This is one billable call, with no execution.
-4. `sts-agent step` (one action), then `sts-agent play-combat` (one fight), then
-   `sts-agent replay traces\<session_id>`.
-5. `sts-agent play-run` with conservative `--max-actions`. Watch which screens stop as unsupported,
-   and check the shop and rest-site index assumptions in the traces.
+The example TOML selects a 4096-token output cap; the code default when omitted
+is 1024. Optional DeepSeek effort is set in TOML:
 
-If anything breaks, send the trace folder. `debug_raw.jsonl` has the exact API responses.
+```toml
+[llm]
+provider = "deepseek"
+max_output_tokens = 4096
+# deepseek_reasoning_effort = "high"  # low, high, or max; omit for provider default
+```
 
-## 8. Strategic planner
+Supported effort depends on the selected model/API. This option is sent only to
+DeepSeek and is recorded in provider identity when set. For Anthropic, use
+`provider = "anthropic"`, an explicit `[llm].model`, and `ANTHROPIC_API_KEY` in
+the environment or `.env`.
 
-`sts_agent.strategic` keeps a seven-dimension, evidence-grounded assessment. In `play-run`, the
-coordinator refreshes it with the same provider:
+Precedence is code defaults < TOML < command-line flags. For DeepSeek,
+`--model` overrides `[llm].model`, which overrides `DEEPSEEK_MODEL`. Existing
+environment variables take precedence over `.env`. With `--config`, `.env` is
+loaded from that config file's directory; otherwise it is loaded from the working
+directory. The loader supports plain/quoted values and full-line comments,
+without shell expansion. Credentials belong outside TOML; key-like fields are rejected.
 
-- at the start of the run
-- after a confirmed combat finishes
-- when strategic facts change on a settled non-combat screen: relics, potions, HP or gold, act, or
-  visible opportunities
+`sts-agent doctor` checks local provider setup and game connectivity without a
+model call. Missing model, key, or SDK stops gameplay commands without a baseline
+fallback. Configure call/token budgets and optional token prices under `[llm]`.
+Decision calls, strategic calls, and corrective retries share one provider budget.
 
-It never refreshes for ordinary card plays. Facts the API doesn't expose stay `null`. In
-particular, the permanent deck is never reconstructed from combat piles. If an update fails, the
-frame says `assessment_unavailable` (or `historical`) and the decision still goes ahead from current
-facts. See [docs/STRATEGIC_PLANNER.md](docs/STRATEGIC_PLANNER.md) for its standalone API.
+## Install the mod and optional data
 
-## 9. More documentation
+The source-inspected STS2MCP revision is
+`55e064850a68f3b4cde7e5fd525bf9b2dec4e885`. The tagged 0.4.0 release predates
+that revision's STS2 v0.107 compatibility fix, although both report mod version
+0.4.0. Do not infer compatibility from that label alone.
 
-- [docs/EXPERT_STATS.md](docs/EXPERT_STATS.md): cached character-specific expert
-  pick rates, event choices and merchant purchases, automatically included in
-  relevant LLM decisions. Configure `[expert_stats]` in the example TOML.
-- [docs/LLM_DECISION_ENGINE.md](docs/LLM_DECISION_ENGINE.md): the design handoff this
-  implementation follows.
-- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md): the capability table, source evidence,
-  assumptions, and what is unsupported.
-- [docs/TRACE_FORMAT.md](docs/TRACE_FORMAT.md): baseline (`sts2-trace-1`) and LLM
-  (`sts2-trace-2`) traces, and replay.
-- [docs/STRATEGIC_PLANNER.md](docs/STRATEGIC_PLANNER.md): the strategic assessor's contracts.
-- [tests/fixtures/README.md](tests/fixtures/README.md): all fixtures are **synthetic**.
+For the recorded v0.107.1 setup, build the pinned source with .NET 9 against the
+installed game. Apply this repository's additive extension before building to
+include permanent deck, native card previews, enemy move IDs/history, and the
+ancient-screen map:
+
+```powershell
+git clone https://github.com/Gennadiyev/STS2MCP.git .venv/mod-build/STS2MCP
+git -C .venv/mod-build/STS2MCP checkout 55e064850a68f3b4cde7e5fd525bf9b2dec4e885
+python tools/patch_mod_preview.py .venv/mod-build/STS2MCP
+dotnet build .venv/mod-build/STS2MCP/STS2_MCP.csproj `
+  '-p:STS2GameDir=C:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2' `
+  -o .venv/mod-build/out-preview
+```
+
+With the game closed, back up the old DLL, copy the rebuilt `STS2_MCP.dll` and
+upstream `mod_manifest.json` (renamed `STS2_MCP.json`) into the game's `mods`
+directory, then enable mods and reopen the game. See
+[the extension guide](docs/COMBAT_VISIBILITY.md). Rebuild and verify after game
+updates; the recorded v0.111.0 attempt failed to compile this upstream revision.
+Declare the actual `game_build` in TOML, and optionally `game_dir` for manifest checks.
+
+Fetch the optional pinned v0.107.1 enemy reference from the repository root:
+
+```sh
+python tools/fetch_monster_data.py
+```
+
+It writes ignored `data/monster_reference/monsters.json`, selected by
+`monster_data_path`. Without readable reference data, later enemy turns stay
+unknown. These are static predictions, not game simulation.
+
+Spire Codex support is enabled by default. Its optional `SPIRE_CODEX_API_KEY`
+belongs in `.env`. The cache and SQLite history are under ignored
+`traces/spire_codex_cache`; use `sync-history` to fill a bounded corpus before
+play if desired. See [expert evidence](docs/EXPERT_STATS.md) for scopes and limits.
+
+## Commands
+
+Global options (`--config`, `--base-url`, `--policy`, `--model`) precede the command.
+The mod normally listens at `http://127.0.0.1:15526`.
+
+| Command | Behavior |
+| --- | --- |
+| `sts-agent doctor` | Check config, provider setup, connectivity, mod build, and current screen; no model call. |
+| `sts-agent observe [--json] [--save F] [--save-raw F]` | Read state; optionally save normalized/raw data. Plain text can show the baseline comparison choice. |
+| `sts-agent observe --save-frame traces/frame.json` | Save a supported decision frame, with advisory evidence when available; no model call. |
+| `sts-agent observe --preview-decision` | Ask the configured model for a choice; billable, no gameplay POST. |
+| `sts-agent decide-frame traces/frame.json [--scripted-reply TEXT]` | Decide from a saved frame; configured model is billable, scripted replies are synthetic; no gameplay execution. |
+| `sts-agent step` | Make and execute one LLM gameplay decision. A strategic refresh may add model calls. |
+| `sts-agent play-combat` | Continue until the current combat ends or a stop condition occurs. |
+| `sts-agent play-run` | Continue an already-started run across supported screens. |
+| `sts-agent sync-history --character IRONCLAD --ascension 0 --max-new-runs 100 --max-seconds 120` | Fetch bounded public run history; no game or model calls. Match the scope to your configured evidence filters. |
+| `sts-agent replay traces/SESSION_ID [-v]` | Validate recorded LLM decisions or rerun baseline choices offline. |
+| `sts-agent capabilities` | Print supported actions, assumptions, and unsupported screens. |
+
+`play-combat` and `play-run` accept `--max-actions`, `--max-elapsed-s`, and
+`--max-no-progress-s`. The action limit uses `max_run_actions` for `play-run`.
+Gameplay commands also accept `--trace-dir` and `--no-raw`.
+
+Only `step`, `play-combat`, and `play-run` send gameplay POSTs. State reads can
+open shop inventory or treasure chests inside the mod. Advisory evidence may
+make external requests (including a read-only draft-advice POST); saving a frame
+therefore need not be network-free. `decide-frame` and replay use stored evidence.
+
+Start verification with `doctor`, then `observe --save-frame traces/frame.json`,
+then a bounded `step` or `play-combat`. Review the frame and resulting trace.
+This documentation update does not itself establish live compatibility.
+
+## Decision flow and memory
+
+```text
+observe and settle -> refresh strategy when needed -> attach advisory evidence
+ -> build frame -> model selects one action ID -> validate JSON
+ -> re-read and check fingerprint + binding + deadline -> POST once
+ -> observe screen-specific resolution -> record outcome -> repeat
+```
+
+The model chooses confirmations, rewards, end turn, and leaving as well as card
+plays. At most one corrective retry is allowed for invalid decision output;
+provider failures stop. An ambiguous gameplay request is inspected and never resent.
+Rejected candidates are withheld for that exact state.
+
+The seven-dimension strategic assessment persists for the session. Encounter
+memory keeps up to eight decisions/outcomes and a conditional turn intent.
+Recent combat summaries supplied to the assessor are capped at ten.
+An optional map-only `route_plan` persists across encounters and is revisited
+when resources, route position, fights, or elite preparation warrant it. Python
+provides projections and triggers; the model still chooses the route. There is
+no cross-session memory or cross-run learning. Run identity uses the mod's
+compendium ID when available, otherwise a session-scoped identifier.
+
+Decision prompts shrink advisory detail, community deck advice, oldest history,
+and finally all advisory support, in that order. Facts and legal candidates are
+never removed to fit; if those still exceed the byte cap, the session stops.
+
+## Stops and exit codes
+
+Unsupported screens, missing actions, invalid output, exhausted budgets, stale
+states, unresolved actions, and time/action limits are explicit outcomes. A
+regular shop offers leave once its inventory is ready even if its room-level
+`can_proceed` is false; full potion slots suppress potion purchases. A rest site
+with no enabled options and no proceed action is treated as not ready.
+
+| Stop reason | Meaning |
+| --- | --- |
+| `step_done`, `combat_ended` | Expected bounded completion. |
+| `player_defeated` | Game-over state with no remaining HP (or unknown HP). |
+| `run_over_unconfirmed` | Game-over state with positive HP; the API does not certify victory. |
+| `unsupported_decision_screen` | No supported adapter; nothing is chosen for that screen. |
+| `model_failed`, `model_budget_exhausted`, `invalid_model_output` | No valid model choice; no gameplay action sent for it. |
+| `decision_input_too_large` | Essential facts/candidates exceed the prompt cap. |
+| `no_actions_on_actionable_screen` | A ready screen has no supported candidates. |
+| `adapter_index_mismatch` | A purchase changed a different shop entry than expected. |
+| `unresolved_action`, `ambiguous_outcome_unresolved` | Outcome not confirmed; request is never resent. |
+| `repeated_rejections`, `ready_timeout`, `no_progress`, `max_actions`, `max_elapsed`, `game_unavailable`, `interrupted` | Execution or configured bounds stopped the session. |
+
+Exit `0` means expected completion for the command (`step_done`/`combat_ended`
+for step, `combat_ended` for play-combat, `run_over_unconfirmed` for play-run).
+Other session stops return `1`; setup/connectivity errors generally return `2`.
+
+## Project map and references
+
+| Location | Responsibility |
+| --- | --- |
+| `src/sts_agent/client.py`, `observation.py` | Game transport and normalized facts. |
+| `src/sts_agent/decision/` | Screens, frames, prompts, choice validation, and run coordination. |
+| `src/sts_agent/providers/` | DeepSeek and Anthropic transport with shared usage budgets. |
+| `src/sts_agent/strategic/` | Evidence-grounded run assessment. |
+| `src/sts_agent/expert_stats.py`, `spire_history.py` | External evidence, cache, and local run index. |
+| `src/sts_agent/route_*.py`, `elite_readiness.py`, `ancient_advisor.py` | Route projections and rule-based advisory analysis. |
+| `src/sts_agent/enemy_patterns.py`, `combat_preview.py` | Static forecasts and native-preview summaries. |
+| `src/sts_agent/trace.py`, `replay.py` | Recording and offline validation. |
+| `src/sts_agent/actions.py`, `cards.py`, `policy.py`, `runner.py` | Explicit combat-only baseline comparison. |
+| `mod/`, `tools/` | Additive mod extension, patcher, and reference downloader. |
+
+- [Decision engine](docs/LLM_DECISION_ENGINE.md)
+- [Strategic planner contracts](docs/STRATEGIC_PLANNER.md)
+- [Expert statistics and route advice](docs/EXPERT_STATS.md)
+- [Combat visibility and mod setup](docs/COMBAT_VISIBILITY.md)
+- [Compatibility and screen coverage](docs/COMPATIBILITY.md)
+- [Trace format and replay](docs/TRACE_FORMAT.md)
+- [Historical and current validation records](docs/LOCAL_VALIDATION.md)
