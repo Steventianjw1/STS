@@ -1,5 +1,6 @@
 # Copy to sts_agent.toml (in the folder you run sts-agent from) and edit.
-# Every key is optional; the values shown are the defaults, except [llm].model, which you must set.
+# Keys are optional. Values match code defaults except max_output_tokens=4096 below
+# (code default: 1024). Supply a model via DEEPSEEK_MODEL, [llm].model, or --model.
 
 # Gameplay policy: "llm" (default; configured model chooses every action) or "baseline"
 # (explicit heuristic comparison mode, combat only; never used as a fallback).
@@ -22,7 +23,8 @@ record_raw = true         # also write debug_raw.jsonl (raw API responses; not t
 # game_dir = 'D:\SteamLibrary\steamapps\common\Slay the Spire 2'
 
 # Enemy move-pattern reference (fetch with `python tools/fetch_monster_data.py`). Fills the
-# combat prompt's next-turn enemy predictions. A missing file leaves offsets 2-3 unknown.
+# combat prompt's offsets 2-3 after the observed next move. Data is pinned to v0.107.1;
+# forecasts are base values, not native simulations. A missing file leaves them unknown.
 monster_data_path = "data/monster_reference/monsters.json"
 
 [limits]
@@ -46,12 +48,13 @@ provider = "deepseek"              # or "anthropic" for the original Claude adap
 # For anthropic, use ANTHROPIC_API_KEY instead. Never put credentials here.
 max_output_tokens = 4096
 timeout_s = 60.0                   # whole call; SDK retries are disabled
-max_calls_per_run = 2000           # decision + strategic calls
+# deepseek_reasoning_effort = "high"  # low, high, or max; omit for provider default (model support varies)
+max_calls_per_run = 2000           # shared per session: decisions + strategy + corrective retries
 # max_input_tokens_per_run = 5000000
 # max_output_tokens_per_run = 500000
 # price_input_usd_per_mtok = 0.0   # set both prices to get an estimated cost in the summary
 # price_output_usd_per_mtok = 0.0
-max_input_bytes = 98304            # decision prompt size; oldest history trimmed first, facts never trimmed
+max_input_bytes = 98304            # trim support detail, community advice, history, then all support; preserve facts/candidates
 # objective = "Win the run (ordinary victory) with the current character at the current difficulty."
 strategic_planner = true
 
@@ -66,7 +69,7 @@ cache_dir = "traces/spire_codex_cache"
 cache_ttl_s = 86400.0              # memory + disk; expired data is not used
 request_timeout_s = 3.0
 max_fetch_s = 12.0                 # overall fetch budget per decision; remaining run budget also applies
-history_enabled = true
+history_enabled = true            # indexed floor/deck contexts and map evidence; also requires enabled=true
 history_runs_per_player = 100      # bounded SQLite corpus under cache_dir; standard solo runs only
 history_new_runs_per_decision = 3  # incremental sync; at most one run per player per decision
 floor_window = 3                  # nearby floor +/- 3, then act, then indexed cohort
@@ -74,7 +77,7 @@ min_context_samples = 20          # report widening and sparse final samples
 deck_similarity_min = 0.5         # base-card multiset Jaccard; excludes incomplete card identities
 deck_advice_enabled = true        # requires an explicit permanent deck from the patched mod
 route_planning_enabled = true     # map screens: HP-loss model per node class + path enumeration
-route_candidates = 6              # non-dominated paths shown to the model (labeled, never scored)
+route_candidates = 6              # labeled representative paths; prior/preparation alternatives may be dominated
 route_max_routes = 2000           # distinct node-type sequences kept per map node
 encounter_stats_bracket = "solo"  # fallback when own runs are too few: solo, a10, wr30, wr50, wr75
 replan_hp_tolerance_pct = 15.0    # re-plan trigger: HP this far (% of max HP) from the projection
@@ -82,5 +85,5 @@ replan_gold_tolerance = 100       # re-plan trigger: gold this far from the proj
 elite_readiness_enabled = true    # elite threats (Spire Codex catalogs) vs. the patched mod's permanent deck
 elite_block_attack_pct = 20.0     # block gap rule: elite attack turn >= this % of max HP, or it gains Strength
 elite_trigger_steps = 3           # re-plan trigger: planned elite within this many steps while gaps remain
-ancient_advisor_enabled = true    # ancient screens: relic effects vs. deck/state, expert offer stats, community lift
+ancient_advisor_enabled = true    # relic effects vs. deck/state, offer stats, community lift, patched act-map outlook
 # Optional SPIRE_CODEX_API_KEY belongs in .env, never in this file.

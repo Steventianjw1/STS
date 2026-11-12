@@ -1,6 +1,42 @@
-# Local compatibility and provider checks — 2026-11-03
+# Validation records and current verification limits
 
-## Native combat preview extension
+## Current documentation review — 2026-11-12
+
+The current implementation was reviewed through `35d636c` ("Fix live merchant
+and rest handling and configure DeepSeek effort"), following the two merges of
+enemy move forecasts and the route/elite/ancient evidence work. This section
+describes source inspection and offline checks; it adds no live-play or real-model
+validation claim.
+
+- Reviewed the mod hooks, full deck/pile visibility, reference move forecasts,
+  contextual statistics/history, route projections/replanning, elite gaps,
+  ancient offer/map outlooks, provider setup, and trace/replay behavior.
+- The latest implementation offers leave in a ready regular shop even when the
+  room proceed button is disabled, withholds potion purchases when known slots
+  are full, waits through rest states without enabled actions, and forwards
+  optional DeepSeek reasoning effort (`low`, `high`, `max`). The commit title
+  identifies live handling fixes; it is not a checked-in end-to-end run report.
+- Offline CLI help/capabilities and syntax parsing of all 38 Python source/tool
+  files passed during familiarization. Documentation checks passed for all
+  eight Markdown guides, 32 local links/anchors, four structured code examples,
+  example configuration/defaults, schema/prompt names, and six CLI help routes.
+- The current checkout has no local test suite. Historical test counts below
+  refer to earlier local, ignored tests, not a suite distributed with the clone.
+- Every capability in code still reports `live_validated=false`. No game/mod
+  download, build, launch, gameplay POST, external evidence fetch, or billable
+  provider call was performed for this review.
+
+The records below are preserved as historical evidence from the earlier local
+Windows environment. Paths, installed builds, dependency availability, and API
+keys described there do not establish the state of the current cloud workspace.
+In particular, successful older preview builds do not validate later deck,
+enemy-move, and ancient-map hooks in a currently installed DLL. The repository
+authorizes bounded live verification in `AGENTS.md`; historical statements about
+pending validation describe what was done then, not an offline-only restriction.
+
+## Historical local checks — 2026-11-03
+
+### Native combat preview extension
 
 Added the repository-owned `mod/McpMod.AgentPreview.cs` extension and the
 idempotent `tools/patch_mod_preview.py` integration script. Built against the
@@ -32,7 +68,7 @@ See `COMBAT_VISIBILITY.md` for the preview data contract and limitations.
 The user now authorizes game/mod access. No live gameplay action or billable LLM
 call has been performed during these checks.
 
-## Latest recheck: v0.107.1 — startup and API reads verified
+### Historical v0.107.1 recheck — startup and API reads verified
 
 The installed game changed to **v0.107.1**, commit `59260271`, main assembly hash
 `-1555940892`. Steam now reports build **23811903**, `public` branch.
@@ -59,9 +95,9 @@ Use this rebuilt source version, rather than assuming the older downloadable
 fix. No alternate mod or further game-version change is needed for these verified
 startup/read checks.
 
-## Earlier check: v0.111.0 (historical)
+### Earlier v0.111.0 check
 
-## Installed game and mod
+#### Installed game and mod in that check
 
 - Steam installation: `C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2`.
 - `release_info.json`: **v0.111.0**, commit `41cef1ea`, main assembly hash `222455745`.
@@ -86,7 +122,7 @@ with this adapter and perform live read-only checks before a bounded action.
 Alternatively, use a game build explicitly supported by the chosen mod revision.
 No downgrade or replacement mod is currently verified by this project.
 
-## DeepSeek
+### Historical DeepSeek setup and checks
 
 `deepseek` is the default provider. `.env` and `.env.example` contain blank
 `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, and `DEEPSEEK_MODEL` values.
