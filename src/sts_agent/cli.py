@@ -118,6 +118,12 @@ def _doctor_combat_search(cfg, line, client) -> bool:
             return False
         line("ok", f"combat: native Spire Mentor Autobattle ready (mode {status.get('mode')}); "
                    "no LLM combat fallback; Mentor advice ignored outside combat")
+        if cfg.combat_search.offer_handoff:
+            if "fight_offer_hold" in status:
+                line("ok", "combat: the mod can have Mentor hold in-fight offers; offers an enemy opens go to the LLM")
+            else:
+                line("WARN", "combat: this mod build cannot hold in-fight offers, so Mentor answers them itself. "
+                             "Rebuild the agent mod extension to enable [combat_search] offer_handoff.")
         return True
     adv = _advisor(cfg)
     status = adv.status()
@@ -437,14 +443,17 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     scripted = bool(getattr(model, "is_scripted", False))
     if facts_source == "synthetic" or getattr(client, "data_source", None) == "synthetic":
         facts_source = "synthetic"
-    policy = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes)
+    policy = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes,
+                               provider_retries=cfg.llm.provider_retries)
     autobattle = None
     # Live observed combat only: synthetic or scripted sessions never consult a running advisor.
     if cfg.combat_search.enabled and facts_source != "synthetic" and not scripted:
         if cfg.combat_search.autobattle:
             autobattle = MentorAutobattle(client)
             autobattle.control("status")  # Validate the bridge before any model or gameplay action.
-            log("combat: native Spire Mentor Autobattle; DeepSeek controls non-combat decisions")
+            log("combat: native Spire Mentor Autobattle; DeepSeek controls non-combat decisions"
+                + (" and in-fight offers an enemy opens ([combat_search] offer_handoff)"
+                   if cfg.combat_search.offer_handoff else ""))
         else:
             policy = SearchCombatPolicy(policy, _advisor(cfg))
             log(f"combat search: Spire Mentor advisor at {cfg.combat_search.control_url} (LLM on any miss)")
@@ -464,6 +473,7 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
         f"{', SCRIPTED' if scripted else ''})")
     scope = {"step": "step", "play-combat": "combat", "play-run": "run"}[command]
     coord = RunCoordinator(client, policy, planner=planner, recorder=rec, limits=cfg.limits, scope=scope, autobattle=autobattle,
+                           offer_handoff=cfg.combat_search.offer_handoff,
                            expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build)
                            if facts_source != "synthetic" and not scripted else None,
                            run_id=run_id, run_id_source=run_id_source, facts_source=facts_source,

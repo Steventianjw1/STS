@@ -3,9 +3,10 @@
 Plain Python evidence, never a choice: dominated paths are dropped, and up to N
 non-dominated paths are returned with labels saying what each is best at, plus at
 least one path for every legal next node. No combined score is computed.
-Projections sample layer-B fight losses (scaled by how this run's fights compared
-with the pooled expectation) and assume the current max HP; they ignore deck,
-relics, potions and events' other effects.
+Projections sample layer-B fight losses (scaled by how this run's fights of the same
+group compared with the pooled expectation), add back the pooled HP regained on the
+same floor, and assume the current max HP; they ignore deck, relics, potions and
+events' other effects.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import random
 import re
 
 from .elite_readiness import pool_gap_share
-from .route_risk import agent_loss_scale, loss_draws, node_class
+from .route_risk import SCALE_GROUPS, agent_loss_scale, loss_draws, node_class
 
 FIGHTS = ("monster", "elite")
 MEASURES = (  # (key, direction) used for dominance; None values are skipped consistently
@@ -122,6 +123,10 @@ def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, sca
     ``uniforms`` drawing each fight's loss from ``draws`` (observed losses), stops a
     replay when HP reaches 0, and reports how often that happens before the next rest
     site and before the boss. Without ``draws`` for a class its mean is used.
+
+    ``scale`` is one number or ``{"hallway": x, "elite_boss": y}`` (see SCALE_GROUPS).
+    A survived fight then regains the class's pooled same-floor ``recovery_pct``; the
+    low point of a step is taken before that, the step's reported HP after it.
     """
     classes, early_k = risk["classes"], risk["early_hallway_fights"]
     heal = risk["rest_heal_pct"]["mean"]
@@ -135,26 +140,32 @@ def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, sca
     for i, (kind, col, row) in enumerate(path, 1):
         if kind == "boss":
             steps.append({"step": i, "type": kind, "expected_hp_pct": round(exp, 1)})
-            plan.append(("boss", None, 0.0))
+            plan.append(("boss", None, 0.0, 1.0, 0.0))
             break
         if kind == "monster":
             ordinal += 1
         cls = node_class(kind, ordinal, early_k)
         if cls:
-            mean = (classes[cls]["mean_pct"] or 0.0) * scale
+            factor = scale.get(SCALE_GROUPS.get(cls, "hallway"), 1.0) if isinstance(scale, dict) else scale
+            mean = (classes[cls]["mean_pct"] or 0.0) * factor
+            regain = classes[cls].get("recovery_pct") or 0.0
             d = (draws or {}).get(cls)
             if d is None:
                 no_shape.add(cls)
-            plan.append(("fight", d, mean))
+            plan.append(("fight", d, mean, factor, regain))
             exp -= mean
+            if exp < min_exp[0]:
+                min_exp = (exp, i)
+            if exp > 0:
+                exp = min(100.0, exp + regain)
         elif kind == "rest_site":
             heal_exp, why = _heal_here(exp, profile)
             rest_choice.append({"step": i, "expected_path": "HEAL" if heal_exp else "SMITH", "basis": why})
             if heal is not None and heal_exp:
                 exp = min(100.0, exp + heal)
-            plan.append(("rest", None, 0.0))
+            plan.append(("rest", None, 0.0, 1.0, 0.0))
         else:
-            plan.append(("other", None, 0.0))
+            plan.append(("other", None, 0.0, 1.0, 0.0))
         if kind == "shop":
             shop_gold.append({"step": i, "estimated_arrival_gold": round(g)})
             g = max(0.0, g - (spend or 0))
@@ -167,15 +178,16 @@ def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, sca
     for us in uniforms or []:
         hp = low = hp_pct
         died = False
-        for i, (what, d, mean) in enumerate(plan, 1):
+        for i, (what, d, mean, factor, regain) in enumerate(plan, 1):
             if what == "fight":
-                hp -= d[int(us[i - 1] * len(d))] * scale if d else mean
+                hp -= d[int(us[i - 1] * len(d))] * factor if d else mean
                 low = min(low, hp)
                 if hp <= 0:
                     died = True
                     dead += 1
                     dead_before_rest += first_rest is None or i < first_rest
                     break
+                hp = min(100.0, hp + regain)
             elif what == "rest":
                 if i == first_rest:
                     rest_arrivals.append(hp)
@@ -186,7 +198,7 @@ def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, sca
         if died and first_rest is not None and len(rest_arrivals) < len(mins):
             rest_arrivals.append(hp)
     n = len(mins)
-    fights_before_rest = sum(what == "fight" for what, _, _ in (plan[:first_rest - 1] if first_rest else plan))
+    fights_before_rest = sum(step[0] == "fight" for step in (plan[:first_rest - 1] if first_rest else plan))
     return {"steps": steps, "boss_arrival": exp, "boss": classes["boss"], "min_exp": min_exp,
             "shop_gold": shop_gold, "rest_choice": rest_choice, "gold": g, "no_shape": no_shape,
             "first_rest": first_rest, "fights_before_rest": fights_before_rest,
@@ -251,6 +263,7 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
         done[t] = done.get(t, 0) + 1
     hp_pct = hp / max_hp * 100
     scale = agent_loss_scale(outcomes)
+    factors = {g: row["value"] for g, row in scale["by_group"].items()}
     draws = loss_draws(risk)
     sims = max(40, min(SIMULATIONS, 40000 // len(routes)))
     rng = random.Random(20261112)          # fixed: the same map and state always project the same numbers
@@ -259,7 +272,7 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
     rows = []
     for opt, path in routes:
         sim = simulate(path, hp_pct=hp_pct, gold=gold or 0, risk=risk, profile=profile,
-                       hallway_done=done.get("monster", 0), draws=draws, scale=scale["value"], uniforms=uniforms)
+                       hallway_done=done.get("monster", 0), draws=draws, scale=factors, uniforms=uniforms)
         counts = dict(done)
         for t, _, _ in path:
             counts[t] = counts.get(t, 0) + 1
@@ -284,7 +297,7 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
             "expected_boss_arrival_hp_pct": round(sim["boss_arrival"], 1),
             "p10_boss_arrival_hp_pct": _r(sim["p10_boss_arrival"]),
             "expected_boss_margin_pct": None if boss["mean_pct"] is None else round(
-                sim["boss_arrival"] - boss["mean_pct"] * scale["value"], 1),
+                sim["boss_arrival"] - boss["mean_pct"] * factors["elite_boss"], 1),
             "expected_min_hp_pct": round(sim["min_exp"][0], 1), "expected_min_at_step": sim["min_exp"][1],
             "p10_min_hp_pct": _r(sim["p10_min"]),
             "death_risk_before_boss_pct": _r(sim["death_before_boss"]),
@@ -364,7 +377,8 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
         "unmodeled_node_types": unmapped, "dominance_measures": [k for k, _ in keys],
         "profile_distance_basis": basis if rows else None,
         "simulation": {"replays_per_path": sims, "agent_loss_scale": scale,
-                       "loss_source": "observed per-class fight losses (hp_risk), resampled",
+                       "loss_source": "observed per-class HP removed per fight (hp_risk), resampled and scaled by "
+                                      "the fight's group; a survived fight then regains that class's recovery_pct",
                        "negative_values": "HP below 0 is kept: it says how far short the path falls"},
         "candidates": shown, "by_next_option": list(options.values()),
         "outlook": _outlook(rows), "route_ranges": _ranges(rows),
@@ -431,7 +445,9 @@ def plan_status(plan, *, act, details, hp, max_hp, gold, relics, potions, outcom
     for o in outcomes[plan["outcomes_seen"]:]:
         cls = o.get("node_class") or {"elite": "elite", "boss": "boss"}.get(o.get("encounter_type"), "later_hallway")
         p90 = ((risk or {}).get("classes") or {}).get(cls, {}).get("p90_pct")
-        lost = o.get("hp_lost_pct")
+        lost = o.get("hp_damage_pct")   # HP removed during the fight: what p90 measures
+        if lost is None:
+            lost = o.get("hp_lost_pct")
         if lost is None and o.get("hp_lost") is not None and max_hp:
             lost = o["hp_lost"] / max_hp * 100
         if lost is not None and p90 is not None and lost > p90:

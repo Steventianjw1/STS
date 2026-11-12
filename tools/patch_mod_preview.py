@@ -26,6 +26,12 @@ def patch(source: Path) -> None:
             raise SystemExit("Unsupported STS2MCP source: expected one player gold anchor.")
         text = text.replace(deck_anchor, deck_anchor + "\n" + deck_addition)
         changed = True
+    keywords_addition = '        state["deck_keywords"] = BuildAgentDeckKeywords(player);'
+    if keywords_addition not in text:   # sits right after the deck line added above
+        if text.count(deck_addition) != 1:
+            raise SystemExit("Unsupported STS2MCP source: expected one agent deck line.")
+        text = text.replace(deck_addition, deck_addition + "\n" + keywords_addition)
+        changed = True
     enemy_anchor = '            ["status"] = BuildPowersState(creature)\n        };'
     enemy_addition = '        AddAgentMoveState(creature, state);'
     if enemy_addition not in text:
@@ -55,7 +61,8 @@ def patch(source: Path) -> None:
                     source / "McpMod.AgentPreview.cs")
     shutil.copyfile(Path(__file__).resolve().parents[1] / "mod" / "McpMod.AgentStartup.cs",
                     source / "McpMod.AgentStartup.cs")
-    print("Patched previews, deck, enemy moves, ancient map and run setup. Rebuild and install STS2_MCP.dll.")
+    print("Patched previews, deck and its keyword tooltips, enemy moves, ancient map and run setup. "
+          "Rebuild and install STS2_MCP.dll.")
 
 
 if __name__ == "__main__":

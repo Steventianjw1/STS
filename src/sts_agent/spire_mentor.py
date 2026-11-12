@@ -51,7 +51,9 @@ class MentorAutobattle:
         self.client = client
 
     def control(self, command: str) -> dict:
-        if command not in ("status", "on", "off"):
+        """``hold_offers`` makes Mentor hold in-fight choose-a-card screens (its ``pause_on``);
+        ``ai_pick`` has Mentor play its own recommendation on the screen it is holding, once."""
+        if command not in ("status", "on", "off", "hold_offers", "ai_pick"):
             raise ValueError("Unknown Autobattle command")
         response = self.client.post_action({"action": "menu_select", "option": f"agent_autobattle_{command}"})
         body = response.body

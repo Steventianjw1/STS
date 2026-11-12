@@ -1,4 +1,8 @@
-"""DeepSeek Chat Completions adapter with a shared budget and no retries.
+"""DeepSeek Chat Completions adapter with a shared budget and no SDK retries.
+
+``timeout_s`` is handed to the SDK, where it bounds connecting and each wait for
+response data, not the whole call: a response that keeps sending bytes can take
+longer. Retrying a failed call is the caller's decision (see LLMDecisionPolicy).
 
 Uses the OpenAI-compatible SDK protocol, but only DEEPSEEK_* credentials and
 configuration; no OpenAI account or key is used.
