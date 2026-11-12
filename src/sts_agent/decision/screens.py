@@ -111,8 +111,62 @@ def _combat_facts(obs: dict) -> dict:
     # only duplicate them (and omits temporary combat cards).
     f.pop("deck", None)
     f.update({"combat": obs["combat"], "hand": obs["hand"], "piles": obs["piles"],
-              "enemies": _enemies_with_patterns(obs)})
+              "enemies": _enemies_with_patterns(obs), "turn_outlook": _turn_outlook(obs)})
     return f
+
+
+def _turn_outlook(obs: dict) -> dict:
+    """Arithmetic over displayed values only: incoming damage vs. Block and what simple Block cards can add.
+
+    Not a simulation. Enemy intent numbers are the game's displayed values, so they
+    already contain every current modifier; nothing is added to them here.
+    """
+    pl = obs["player"]
+    alive = [e for e in obs["enemies"] or [] if e.get("hp") is None or e["hp"] > 0]
+    incoming = (None if obs["enemies"] is None or any(e["incoming_damage"] is None for e in alive)
+                else sum(e["incoming_damage"] for e in alive))
+    block, hp, energy = pl.get("block"), pl.get("hp"), pl.get("energy")
+    options, unknown = [], []
+    for c in obs["hand"] or []:
+        eff = c["effects"]
+        if c["can_play"] is not True or not (eff["fully_supported"] and eff["block"] is not None):
+            continue
+        value = next((v["preview_value"] for p in c.get("combat_previews") or [] for v in p["variables"] or []
+                      if v["name"] == "Block" and v["preview_value"] is not None), None)
+        if value is None or c["cost_is_x"] or c["cost"] is None:
+            unknown.append(c["name"])
+        else:
+            options.append((c["cost"], value, c["name"]))
+    best = None
+    if energy is not None:
+        table = {0: (0, [])}                       # energy spent -> (block, cards)
+        for cost, value, name in options:
+            for spent, (total, used) in sorted(table.items(), reverse=True):
+                if spent + cost <= energy and total + value > table.get(spent + cost, (-1, []))[0]:
+                    table[spent + cost] = (total + value, used + [name])
+        best = max(table.values(), key=lambda t: t[0])
+
+    def after(extra):
+        if incoming is None or block is None or extra is None:
+            return None, None, None
+        unblocked = max(0, incoming - block - extra)
+        left = None if hp is None else hp - unblocked
+        return unblocked, left, None if left is None else left <= 0
+
+    now, ceiling = after(0), after(best[0] if best else None)
+    return {
+        "label": "ARITHMETIC ON DISPLAYED VALUES, IF NOTHING ELSE CHANGES; not a simulation",
+        "incoming_damage_total": incoming, "player_block": block,
+        "unblocked_if_turn_ended_now": now[0], "hp_after_if_turn_ended_now": now[1],
+        "lethal_if_turn_ended_now": now[2],
+        "max_block_from_simple_block_cards": best[0] if best else None,
+        "simple_block_cards_used": best[1] if best else None,
+        "unblocked_after_that_block": ceiling[0], "hp_after_that_block": ceiling[1],
+        "lethal_even_after_that_block": ceiling[2],
+        "block_cards_not_counted": unknown,
+        "not_counted": "powers, relics, potions, end-of-turn effects, cards whose text is not a plain 'Gain N Block', "
+                       "and any change to the enemy intent caused by the cards you play",
+    }
 
 
 def _enemies_with_patterns(obs: dict):
@@ -200,6 +254,12 @@ def _combat_view(obs: dict, st: str) -> ScreenView:
             "player effects). The current move is exact only when position_source is mod_next_move_id.")
     v.limitations.extend([
         "Enemy intents are simultaneous parts of the next enemy move, not successive rounds.",
+        "Enemy intent damage numbers are the game's displayed values: they already include every current modifier "
+        "on both sides (Strength, Weak, Vulnerable and encounter-specific statuses). Never add a status to them again. "
+        "They can change when you play a card: recent_history entries report incoming_damage before and after each "
+        "of your actions, and observed_incoming_changes lists every change seen in this encounter.",
+        "turn_outlook compares the displayed incoming damage with your Block and with the most Block the plain "
+        "'Gain N Block' cards in hand can add for the current energy. It ignores everything listed in its not_counted field.",
         "effect_preview contains game-native current-state damage/block variables for each target. "
         "Player and target status/relic modifiers are already included; do not apply them twice. "
         "This is not a simulation: triggers, status changes between hits, replay, and later actions can change outcomes. "
@@ -488,6 +548,10 @@ def _card_select(raw, obs):
                "can_confirm": cs.get("can_confirm"), "can_cancel": cs.get("can_cancel"),
                "can_skip": cs.get("can_skip")}
     v, b = _room("card_select", raw, obs, details)
+    if obs["combat"] is not None:  # a picker opened during a fight (potion, card effect): the fight is still on
+        v.facts["combat_context"] = {"label": "THIS PICKER IS OPEN DURING A COMBAT; current combat state",
+                                     **{k: val for k, val in _combat_facts(obs).items()
+                                        if k in ("combat", "hand", "piles", "enemies", "turn_outlook")}}
     choose = stype == "choose"
     if not details["preview_showing"]:
         for c in cards:

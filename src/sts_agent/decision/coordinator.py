@@ -17,6 +17,7 @@ Single-caller, synchronous.
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from typing import Callable
 
 from ..client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
 from ..config import Limits
+from ..route_risk import agent_loss_scale, node_class
 from ..strategic import StrategicSnapshot
 from .models import DecisionFrame
 from .policy import LLMDecisionPolicy, model_identity
@@ -59,6 +61,12 @@ LLM_PROVENANCE_SCRIPTED = {"data_source": "synthetic", "behavior": "scripted_mod
                            "note": "SYNTHETIC: canned model replies (test double). Not LLM reasoning, not live play."}
 
 
+# Non-combat screens that can open on top of a fight (potion or card-effect pickers). While a
+# combat is open on the same floor they belong to that fight; they are not a room exit.
+COMBAT_OVERLAY_KINDS = ("card_select",)
+STATE_VERSION = 1
+
+
 class _Stop(Exception):
     def __init__(self, reason: str, detail: str = "", view: ScreenView | None = None):
         super().__init__(f"{reason}: {detail}")
@@ -72,6 +80,8 @@ class _Combat:
     start_hp: int | None
     rounds: int | None = None
     potions_used: int = 0
+    act: int | None = None
+    floor: int | None = None
 
 
 @dataclass
@@ -87,6 +97,7 @@ class CoordStats:
     strategic_updates: int = 0
     strategic_failures: int = 0
     combats_finished: int = 0
+    combats_started: int = 0
     blocked: set = field(default_factory=set)   # (view fingerprint, action_id)
 
 
@@ -100,7 +111,7 @@ class RunCoordinator:
     def __init__(self, client, policy: LLMDecisionPolicy, *, planner=None, recorder=None, expert_stats=None,
                  limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
                  facts_source: str = "observed", objective: str, model_timeout_s: float = 0.0,
-                 clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
+                 state_path=None, clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
                  log: Callable[[str], None] = print):
         if scope not in ("run", "combat", "step"):
             raise ValueError("scope must be run, combat or step")
@@ -130,6 +141,16 @@ class RunCoordinator:
         self.pending_combat_finished = False
         self.last_planner_result = None
         self.seq = 0
+        self.last_combat_facts: dict | None = None   # shown on pickers that open during a fight
+        self.incoming_changes: list = []             # this encounter: intent damage moved by the agent's own actions
+        self.hallway_done: dict = {}                 # act -> finished hallway fights (for the early/later class)
+        self.risk_ref: dict | None = None            # pooled per-class loss seen on the latest map screen
+        self.rest_checkpoints: list = []             # projected vs. actual HP on arrival at planned rest sites
+        self.coverage: dict = {}                     # screen kind -> summed evidence_coverage counters
+        self._coverage_seen: set = set()
+        self.state_path = state_path                 # same-run resume file; None disables persistence
+        self._restore_pending = state_path is not None
+        self.resumed_from: dict | None = None
 
     # ---------------------------------------------------------------- observe
     def _observe(self, label: str) -> ScreenView:
@@ -185,43 +206,91 @@ class RunCoordinator:
                 self._finish_combat(v, "defeat" if v.terminal == "defeat" else "unknown")
             raise _Stop(STOP_PLAYER_DEFEATED if v.terminal == "defeat" else STOP_RUN_OVER_UNCONFIRMED,
                         f"game_over screen ({v.terminal})", v)
-        if self.scope == "combat" and self.seen_combat and not v.in_combat and self.combat:
+        if (self.scope == "combat" and self.seen_combat and not v.in_combat and self.combat
+                and not self._fight_overlay(v)):
             self._finish_combat(v, "victory")
             raise _Stop(STOP_COMBAT_ENDED, f"left combat (screen {v.kind})", v)
         if v.unsupported:
             raise _Stop(STOP_UNSUPPORTED_SCREEN, f"missing capability - {v.unsupported}", v)
 
     # -------------------------------------------------------- encounter memory
+    def _fight_overlay(self, v: ScreenView) -> bool:
+        """A picker that opened during the current fight (same floor, combat still open)."""
+        return (self.combat is not None and not v.in_combat and v.kind in COMBAT_OVERLAY_KINDS
+                and v.encounter_key == self.combat.key.rsplit(":", 1)[0] + ":room")
+
     def _track_encounter(self, v: ScreenView):
-        if v.encounter_key != self.encounter_key:
+        key = self.combat.key if self._fight_overlay(v) else v.encounter_key
+        if key != self.encounter_key:
             if self.combat and not v.in_combat:
                 self._finish_combat(v, "victory")
-            self.history, self.turn_intent = [], None
-            self.encounter_key = v.encounter_key
+            self.history, self.turn_intent, self.incoming_changes = [], None, []
+            self.encounter_key = key
         if v.in_combat:
             self.seen_combat = True
             if self.combat is None or self.combat.key != v.encounter_key:
-                self.combat = _Combat(v.encounter_key, v.state_type, v.facts["player"]["hp"])
+                run = v.facts.get("run") or {}
+                self.combat = _Combat(v.encounter_key, v.state_type, v.facts["player"]["hp"],
+                                      act=run.get("act"), floor=run.get("floor"))
+                self.stats.combats_started += 1
             if v.combat_round is not None:
                 self.combat.rounds = max(self.combat.rounds or 0, v.combat_round)
+            self.last_combat_facts = {k: v.facts.get(k) for k in ("combat", "player", "hand", "piles", "enemies",
+                                                                  "turn_outlook")}
+        elif v.kind == "rest_site":
+            self._rest_checkpoint(v)
 
     def _finish_combat(self, after: ScreenView, result: str):
         c, self.combat = self.combat, None
         if c is None:
             return
-        end_hp = after.facts.get("player", {}).get("hp") if after.facts else None
+        player = (after.facts.get("player") or {}) if after.facts else {}
+        end_hp, max_hp = player.get("hp"), player.get("max_hp")
+        if result == "defeat" and (end_hp is None or end_hp > 0):
+            end_hp = 0
         change = None if (c.start_hp is None or end_hp is None) else end_hp - c.start_hp
+        lost = None if change is None else max(0, -change)
+        ordinal = self.hallway_done.get(c.act, 0) + 1
+        ref = self.risk_ref if self.risk_ref and self.risk_ref["act"] == c.act else None
+        cls = node_class(c.encounter_type, ordinal, ref["early_k"]) if ref else None
+        if c.encounter_type == "monster" and c.act is not None:
+            self.hallway_done[c.act] = ordinal
+        outcome = {"encounter_type": c.encounter_type, "result": result, "act": c.act, "floor": c.floor,
+                   "hp_lost": lost, "hp_lost_pct": round(lost / max_hp * 100, 1) if lost is not None and max_hp else None,
+                   "node_class": cls, "expected_pct": (ref["classes"].get(cls) or {}).get("mean_pct") if cls else None,
+                   "expected_p90_pct": (ref["classes"].get(cls) or {}).get("p90_pct") if cls else None}
         item = {"id": f"combat-{c.key}", "encounter_type": c.encounter_type, "result": result,
-                "hp_lost": None if change is None else max(0, -change), "turns": c.rounds,
+                "hp_lost": lost, "turns": c.rounds,
                 "notes": (f"OBSERVED: HP change {change if change is not None else 'unknown'} measured on the first "
                           f"post-combat screen (includes end-of-combat effects); potions used by this agent: "
                           f"{c.potions_used}.")}
         self.recent_outcomes.append(item)
-        self.route_outcomes.append({"encounter_type": c.encounter_type, "hp_lost": item["hp_lost"]})
+        self.route_outcomes.append(outcome)
         self.pending_combat_finished = True
         self.stats.combats_finished += 1
         if self.rec:
             self.rec.event("combat_finished", item)
+            self.rec.event("route_calibration", outcome)
+
+    def _rest_checkpoint(self, v: ScreenView):
+        """Projected vs. actual HP on arrival at a rest site the stored route plan expected here."""
+        plan, run, pl = self.route_plan, v.facts.get("run") or {}, v.facts.get("player") or {}
+        floor = run.get("floor")
+        if (not plan or not plan.get("trajectory") or plan.get("act") != run.get("act") or floor is None
+                or plan.get("floor") is None or not pl.get("max_hp") or pl.get("hp") is None
+                or any(c["floor"] == floor and c["act"] == run.get("act") for c in self.rest_checkpoints)):
+            return
+        i = floor - plan["floor"]   # the plan was stored on the map before node 1
+        steps = plan["trajectory"]
+        if not 1 <= i <= len(steps) or steps[i - 1].get("type") != "rest_site":
+            return
+        expected = steps[i - 2].get("expected_hp_pct") if i >= 2 else plan.get("hp_pct")
+        item = {"act": run.get("act"), "floor": floor, "actual_arrival_hp_pct": round(pl["hp"] / pl["max_hp"] * 100, 1),
+                "projected_arrival_hp_pct": None if expected is None else round(expected, 1),
+                "plan_set_at_floor": plan["floor"]}
+        self.rest_checkpoints.append(item)
+        if self.rec:
+            self.rec.event("route_rest_checkpoint", item)
 
     # ---------------------------------------------------------- strategy
     def _strategic_facts(self, v: ScreenView) -> dict:
@@ -280,7 +349,7 @@ class RunCoordinator:
     def _maybe_refresh_strategy(self, v: ScreenView):
         if self.planner is None:
             return
-        if v.in_combat and self.strat_revision > 0:
+        if (v.in_combat or self._fight_overlay(v)) and self.strat_revision > 0:
             return  # ordinary card plays never trigger a refresh; refresh after the combat ends
         facts = self._strategic_facts(v)
         if self.strat_revision > 0 and facts == self.strat_facts and not self.pending_combat_finished:
@@ -348,17 +417,59 @@ class RunCoordinator:
                 v, budget_s=max(0.0, self._deadline() - started - self.model_timeout_s),
                 route_state={"plan": self.route_plan, "outcomes": self.route_outcomes})
             self.last_progress += self.clock() - started  # evidence latency is not a game stall
+            self._note_support(v, support)
+        facts = v.facts
+        overlay = self._fight_overlay(v)
+        if overlay:
+            lims.append("This picker opened during a fight that is still in progress: choose with the enemy intent, "
+                        "your HP, Block and energy in mind (facts.combat_context).")
+            if "combat_context" not in facts and self.last_combat_facts:
+                facts = {**facts, "combat_context": {
+                    "label": "LAST OBSERVED COMBAT STATE BEFORE THIS PICKER OPENED; the fight is still on",
+                    **self.last_combat_facts}}
+        if (v.in_combat or overlay) and self.incoming_changes:
+            facts = {**facts, "observed_incoming_changes": {
+                "label": "OBSERVED IN THIS ENCOUNTER: displayed incoming damage before and after your own actions",
+                "items": self.incoming_changes[-12:]}}
         return DecisionFrame(
             run_id=self.run_id, run_id_source=self.run_id_source, objective=self.objective,
-            screen={"kind": v.kind, "state_type": v.state_type, "encounter_key": v.encounter_key,
+            screen={"kind": v.kind, "state_type": v.state_type,
+                    "encounter_key": self.encounter_key if overlay else v.encounter_key,
+                    **({"during_combat": True} if overlay else {}),
                     "capability": {"status": cap.get("status"), "live_validated": False, "mod_revision": MOD_REVISION}},
-            observation_fingerprint=v.fingerprint, facts_source=self.facts_source, facts=v.facts,
+            observation_fingerprint=v.fingerprint, facts_source=self.facts_source, facts=facts,
             candidates=cands, bindings={c["action_id"]: v.bindings[c["action_id"]] for c in cands},
             limitations=lims, assessment=self._assessment_for_frame(v),
             previous_turn_intent=self.turn_intent, history=self.history, decision_support=support)
 
+    def _note_support(self, v: ScreenView, support):
+        """Keep what later bookkeeping needs from the evidence: class losses and coverage counters."""
+        if not isinstance(support, dict):
+            return
+        risk = support.get("hp_risk")
+        if v.kind == "map" and isinstance(risk, dict) and isinstance(risk.get("classes"), dict):
+            self.risk_ref = {"act": (v.facts.get("run") or {}).get("act"), "early_k": risk.get("early_hallway_fights"),
+                             "classes": {k: {"mean_pct": c.get("mean_pct"), "p90_pct": c.get("p90_pct")}
+                                         for k, c in risk["classes"].items()}}
+        cov = support.get("evidence_coverage")
+        seen = (v.encounter_key, v.kind)
+        if isinstance(cov, dict) and seen not in self._coverage_seen:   # once per screen visit, not per re-render
+            self._coverage_seen.add(seen)
+            total = self.coverage.setdefault(v.kind, {"screens": 0})
+            total["screens"] += 1
+            for k, val in cov.items():
+                if isinstance(val, dict):
+                    bucket = total.setdefault(k, {})
+                    for rung, n in val.items():
+                        bucket[rung] = bucket.get(rung, 0) + n
+                elif k != "min_samples" and type(val) is int:
+                    total[k] = total.get(k, 0) + val
+
     def _step(self):
         v = self._wait_ready()
+        if self._restore_pending:
+            self._restore_pending = False
+            self._load_state(v)
         self._track_encounter(v)
         self._maybe_refresh_strategy(v)
         frame = self._frame(v)
@@ -410,6 +521,7 @@ class RunCoordinator:
             self.stats.stale += 1
             self._outcome(seq, "stale_not_sent", None, fresh, "screen changed after the decision")
             self._remember(seq, cand, ch, "stale_not_sent", fresh)
+            self._save_state()
             return
         if self.clock() >= self._deadline():
             self._outcome(seq, "not_sent_deadline", None, fresh, "session deadline reached before sending")
@@ -444,12 +556,13 @@ class RunCoordinator:
         if verdict in ("no_visible_change", "timeout_after_change"):
             raise _Stop(STOP_UNRESOLVED_ACTION, f"{ch.action_id} accepted but did not resolve ({verdict})", post)
         self._after_resolved(seq, cand, ch, binding, fresh, post, verdict)
+        self._save_state()
 
     def _after_resolved(self, seq, cand, ch, binding, pre, post, verdict):
         self.stats.actions_resolved += 1
         if cand["kind"] == "use_potion" and self.combat:
             self.combat.potions_used += 1
-        self._remember(seq, cand, ch, verdict, post)
+        self._remember(seq, cand, ch, verdict, post, pre=pre)
         res = binding["resolution"]
         if res.startswith("shop:") and post.kind == "shop" and pre.shop_stock and post.shop_stock:
             idx = int(res.split(":")[1])
@@ -498,13 +611,24 @@ class RunCoordinator:
                 return last, "timeout_after_change" if changed else "no_visible_change"
             self.sleep(self.lim.poll_interval_s)
 
-    def _remember(self, seq, cand, ch, verdict, post: ScreenView | None):
+    def _remember(self, seq, cand, ch, verdict, post: ScreenView | None, pre: ScreenView | None = None):
         entry = {"seq": seq, "action_id": ch.action_id, "kind": cand["kind"], "description": cand["description"],
                  "your_reason": ch.reason, "confirmed_result": verdict}
         if post is not None:
             p = post.facts.get("player") or {}
             entry["observed_after"] = {"screen": post.kind, "hp": p.get("hp"), "block": p.get("block"),
                                        "energy": p.get("energy"), "gold": p.get("gold"), "round": post.combat_round}
+        # Did this action move the displayed enemy intent? Only within one round (a new round has a new intent).
+        if (pre is not None and post is not None and pre.in_combat and post.in_combat
+                and cand["kind"] != "end_turn" and pre.combat_round == post.combat_round):
+            before = (pre.facts.get("turn_outlook") or {}).get("incoming_damage_total")
+            after = (post.facts.get("turn_outlook") or {}).get("incoming_damage_total")
+            if before is not None and after is not None:
+                entry["incoming_damage"] = {"before": before, "after": after}
+                if before != after:
+                    self.incoming_changes.append({"round": post.combat_round, "action": cand["description"][:120],
+                                                  "incoming_before": before, "incoming_after": after})
+                    self.incoming_changes = self.incoming_changes[-12:]
         self.history = (self.history + [entry])[-8:]
 
     def _outcome(self, seq, verdict, response, post, detail, t0=None):
@@ -514,6 +638,95 @@ class RunCoordinator:
                              observation_after=None if post is None else
                              {"kind": post.kind, "fingerprint": post.fingerprint, "facts": post.facts},
                              detail=detail)
+
+    # ---------------------------------------------------------- same-run resume
+    def _state(self) -> dict:
+        v = self.last_view
+        run = (v.facts.get("run") or {}) if v is not None and v.facts else {}
+        c = self.combat
+        return {"version": STATE_VERSION, "run_id": self.run_id, "character": run.get("character"),
+                "act": run.get("act"), "floor": run.get("floor"),
+                "route_plan": self.route_plan, "route_outcomes": self.route_outcomes,
+                "recent_outcomes": list(self.recent_outcomes), "encounter_key": self.encounter_key,
+                "history": self.history, "turn_intent": self.turn_intent,
+                "incoming_changes": self.incoming_changes, "hallway_done": self.hallway_done,
+                "risk_ref": self.risk_ref, "rest_checkpoints": self.rest_checkpoints,
+                "coverage": self.coverage, "coverage_seen": sorted(list(k) for k in self._coverage_seen),
+                "last_combat_facts": self.last_combat_facts,
+                "combat": None if c is None else {"key": c.key, "encounter_type": c.encounter_type,
+                                                  "start_hp": c.start_hp, "rounds": c.rounds,
+                                                  "potions_used": c.potions_used, "act": c.act, "floor": c.floor}}
+
+    def _save_state(self):
+        if self.state_path is None or self.run_id_source == "session_scoped":
+            return
+        try:
+            os.makedirs(os.path.dirname(self.state_path) or ".", exist_ok=True)
+            tmp = f"{self.state_path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(self._state(), fh, ensure_ascii=False)
+            os.replace(tmp, self.state_path)
+        except (OSError, TypeError, ValueError) as e:
+            if self.rec:
+                self.rec.error("run_state_save_failed", {"error": str(e)[:300]})
+
+    def _load_state(self, v: ScreenView):
+        """Restore route and encounter memory when the saved file is verifiably the same run, earlier or here."""
+        if self.run_id_source == "session_scoped":
+            return
+        try:
+            with open(self.state_path, encoding="utf-8") as fh:
+                st = json.load(fh)
+        except (OSError, ValueError):
+            return
+        run = v.facts.get("run") or {}
+        here, saved = (run.get("act"), run.get("floor")), (st.get("act"), st.get("floor"))
+        why = None
+        if not isinstance(st, dict) or st.get("version") != STATE_VERSION or st.get("run_id") != self.run_id:
+            why = "different_run_or_version"
+        elif st.get("character") != run.get("character"):
+            why = "different_character"
+        elif None in here or None in saved or here < saved:
+            why = "saved_state_is_ahead_of_the_game_or_position_unknown"
+        if why:
+            if self.rec:
+                self.rec.event("run_state_not_restored", {"reason": why, "saved": saved, "observed": here})
+            return
+        self.route_plan = st.get("route_plan")
+        self.route_outcomes = list(st.get("route_outcomes") or [])
+        self.recent_outcomes.extend(st.get("recent_outcomes") or [])
+        self.hallway_done = {int(k): n for k, n in (st.get("hallway_done") or {}).items() if str(k).isdigit()}
+        self.risk_ref = st.get("risk_ref")
+        self.rest_checkpoints = list(st.get("rest_checkpoints") or [])
+        self.coverage = st.get("coverage") or {}
+        self._coverage_seen = {tuple(k) for k in st.get("coverage_seen") or []}
+        same_place = here == saved
+        c = st.get("combat")
+        # Encounter memory only continues inside the very same room.
+        if same_place and st.get("encounter_key") in (v.encounter_key, (c or {}).get("key")):
+            self.encounter_key = st["encounter_key"]
+            self.history = list(st.get("history") or [])[-8:]
+            self.turn_intent = st.get("turn_intent")
+            self.incoming_changes = list(st.get("incoming_changes") or [])
+            self.last_combat_facts = st.get("last_combat_facts")
+            if c and (v.in_combat and c["key"] == v.encounter_key or v.kind in COMBAT_OVERLAY_KINDS):
+                self.combat = _Combat(c["key"], c.get("encounter_type"), c.get("start_hp"), c.get("rounds"),
+                                      c.get("potions_used") or 0, c.get("act"), c.get("floor"))
+                self.seen_combat = True
+        elif c:  # the fight that was open when the session stopped ended while nobody was watching
+            self.route_outcomes.append({"encounter_type": c.get("encounter_type"), "result": "unobserved",
+                                        "act": c.get("act"), "floor": c.get("floor"), "hp_lost": None,
+                                        "hp_lost_pct": None, "node_class": None, "expected_pct": None,
+                                        "expected_p90_pct": None})
+            if c.get("encounter_type") == "monster" and c.get("act") is not None:
+                self.hallway_done[c["act"]] = self.hallway_done.get(c["act"], 0) + 1
+        self.resumed_from = {"act": saved[0], "floor": saved[1], "same_room": same_place,
+                             "route_plan_restored": self.route_plan is not None,
+                             "combat_restored": self.combat is not None}
+        if self.rec:
+            self.rec.event("run_state_restored", self.resumed_from)
+        self.log(f"resumed run state saved at act {saved[0]} floor {saved[1]}"
+                 f"{' (route plan restored)' if self.route_plan else ''}")
 
     def _provenance_label(self) -> str:
         if self.policy.scripted:
@@ -540,7 +753,46 @@ class RunCoordinator:
             stop, detail, final = s.reason, s.detail, s.view or self.last_view
         except KeyboardInterrupt:
             stop, detail, final = STOP_INTERRUPTED, "Ctrl+C", self.last_view
+        self._save_state()
         return self.summary(stop, detail, final)
+
+    def _evaluation(self) -> dict:
+        """Run-quality measures: dispatch reliability, combat bookkeeping, route calibration, evidence coverage."""
+        s = self.stats
+        by_class = {}
+        for o in self.route_outcomes:
+            if o.get("hp_lost_pct") is None or not o.get("node_class"):
+                continue
+            row = by_class.setdefault(o["node_class"], {"fights": 0, "realized_pct": 0.0, "expected_pct": 0.0,
+                                                        "worse_than_p90": 0})
+            row["fights"] += 1
+            row["realized_pct"] = round(row["realized_pct"] + o["hp_lost_pct"], 1)
+            row["expected_pct"] = round(row["expected_pct"] + (o.get("expected_pct") or 0), 1)
+            row["worse_than_p90"] += o.get("expected_p90_pct") is not None and o["hp_lost_pct"] > o["expected_p90_pct"]
+        coverage = {}
+        for kind, c in self.coverage.items():
+            n = c.get("options") or 0
+            coverage[kind] = {**c, "identifier_match_pct": _per_100(c.get("identifier_matched", 0), n),
+                              "qualifying_any_rung_pct": _per_100(c.get("qualifying_any_rung", 0), n),
+                              "qualifying_nearby_floor_pct": _per_100(c.get("qualifying_nearby_floor", 0), n),
+                              "qualifying_deck_matched_pct": _per_100(c.get("qualifying_deck_matched", 0), n),
+                              "history_rate_quoted_pct": _per_100(c.get("history_rate_quoted", 0), n)}
+        open_now = int(self.combat is not None)
+        return {
+            "dispatch_per_100_decisions": {"stale": _per_100(s.stale, s.decisions),
+                                           "rejected": _per_100(s.rejections, s.decisions),
+                                           "ambiguous": _per_100(s.ambiguous, s.decisions),
+                                           "model_corrective_retries": _per_100(s.model_retries, s.decisions)},
+            "combat_bookkeeping": {"combats_started_this_session": s.combats_started,
+                                   "combats_finished_this_session": s.combats_finished, "combat_still_open": bool(open_now),
+                                   "consistent": s.combats_finished + open_now - int(bool(
+                                       self.resumed_from and self.resumed_from["combat_restored"])) == s.combats_started},
+            "route_calibration": {"scope": "whole run when resumed from saved state, else this session",
+                                  "agent_loss_scale": agent_loss_scale(self.route_outcomes), "by_class": by_class,
+                                  "rest_checkpoints": self.rest_checkpoints},
+            "evidence_coverage": coverage,
+            "resumed_from": self.resumed_from,
+        }
 
     def summary(self, stop, detail, final) -> dict:
         s = self.stats
@@ -553,11 +805,16 @@ class RunCoordinator:
             "rejections": s.rejections, "stale_decisions": s.stale, "ambiguous_responses": s.ambiguous,
             "model_corrective_retries": s.model_retries, "strategic_model_updates": s.strategic_updates,
             "strategic_failures": s.strategic_failures, "combats_finished": s.combats_finished,
+            "evaluation": self._evaluation(),
             "recent_outcomes": list(self.recent_outcomes),
             "model_usage": budget.summary() if budget is not None else None,
             "elapsed_s": round(self.clock() - self.session_start, 2),
             "run_id": self.run_id, "run_id_source": self.run_id_source,
         }
+
+
+def _per_100(n, base):
+    return round(n / base * 100, 2) if base else None
 
 
 def _clip(s, n=1000):

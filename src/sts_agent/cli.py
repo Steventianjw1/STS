@@ -372,6 +372,13 @@ def _shareable_config(cfg) -> dict:
     return d
 
 
+def _run_state_path(cfg, run_id: str) -> str:
+    """Same-run resume file (route plan, fight outcomes, encounter memory). Local, under the trace directory."""
+    import os
+    import re
+    return os.path.join(cfg.trace_dir, "run_state", re.sub(r"[^A-Za-z0-9_.-]", "_", str(run_id))[:120] + ".json")
+
+
 def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "observed", log=print) -> int:
     """LLM session over any client (live GameClient or an injected scripted client)."""
     mod_version, run_id = _versions(client)
@@ -402,7 +409,9 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
                            expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build)
                            if facts_source != "synthetic" and not scripted else None,
                            run_id=run_id, run_id_source=run_id_source, facts_source=facts_source,
-                           objective=_objective(cfg), model_timeout_s=getattr(model, "timeout_s", 0.0), log=log)
+                           objective=_objective(cfg), model_timeout_s=getattr(model, "timeout_s", 0.0), log=log,
+                           state_path=_run_state_path(cfg, run_id) if run_id_source == "mod_compendium"
+                           and facts_source == "observed" and not scripted else None)
     try:
         summary = coord.run()
     except BaseException as e:
