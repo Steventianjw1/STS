@@ -26,6 +26,7 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
+from .. import glossary
 from ..client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
 from ..config import Limits
 from ..route_risk import agent_loss_scale, node_class
@@ -33,6 +34,7 @@ from ..strategic import StrategicSnapshot
 from .models import Choice, DecisionFrame
 from .policy import LLMDecisionPolicy, model_identity
 from .screens import CAPABILITIES, MOD_REVISION, ScreenView, automatic_action, build_view
+from .whatif import WhatIfTools
 
 # stop reasons (shared names with the baseline runner where they mean the same thing)
 STOP_COMBAT_ENDED = "combat_ended"
@@ -68,6 +70,9 @@ LLM_PROVENANCE_SCRIPTED = {"data_source": "synthetic", "behavior": "scripted_mod
 # combat is open on the same floor they belong to that fight; they are not a room exit.
 COMBAT_OVERLAY_KINDS = ("card_select",)
 STATE_VERSION = 1
+MAX_FIGHT_OFFER_ATTEMPTS = 2   # LLM tries per held in-fight offer before the session stops
+# Screens whose kind names the map node the player is standing on (others cannot confirm it).
+_NODE_OF_SCREEN = {"rest_site": "rest_site", "shop": "shop", "treasure": "treasure"}
 
 
 class _Stop(Exception):
@@ -104,6 +109,8 @@ class CoordStats:
     search_decisions: int = 0
     search_misses: int = 0
     autobattle_combats: int = 0
+    fight_offer_handoffs: int = 0
+    tool_calls: int = 0
     blocked: set = field(default_factory=set)   # (view fingerprint, action_id)
 
 
@@ -116,7 +123,7 @@ _REWARD_KIND = {"gold": "gold_reward", "potion": "potion_reward", "relic": "reli
 class RunCoordinator:
     def __init__(self, client, policy: LLMDecisionPolicy, *, planner=None, recorder=None, expert_stats=None, autobattle=None,
                  limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
-                 facts_source: str = "observed", objective: str,
+                 facts_source: str = "observed", objective: str, what_if_tools: bool = True,
                  state_path=None, clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
                  log: Callable[[str], None] = print):
         if scope not in ("run", "combat", "step"):
@@ -137,7 +144,11 @@ class RunCoordinator:
         self.encounter_key: str | None = None
         self.history: list = []
         self.turn_intent: str | None = None
-        self.route_plan: dict | None = None   # survives encounters; a hypothesis shown back on map screens
+        self.route_plan: dict | None = None   # survives encounters; a hypothesis shown back on every non-combat screen
+        self.map_memory: dict | None = None   # act boss seen on the latest map (or ancient map preview)
+        self.whatif = WhatIfTools(self) if what_if_tools else None
+        self._offer_attempts: dict = {}       # fingerprint of a held in-fight offer -> LLM attempts
+        self._in_handoff = False
         self.route_outcomes: list = []        # every finished combat this run, for re-plan triggers
         self.combat: _Combat | None = None
         self.seen_combat = False
@@ -256,11 +267,46 @@ class RunCoordinator:
             self.sleep(self.lim.poll_interval_s)
             observed = self._observe_tolerant("autobattle", self.last_progress + self.lim.ready_timeout_s)
             if observed is not None:
+                settled = view.fingerprint == observed.fingerprint   # unchanged since the status read above
                 view = observed
                 if view.in_combat:
                     self._track_encounter(view)
                 if view.terminal:
                     self._raise_if_stop(view)
+                if settled and status.get("held") is True and self._is_fight_offer(view):
+                    self._handoff_fight_offer(view)
+
+    @staticmethod
+    def _is_fight_offer(v: ScreenView) -> bool:
+        """An in-fight choose-a-card screen: a card generated into the fight or an enemy-imposed pick."""
+        details = v.facts.get("screen_details") or {}
+        return v.ready and not v.in_combat and (
+            v.kind == "card_reward" or (v.kind == "card_select" and details.get("screen_type") == "choose"))
+
+    def _handoff_fight_offer(self, view: ScreenView):
+        """Explicit handoff: Mentor reports it is HOLDING this offer for the player, so nobody else acts.
+
+        Mentor keeps the fight. Only this one selection goes to the LLM, with the combat state attached;
+        Mentor's autoplay resumes by itself on the next board. Anything else stays Mentor's.
+        """
+        status = self._autobattle_control("status", view)   # re-check ownership right before deciding
+        if not (status.get("combat_in_progress") and status.get("held") is True):
+            return
+        tries = self._offer_attempts.get(view.fingerprint, 0) + 1
+        self._offer_attempts[view.fingerprint] = tries
+        if tries > MAX_FIGHT_OFFER_ATTEMPTS:
+            raise _Stop(STOP_AUTOBATTLE_FAILED, "held in-fight offer did not resolve after "
+                                                f"{MAX_FIGHT_OFFER_ATTEMPTS} LLM decisions", view)
+        self.stats.fight_offer_handoffs += 1
+        self.log("combat: Mentor is holding an in-fight offer; the LLM picks it, then Autobattle carries on")
+        if self.rec:
+            self.rec.event("autobattle_fight_offer_handoff", {"encounter": self.encounter_key, "screen": view.kind,
+                                                             "attempt": tries, "fingerprint": view.fingerprint})
+        self._in_handoff = True
+        try:
+            self._decide(view, fight_offer=True)
+        finally:
+            self._in_handoff = False
 
     def _raise_if_stop(self, v: ScreenView):
         if v.terminal:
@@ -301,6 +347,13 @@ class RunCoordinator:
                                                                   "turn_outlook")}
         elif v.kind == "rest_site":
             self._rest_checkpoint(v)
+        if not v.in_combat and v.kind in ("map", "event"):
+            details = v.facts.get("screen_details") or {}
+            bosses = (details if v.kind == "map" else details.get("map") or {}).get("bosses") or []
+            names = [str(b.get("name") or b.get("id")) for b in bosses if b.get("name") or b.get("id")]
+            run = v.facts.get("run") or {}
+            if names and run.get("act") is not None:
+                self.map_memory = {"act": run["act"], "floor": run.get("floor"), "bosses": names}
 
     def _finish_combat(self, after: ScreenView, result: str):
         c, self.combat = self.combat, None
@@ -354,6 +407,42 @@ class RunCoordinator:
         if self.rec:
             self.rec.event("route_rest_checkpoint", item)
 
+    # ---------------------------------------------------------- route context
+    def remaining_route_nodes(self, act, floor, screen_kind=None) -> list | None:
+        """Node types still ahead on the stored route plan, or None when the position on it is unknown."""
+        plan = self.route_plan
+        if (not plan or plan.get("act") != act or not plan.get("trajectory") or floor is None
+                or plan.get("floor") is None):
+            return None
+        i = floor - plan["floor"]   # the plan was stored on the map before node 1
+        steps = plan["trajectory"]
+        if not 1 <= i <= len(steps):
+            return None
+        here = _NODE_OF_SCREEN.get(screen_kind)
+        if here is not None and steps[i - 1].get("type") not in (here, "unknown"):
+            return None             # the run left the planned path
+        return [str(s.get("type")) for s in steps[i:]]
+
+    def _route_facts(self, v: ScreenView) -> dict | None:
+        """Act boss from the last map observation plus what the stored route plan still has ahead."""
+        run = v.facts.get("run") or {}
+        act = run.get("act")
+        mem = self.map_memory if self.map_memory and self.map_memory.get("act") == act else None
+        plan = self.route_plan if self.route_plan and self.route_plan.get("act") == act else None
+        if act is None or (mem is None and plan is None):
+            return None
+        remaining = self.remaining_route_nodes(act, run.get("floor"), v.kind)
+
+        def first(kind):
+            return next((n for n, t in enumerate(remaining or [], 1) if t == kind), None)
+        return {"act": act, "boss": _clip(" + ".join(mem["bosses"]), 240) if mem else None,
+                "plan": _clip(plan.get("plan"), 300) if plan else None,
+                "change_course_if": _clip(plan.get("change_course_if"), 300) if plan else None,
+                "plan_set_at_floor": plan.get("floor") if plan else None,
+                "remaining_nodes": remaining[:40] if remaining is not None else None,
+                "next_rest_in": first("rest_site"), "next_elite_in": first("elite"),
+                "next_shop_in": first("shop"), "boss_in": first("boss")}
+
     # ---------------------------------------------------------- strategy
     def _strategic_facts(self, v: ScreenView) -> dict:
         f = v.facts
@@ -399,7 +488,10 @@ class RunCoordinator:
                     items.append({"id": f"{v.kind}:{c['action_id']}", "kind": kind, "description": _clip(c["description"]),
                                   "details": _clip(json.dumps(c["details"], ensure_ascii=False, sort_keys=True))})
             opps = {"items": items[:40]}
+        terms = glossary.lookup(opps, deck, relics, potions)
         return {
+            "route": self._route_facts(v),
+            "glossary": {"items": [{"term": t["term"], "definition": t["definition"]} for t in terms]} if terms else None,
             "run": {"character": run.get("character"), "difficulty": run.get("difficulty"), "act": run.get("act"),
                     "floor": run.get("floor"), "encounter_type": v.state_type},
             "resources": {"hp": pl.get("hp"), "max_hp": pl.get("max_hp"), "gold": pl.get("gold"),
@@ -429,7 +521,10 @@ class RunCoordinator:
                           or facts["resources"]["max_hp"] != old["resources"]["max_hp"]
                           or (facts["resources"]["max_energy"] is not None and
                               facts["resources"]["max_energy"] != old["resources"]["max_energy"])
-                          or (route_key is not None and route_key != self.strat_route_key))
+                          or (route_key is not None and route_key != self.strat_route_key)
+                          # the act boss just became known: the standing plan's boss_prep depends on it
+                          or ((facts["route"] or {}).get("boss") is not None and
+                              (facts["route"] or {}).get("boss") != (old.get("route") or {}).get("boss")))
             if not meaningful:
                 return
         reasons = _change_reasons(self.strat_facts, facts, initial=self.strat_revision == 0,
@@ -490,7 +585,7 @@ class RunCoordinator:
         return {"status": status, **base}
 
     # ---------------------------------------------------------- one decision
-    def _frame(self, v: ScreenView) -> DecisionFrame:
+    def _frame(self, v: ScreenView, *, fight_offer: bool = False) -> DecisionFrame:
         cands = [c for c in v.candidates if (v.fingerprint, c["action_id"]) not in self.stats.blocked
                  and not any((v.fingerprint, aid) in self.stats.blocked
                              for aid in v.bindings[c["action_id"]].get("steps", []))]
@@ -500,7 +595,7 @@ class RunCoordinator:
             lims.append(f"Not offered because the game rejected them in this exact state: {blocked}")
         cap = CAPABILITIES.get(v.kind, {})
         support = None
-        if self.expert_stats is not None:
+        if self.expert_stats is not None and not self._in_handoff:   # deck-pick statistics do not apply to a held offer
             started = self.clock()
             support = self.expert_stats.for_view(
                 v, route_state={"plan": self.route_plan, "outcomes": self.route_outcomes})
@@ -519,7 +614,21 @@ class RunCoordinator:
                 self.shop_entry = {"encounter_key": v.encounter_key,
                                    "gold": (v.facts.get("player") or {}).get("gold")}
             support = {**(support or {}), "shop_budget": _shop_packages(v, self.shop_entry["gold"])}
-        overlay = self._fight_overlay(v)
+        overlay = fight_offer or self._fight_overlay(v)
+        fight_offer = fight_offer or (overlay and self._is_fight_offer(v))   # also when the LLM plays the fight itself
+        if not v.in_combat and not overlay and v.kind != "map":
+            route = self._route_facts(v)
+            if route is not None:
+                facts = {**facts, "route_context": {
+                    "label": "ACT BOSS (observed on the map) AND YOUR STORED ROUTE PLAN (a hypothesis from your last "
+                             "map decision; remaining_nodes and the *_in distances count nodes after this room and "
+                             "are null when the position on that plan is unknown)", **route}}
+        terms = glossary.for_facts([cands, v.facts.get("screen_details")], facts)
+        if terms is not None:
+            facts = {**facts, "keyword_glossary": terms}
+        if self._in_handoff:
+            lims.append("Spire Mentor Autobattle is playing this fight and is holding this one offer for you. "
+                        "Your choice applies to the fight in progress only; Autobattle continues afterwards.")
         if overlay:
             lims.append("This picker opened during a fight that is still in progress: choose with the enemy intent, "
                         "your HP, Block and energy in mind (facts.combat_context).")
@@ -536,6 +645,7 @@ class RunCoordinator:
             screen={"kind": v.kind, "state_type": v.state_type,
                     "encounter_key": self.encounter_key if overlay else v.encounter_key,
                     **({"during_combat": True} if overlay else {}),
+                    **({"fight_offer": True} if fight_offer else {}),
                     "capability": {"status": cap.get("status"), "live_validated": False, "mod_revision": MOD_REVISION}},
             observation_fingerprint=v.fingerprint, facts_source=self.facts_source, facts=facts,
             candidates=cands, bindings={c["action_id"]: v.bindings[c["action_id"]] for c in cands},
@@ -571,6 +681,10 @@ class RunCoordinator:
             self._restore_pending = False
             self._load_state(v)
         self._track_encounter(v)
+        self._decide(v)
+
+    def _decide(self, v: ScreenView, *, fight_offer: bool = False):
+        """One decision on a ready, stable view: forced click, or frame -> model choice -> execution."""
         # Forced progress needs neither strategy, decision support nor a model call.
         # Classify before rejection filtering so a rejected alternative cannot
         # turn a real choice into an automatic click.
@@ -595,18 +709,21 @@ class RunCoordinator:
             self.log(f"[{self.seq}] {v.kind}: {cand['description']} - {ch.reason} Skipping LLM.")
             self._execute_action(self.seq, cand, ch, binding, v)
             return
-        self._maybe_refresh_strategy(v)
-        frame = self._frame(v)
+        if not fight_offer:   # no strategic refresh in the middle of a fight
+            self._maybe_refresh_strategy(v)
+        frame = self._frame(v, fight_offer=fight_offer)
         if not frame.candidates:
             raise _Stop(STOP_NO_ACTIONS if not v.candidates else STOP_REPEATED_REJECTIONS,
                         f"ready {v.kind} screen offers no actions", v)
 
         self.seq += 1
         seq = self.seq
-        result = self.policy.choose(frame)
+        result = self.policy.choose(frame, tools=self.whatif) if self.whatif else self.policy.choose(frame)
         self.last_progress = self.clock()
         self.stats.decisions += 1
-        self.stats.model_retries += max(0, len(result.attempts) - 1)
+        tool_calls = sum(1 for a in result.attempts if a.get("tool_call"))
+        self.stats.tool_calls += tool_calls
+        self.stats.model_retries += max(0, len(result.attempts) - 1 - tool_calls)
         if result.search is not None:
             if result.source == "llm":
                 self.stats.search_misses += 1
@@ -615,7 +732,8 @@ class RunCoordinator:
                 self.stats.search_decisions += 1
         if self.rec:
             self.rec.record("llm_decision", seq=seq, provenance=self._provenance_label(result.source),
-                            decision_source=result.source, search=result.search,
+                            decision_source="llm_fight_offer_handoff" if fight_offer and result.source == "llm"
+                            else result.source, search=result.search, prompt_modules=result.prompt_modules,
                             policy={"name": self.policy.name, "version": self.policy.version},
                             prompt_version=self.policy.prompt_version, model=model_identity(self.policy.model),
                             frame=frame.to_record(),
@@ -778,7 +896,8 @@ class RunCoordinator:
         self.stats.consecutive_rejections = 0
         post, verdict = self._wait_resolution(fresh, binding["resolution"])
         self._outcome(seq, verdict, resp.to_record(), post, "", t0=t0)
-        if verdict in ("no_visible_change", "timeout_after_change"):
+        # After a handed-off offer Mentor plays on at once, so the board may never sit still: a change is enough.
+        if verdict == "no_visible_change" or (verdict == "timeout_after_change" and not self._in_handoff):
             raise _Stop(STOP_UNRESOLVED_ACTION, f"{ch.action_id} accepted but did not resolve ({verdict})", post)
         self._after_resolved(seq, cand, ch, binding, fresh, post, verdict)
         self._save_state()
@@ -872,7 +991,7 @@ class RunCoordinator:
         c = self.combat
         return {"version": STATE_VERSION, "run_id": self.run_id, "character": run.get("character"),
                 "act": run.get("act"), "floor": run.get("floor"),
-                "route_plan": self.route_plan, "route_outcomes": self.route_outcomes,
+                "route_plan": self.route_plan, "map_memory": self.map_memory, "route_outcomes": self.route_outcomes,
                 "recent_outcomes": list(self.recent_outcomes), "encounter_key": self.encounter_key,
                 "history": self.history, "turn_intent": self.turn_intent,
                 "incoming_changes": self.incoming_changes, "hallway_done": self.hallway_done,
@@ -920,6 +1039,7 @@ class RunCoordinator:
                 self.rec.event("run_state_not_restored", {"reason": why, "saved": saved, "observed": here})
             return
         self.route_plan = st.get("route_plan")
+        self.map_memory = st.get("map_memory")
         # A fresh API observation takes precedence over persisted energy information.
         if self.energy_observation is None:
             self.energy_observation = st.get("energy_observation")
@@ -1047,7 +1167,8 @@ class RunCoordinator:
             "strategic_failures": s.strategic_failures, "combats_finished": s.combats_finished,
             "evaluation": self._evaluation(),
             "combat_search_decisions": s.search_decisions, "combat_search_misses": s.search_misses,
-            "autobattle_combats": s.autobattle_combats,
+            "autobattle_combats": s.autobattle_combats, "fight_offer_handoffs": s.fight_offer_handoffs,
+            "what_if_tool_calls": s.tool_calls,
             "recent_outcomes": list(self.recent_outcomes),
             "model_usage": budget.summary() if budget is not None else None,
             "elapsed_s": round(self.clock() - self.session_start, 2),

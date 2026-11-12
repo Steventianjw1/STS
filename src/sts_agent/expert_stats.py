@@ -396,6 +396,7 @@ class ExpertDecisionStats:
         from .spire_history import RunHistoryIndex
         self.history = RunHistoryIndex(config)
         self._act_ids: dict = {}   # (character, act number) -> act ID resolved on a map screen
+        self.last_route_model: dict | None = None   # act, risk model and route profile of the latest map screen
 
     def for_view(self, view, *, budget_s: float | None = None, route_state: dict | None = None) -> dict | None:
         """Advisory evidence only: unexpected external data never stops a run."""
@@ -1054,6 +1055,8 @@ class ExpertDecisionStats:
                                 version, deadline=deadline)
         from .route_risk import public_risk
         support["hp_risk"] = public_risk(risk)
+        # Kept for the route_projection what-if tool on later non-map screens of this act.
+        self.last_route_model = {"act": view.facts["run"].get("act"), "risk": risk, "profile": support.get("profile")}
         plan = (route_state or {}).get("plan")
         here = tuple(c for c in [(details.get("current_position") or {}).get("col"),
                                  (details.get("current_position") or {}).get("row")])

@@ -195,6 +195,23 @@ def parse_choice(text: Any, frame: DecisionFrame) -> Choice:
                   _shop_plan(data["shop_plan"], frame, data["action_id"]) if "shop_plan" in want else None)
 
 
+def parse_tool_request(text: Any) -> dict | None:
+    """``{"tool": name, "args": {...}}`` -> the request; anything else (including a choice) -> None."""
+    if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_RESPONSE_BYTES:
+        return None
+    body = text.strip()
+    if not (body.startswith("{") and body.endswith("}")):
+        return None
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("tool"), str) or "action_id" in data:
+        return None
+    args = data.get("args")
+    return {"tool": data["tool"][:40], "args": args if isinstance(args, dict) else {}}
+
+
 def _shop_plan(plan, frame, action_id):
     if (not isinstance(plan, list) or not plan or len(plan) > len(frame.candidates)
             or not all(isinstance(aid, str) for aid in plan)):

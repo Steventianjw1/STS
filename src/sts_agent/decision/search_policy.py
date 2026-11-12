@@ -26,9 +26,9 @@ class SearchCombatPolicy:
     def scripted(self) -> bool:
         return self.inner.scripted
 
-    def choose(self, frame: DecisionFrame) -> ChoiceResult:
+    def choose(self, frame: DecisionFrame, tools=None) -> ChoiceResult:
         if (frame.screen or {}).get("kind") != "combat":
-            return self.inner.choose(frame)
+            return self.inner.choose(frame, tools=tools)
         rec = self.advisor.recommend(frame.facts, frame.candidates)
         if rec.action_id is not None:
             p_win = rec.advice.get("p_win")
@@ -45,6 +45,6 @@ class SearchCombatPolicy:
                 return ChoiceResult(choice, attempts=[{"attempt": 1, "response_text": text, "error": None,
                                                        "call": None, "source": SOURCE}],
                                     source=SOURCE, search=rec.record())
-        res = self.inner.choose(frame)
+        res = self.inner.choose(frame, tools=tools)
         res.search = rec.record()
         return res

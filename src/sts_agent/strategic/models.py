@@ -22,6 +22,14 @@ Fact shapes (version 0). Each top-level key is required; its value is either
                       kind in OPPORTUNITY_KINDS; only currently player-visible choices
     recent_outcomes: {items: [{id: str, encounter_type?: str, result?: str, hp_lost?: int>=0,
                       turns?: int>=0, notes?: str}]}   # result in OUTCOME_RESULTS
+
+Optional top-level keys (version 1), omitted or ``None`` when unknown:
+
+    route:           {act?: int>=1, boss?: str, plan?: str, change_course_if?: str,
+                      plan_set_at_floor?: int>=0, remaining_nodes?: [str], next_rest_in?: int>=1,
+                      next_elite_in?: int>=1, next_shop_in?: int>=1, boss_in?: int>=1}
+                      boss observed on the act map; the rest from the stored route plan
+    glossary:        {items: [{term: str, definition: str}]}   # reference rules text, not state
 """
 from __future__ import annotations
 
@@ -31,8 +39,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-SNAPSHOT_SCHEMA_VERSION = "sts2-strategic-snapshot-0"
-ASSESSMENT_SCHEMA_VERSION = "sts2-strategic-assessment-0"
+SNAPSHOT_SCHEMA_VERSION = "sts2-strategic-snapshot-1"
+ASSESSMENT_SCHEMA_VERSION = "sts2-strategic-assessment-1"
 
 MAX_SNAPSHOT_BYTES = 64 * 1024
 MAX_MODEL_TEXT_BYTES = 16 * 1024
@@ -48,6 +56,12 @@ OPPORTUNITY_KINDS = ("card_reward", "relic_reward", "potion_reward", "gold_rewar
                      "card_removal", "rest_site", "route", "event", "encounter", "other")
 OUTCOME_RESULTS = ("victory", "defeat", "fled", "unknown")
 FACT_KEYS = ("run", "resources", "deck", "relics", "potions", "opportunities", "recent_outcomes")
+OPTIONAL_FACT_KEYS = ("route", "glossary")
+ROUTE_KEYS = ("act", "boss", "plan", "change_course_if", "plan_set_at_floor", "remaining_nodes",
+              "next_rest_in", "next_elite_in", "next_shop_in", "boss_in")
+PLAN_LISTS = {"deck_needs": 160, "avoid": 160, "removal_targets": 80, "upgrade_targets": 80}   # key -> item chars
+PLAN_TEXTS = {"skip_rule": 240, "boss_prep": 240}
+MAX_PLAN_ITEMS = 4
 
 DIMENSIONS = ("immediate_threats", "damage", "defense", "scaling", "draw_consistency",
               "potion_needs", "upcoming_opportunities")
@@ -164,7 +178,32 @@ def _check_json_values(v, path):
 
 def validate_facts(facts: Any) -> None:
     _check_json_values(facts, "")
-    _obj(facts, "", FACT_KEYS)
+    _obj(facts, "", FACT_KEYS + tuple(k for k in OPTIONAL_FACT_KEYS if isinstance(facts, dict) and k in facts))
+
+    route = facts.get("route")
+    if route is not None:
+        p = "/route"
+        _obj(route, p, ROUTE_KEYS)
+        _int(route["act"], p + "/act", lo=1)
+        _str(route["boss"], p + "/boss", maxlen=240)
+        _str(route["plan"], p + "/plan", maxlen=300)
+        _str(route["change_course_if"], p + "/change_course_if", maxlen=300)
+        _int(route["plan_set_at_floor"], p + "/plan_set_at_floor", lo=0)
+        if route["remaining_nodes"] is not None:
+            for i, node in enumerate(_list(route["remaining_nodes"], p + "/remaining_nodes", maxlen=40)):
+                _str(node, f"{p}/remaining_nodes/{i}", maxlen=40, nullable=False, nonempty=True)
+        for key in ("next_rest_in", "next_elite_in", "next_shop_in", "boss_in"):
+            _int(route[key], f"{p}/{key}", lo=1)
+
+    glossary = facts.get("glossary")
+    if glossary is not None:
+        p = "/glossary"
+        _obj(glossary, p, ("items",))
+        for i, x in enumerate(_list(glossary["items"], p + "/items", maxlen=40)):
+            q = f"{p}/items/{i}"
+            _obj(x, q, ("term", "definition"))
+            _str(x["term"], q + "/term", maxlen=_SHORT, nullable=False, nonempty=True)
+            _str(x["definition"], q + "/definition", maxlen=400, nullable=False, nonempty=True)
 
     run = facts["run"]
     if run is not None:
@@ -441,7 +480,7 @@ def parse_assessment(text: Any, facts: dict) -> dict:
         raise OutputError(f"malformed JSON: {e}") from None
 
     E = OutputError
-    _obj(data, "", ("summary", "dimensions", "priorities", "uncertainties", "change_note"), err=E)
+    _obj(data, "", ("summary", "dimensions", "priorities", "standing_plan", "uncertainties", "change_note"), err=E)
     _str(data["summary"], "/summary", maxlen=600, nullable=False, nonempty=True, err=E)
     if len(data["summary"].split()) > 60:
         _fail(E, "/summary", "more than 60 words")
@@ -468,6 +507,13 @@ def parse_assessment(text: Any, facts: dict) -> dict:
         _str(it["tradeoff"], p + "/tradeoff", maxlen=160, nullable=False, err=E)
         _str(it["reconsider_when"], p + "/reconsider_when", maxlen=160, nullable=False, err=E)
         _evidence(it["evidence"], p + "/evidence", facts)
+
+    plan = _obj(data["standing_plan"], "/standing_plan", tuple(PLAN_LISTS) + tuple(PLAN_TEXTS), err=E)
+    for key, chars in PLAN_LISTS.items():
+        for i, it in enumerate(_list(plan[key], f"/standing_plan/{key}", maxlen=MAX_PLAN_ITEMS, err=E)):
+            _str(it, f"/standing_plan/{key}/{i}", maxlen=chars, nullable=False, nonempty=True, err=E)
+    for key, chars in PLAN_TEXTS.items():
+        _str(plan[key], f"/standing_plan/{key}", maxlen=chars, nullable=False, nonempty=True, err=E)
 
     unc = _list(data["uncertainties"], "/uncertainties", maxlen=5, err=E)
     for i, u in enumerate(unc):

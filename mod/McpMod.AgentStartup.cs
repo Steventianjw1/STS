@@ -16,7 +16,8 @@ public static partial class McpMod
 {
     private static Dictionary<string, object?>? ExecuteAgentStartupOption(string option, Node root)
     {
-        if (option is "agent_autobattle_status" or "agent_autobattle_on" or "agent_autobattle_off")
+        if (option is "agent_autobattle_status" or "agent_autobattle_on" or "agent_autobattle_on_hold"
+            or "agent_autobattle_off")
             return ExecuteAgentAutobattle(option);
         if (option != "agent_startup_status" && option != "agent_abandon_run" &&
             !option.StartsWith("agent_ascension_", StringComparison.Ordinal)) return null;
@@ -56,6 +57,10 @@ public static partial class McpMod
         return new Dictionary<string, object?> { ["status"] = "ok", ["ascension"] = lobby.Ascension };
     }
 
+    // Mentor's own pause list as it was before the agent asked it to hold in-fight offers.
+    private static object? _agentPauseOnBefore;
+    private const string AgentHeldOffer = "cardreward";   // Mentor's normalized `advice_for` id
+
     private static Dictionary<string, object?> ExecuteAgentAutobattle(string option)
     {
         // Optional dependency: use the installed Mentor's public API on the game thread.
@@ -71,7 +76,31 @@ public static partial class McpMod
             var armed = runtime.GetProperty("AdvisorAutoplayArmed")!;
             var autobattle = advisorType.GetProperty("AutobattleOn")!;
             bool fighting = CombatManager.Instance.IsInProgress;
-            if (option == "agent_autobattle_on")
+            // Optional: Mentor's documented `pause_on` list. With "card_reward" on it, Autobattle HOLDS an
+            // in-fight choose-a-card offer for the player instead of answering it, and plays on after
+            // the pick. The list is changed in memory only and put back when the agent turns Mentor off.
+            object? simConfig = null;
+            PropertyInfo? pauseOn = null;
+            try
+            {
+                var simConfigType = assembly.GetType("SpireMentor.SimConfig", true)!;
+                simConfig = simConfigType.GetField("Instance")!.GetValue(null);
+                pauseOn = simConfigType.GetProperty("PauseOn");
+            }
+            catch { }
+            if (option == "agent_autobattle_on_hold")
+            {
+                if (simConfig == null || pauseOn == null)
+                    return Error("This Spire Mentor build has no pause_on list; in-fight offers cannot be held.");
+                var current = ((System.Collections.IEnumerable)pauseOn.GetValue(simConfig)!).Cast<string>().ToList();
+                if (!current.Contains(AgentHeldOffer))
+                {
+                    _agentPauseOnBefore ??= pauseOn.GetValue(simConfig);
+                    current.Add(AgentHeldOffer);
+                    pauseOn.SetValue(simConfig, current);
+                }
+            }
+            if (option is "agent_autobattle_on" or "agent_autobattle_on_hold")
             {
                 var manager = RunManager.Instance;
                 if (!manager.IsInProgress || manager.NetService.Type.IsMultiplayer() || !fighting)
@@ -89,12 +118,30 @@ public static partial class McpMod
                     advisorType.GetMethod("ToggleAutoPlay")!.Invoke(advisor, null);
                 mode.SetValue(null, Enum.Parse(mode.PropertyType, "Off"));
                 config.GetProperty("CoachOnAtLaunch")!.SetValue(null, false);
+                if (_agentPauseOnBefore != null && simConfig != null && pauseOn != null)
+                {
+                    pauseOn.SetValue(simConfig, _agentPauseOnBefore);
+                    _agentPauseOnBefore = null;
+                }
             }
+            // held: Mentor is waiting on a decision it handed to the player (its private stop key is set).
+            // hold_offers: the pause list that applies right now contains the in-fight offer id.
+            bool? held = null, holdOffers = null;
+            try
+            {
+                var stopKey = advisorType.GetField("_autobattleStopKey", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (stopKey?.GetValue(advisor) is string key) held = key.Length > 0;
+                if (simConfig != null)
+                    holdOffers = ((System.Collections.IEnumerable)simConfig.GetType().GetProperty("EffectivePauseOn")!
+                        .GetValue(simConfig)!).Cast<string>().Contains(AgentHeldOffer);
+            }
+            catch { }
             return new Dictionary<string, object?>
             {
                 ["status"] = "ok", ["autobattle_version"] = 1,
                 ["combat_in_progress"] = fighting, ["mode"] = mode.GetValue(null)!.ToString(),
                 ["autobattle"] = autobattle.GetValue(advisor), ["autoplay"] = armed.GetValue(null),
+                ["held"] = held, ["hold_offers"] = holdOffers,
                 ["brain"] = advisorType.GetProperty("CurrentBrain")!.GetValue(null)
             };
         }

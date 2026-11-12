@@ -37,6 +37,7 @@ class LLMConfig:
     max_input_bytes: int = 96 * 1024       # decision prompt size; oldest history is trimmed first
     objective: str | None = None           # None = ordinary victory at current character/difficulty
     strategic_planner: bool = True
+    what_if_tools: bool = True             # the model may spend one extra call per decision on a what-if calculation
 
 
 @dataclass
@@ -74,6 +75,7 @@ class ExpertStatsConfig:
 class CombatSearchConfig:
     enabled: bool = False                  # combat actions from the Spire Mentor advisor; LLM on any miss
     autobattle: bool = False               # Mentor executes whole fights; no LLM combat fallback
+    llm_fight_offers: bool = False         # autobattle only: Mentor holds in-fight choose-a-card offers for the LLM
     control_url: str = "http://127.0.0.1:8079"   # the advisor's localhost control plane
     advisor_log_dir: str | None = None     # folder of advisor-*.jsonl; None = derive from the advisor's /status
     advice_timeout_s: float = 30.0         # wait per decision for a matching board and its advice
@@ -94,6 +96,7 @@ class Config:
     game_dir: str | None = None            # optional, used by `doctor` to read the mod manifest
     pinned_game_dir: str = "data/game"     # frozen copy of the supported game build lives in <this>/<build>
     monster_data_path: str | None = "data/monster_reference/monsters.json"  # enemy move patterns; missing = unused
+    keyword_data_dir: str | None = "data/keyword_reference"  # power/curse text for the prompt glossary; missing = card keywords only
     limits: Limits = field(default_factory=Limits)
     llm: LLMConfig = field(default_factory=LLMConfig)
     expert_stats: ExpertStatsConfig = field(default_factory=ExpertStatsConfig)

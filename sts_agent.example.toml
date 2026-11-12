@@ -31,6 +31,9 @@ pinned_game_dir = "data/game"
 # combat prompt's offsets 2-3 after the observed next move. Data is pinned to v0.107.1;
 # forecasts are base values, not native simulations. A missing file leaves them unknown.
 monster_data_path = "data/monster_reference/monsters.json"
+# Keyword glossary reference (same fetch tool): power and curse/status card text. Definitions for
+# keywords found in the visible text are added to every prompt; missing = built-in card keywords only.
+keyword_data_dir = "data/keyword_reference"
 
 [limits]
 max_actions = 300                  # card plays + end turns per play-combat session
@@ -61,6 +64,7 @@ max_calls_per_run = 2000           # shared per session: decisions + strategy + 
 max_input_bytes = 98304            # trim support detail, community advice, history, then all support; preserve facts/candidates
 # objective = "Win the run (ordinary victory) with the current character at the current difficulty."
 strategic_planner = true
+what_if_tools = true               # the model may spend one extra call per decision on deck_after / route_projection
 
 [expert_stats]
 enabled = true
@@ -102,6 +106,10 @@ ancient_advisor_enabled = true    # relic effects vs. deck/state, offer stats, c
 [combat_search]
 enabled = false
 autobattle = false                # true: Mentor plays whole fights; LLM only outside combat, no combat fallback
+llm_fight_offers = false          # autobattle only. true: Mentor holds in-fight choose-a-card offers (a generated
+                                  # card, a boss's forced debuff pick) and the LLM makes that one pick with the combat
+                                  # state; Mentor then plays on. Needs the rebuilt agent mod extension. The session
+                                  # refuses to start if Mentor cannot confirm the hold; it never falls back silently.
 control_url = "http://127.0.0.1:8079"   # the advisor's control port (8079 for the mod's default port 9002)
 # advisor_log_dir = 'C:\Users\<you>\AppData\Local\SpireMentor\logs\realgame_advisor'  # default: auto-detected
 advice_timeout_s = 30.0            # per decision: wait for the advisor's board to match ours and for its advice
