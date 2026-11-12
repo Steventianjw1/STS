@@ -104,6 +104,8 @@ def _common_facts(obs: dict) -> dict:
              "max_potion_slots": obs["max_potion_slots"]}
     if "deck" in obs:
         facts["deck"] = obs["deck"]
+    if obs.get("keyword_glossary"):
+        facts["keyword_glossary"] = obs["keyword_glossary"]
     return facts
 
 

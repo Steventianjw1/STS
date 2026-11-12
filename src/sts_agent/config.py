@@ -27,7 +27,8 @@ class LLMConfig:
     provider: str = "deepseek"
     model: str | None = None               # REQUIRED for policy="llm"; no default model is assumed
     max_output_tokens: int = 16384
-    timeout_s: float = 60.0                # whole-call budget; SDK retries are disabled
+    timeout_s: float = 60.0                # SDK timeout: per connect and per wait for data, not a whole-call cap
+    provider_retries: int = 2              # extra decision calls after a timeout/transport/429/5xx failure; 0 = none
     deepseek_reasoning_effort: str | None = None  # None uses the provider default
     max_calls_per_run: int | None = 2000
     max_input_tokens_per_run: int | None = None

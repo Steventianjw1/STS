@@ -22,6 +22,10 @@ Fact shapes (version 0). Each top-level key is required; its value is either
                       kind in OPPORTUNITY_KINDS; only currently player-visible choices
     recent_outcomes: {items: [{id: str, encounter_type?: str, result?: str, hp_lost?: int>=0,
                       turns?: int>=0, notes?: str}]}   # result in OUTCOME_RESULTS
+
+Optional top-level key (may be absent, never null):
+
+    glossary:        {items: [{term: str, definition: str}]}   # game tooltip text for terms used above
 """
 from __future__ import annotations
 
@@ -54,6 +58,7 @@ DIMENSIONS = ("immediate_threats", "damage", "defense", "scaling", "draw_consist
 CONFIDENCE = ("low", "medium", "high")
 
 _SHORT, _NAME, _TEXT = 80, 120, 1000
+MAX_GLOSSARY_TERMS = 60
 
 
 class InputError(ValueError):
@@ -164,7 +169,18 @@ def _check_json_values(v, path):
 
 def validate_facts(facts: Any) -> None:
     _check_json_values(facts, "")
-    _obj(facts, "", FACT_KEYS)
+    _obj(facts, "", FACT_KEYS + (("glossary",) if isinstance(facts, dict) and "glossary" in facts else ()))
+
+    if "glossary" in facts:
+        p = "/glossary"
+        _obj(facts["glossary"], p, ("items",))
+        items = _list(facts["glossary"]["items"], p + "/items", maxlen=MAX_GLOSSARY_TERMS)
+        for i, x in enumerate(items):
+            q = f"{p}/items/{i}"
+            _obj(x, q, ("term", "definition"))
+            _str(x["term"], q + "/term", maxlen=_NAME, nullable=False, nonempty=True)
+            _str(x["definition"], q + "/definition", maxlen=_TEXT, nullable=False, nonempty=True)
+        _unique(items, "term", p + "/items")
 
     run = facts["run"]
     if run is not None:

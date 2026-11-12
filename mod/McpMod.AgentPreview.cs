@@ -22,13 +22,24 @@ public static partial class McpMod
             // Do not reconstruct it from combat cards or mutate the pile.
             // BuildCardInfo is the mod's own reward/preview serializer (id, name,
             // type, cost, star_cost, description, rarity, is_upgraded).
+            // Tooltips repeat across copies: each card keeps only the term names, and
+            // BuildAgentDeckKeywords sends every definition once.
             return player.Deck.Cards.Select(card =>
             {
                 var info = BuildCardInfo(card);
-                info.Remove("keywords");
+                var tips = info["keywords"] as List<Dictionary<string, object?>>;
+                info["keywords"] = tips?.Select(tip => tip["name"]).Where(name => name != null).ToList();
                 return info;
             }).ToList();
         }
+        catch { return null; }
+    }
+
+    private static List<Dictionary<string, object?>>? BuildAgentDeckKeywords(Player player)
+    {
+        // The game's own hover tips for the permanent deck (card keywords such as Eternal,
+        // referenced powers and cards), deduplicated by BuildHoverTips. Read-only.
+        try { return BuildHoverTips(player.Deck.Cards.SelectMany(card => card.HoverTips)); }
         catch { return null; }
     }
 

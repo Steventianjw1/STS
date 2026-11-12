@@ -437,7 +437,8 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     scripted = bool(getattr(model, "is_scripted", False))
     if facts_source == "synthetic" or getattr(client, "data_source", None) == "synthetic":
         facts_source = "synthetic"
-    policy = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes)
+    policy = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes,
+                               provider_retries=cfg.llm.provider_retries)
     autobattle = None
     # Live observed combat only: synthetic or scripted sessions never consult a running advisor.
     if cfg.combat_search.enabled and facts_source != "synthetic" and not scripted:

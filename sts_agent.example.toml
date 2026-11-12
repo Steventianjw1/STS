@@ -51,7 +51,10 @@ provider = "deepseek"              # or "anthropic" for the original Claude adap
 # Set DEEPSEEK_API_KEY in .env. DEEPSEEK_BASE_URL optionally overrides https://api.deepseek.com.
 # For anthropic, use ANTHROPIC_API_KEY instead. Never put credentials here.
 max_output_tokens = 16384
-timeout_s = 60.0                   # whole call; SDK retries are disabled
+timeout_s = 60.0                   # SDK timeout per connect and per wait for data; a call that keeps
+                                   # receiving bytes can run longer. SDK retries are disabled.
+provider_retries = 2               # extra decision calls after a timeout, dropped connection, 429 or 5xx;
+                                   # nothing is sent to the game in between. 0 stops on the first failure.
 # deepseek_reasoning_effort = "high"  # low, high, or max; omit for provider default (model support varies)
 max_calls_per_run = 2000           # shared per session: decisions + strategy + corrective retries
 # max_input_tokens_per_run = 5000000

@@ -3,12 +3,20 @@
 Measured from indexed runs as % of max HP: mean, 90th percentile and death rate for
 early hallway, later hallway, elite, boss and ? nodes. Rest-site HEAL amounts, gold
 changes and shop spending are measured the same way; no game constants are assumed.
+
+Loss is the run file's ``damage_taken``: HP removed on the floor (unblocked and
+self-inflicted), before any healing. HP regained on the same floor (relics, potions,
+rewards) is measured separately as ``recovery_pct`` so a flat heal is added back
+rather than hidden inside a multiplier.
 """
 from __future__ import annotations
 
 from .route_profile import _pct
 
 CLASSES = ("early_hallway", "later_hallway", "elite", "boss", "unknown")
+# Which of this run's fights correct which projected nodes. Small fights say little about big ones.
+SCALE_GROUPS = {"early_hallway": "hallway", "later_hallway": "hallway", "unknown": "hallway",
+                "elite": "elite_boss", "boss": "elite_boss"}
 
 
 def _q(values, p):
@@ -49,25 +57,49 @@ def loss_draws(risk):
     return out
 
 
+def _shrunk_ratio(pairs, prior_fights, low, high):
+    if not pairs:
+        return {"value": 1.0, "fights": 0}
+    realized, expected = sum(p[0] for p in pairs), sum(p[1] for p in pairs)
+    prior = prior_fights * expected / len(pairs)
+    return {"value": round(min(high, max(low, (realized + prior) / (expected + prior))), 2), "fights": len(pairs),
+            "raw_ratio": round(realized / expected, 2), "realized_pct_total": round(realized, 1),
+            "expected_pct_total": round(expected, 1)}
+
+
 def agent_loss_scale(outcomes, *, prior_fights=2.0, low=0.5, high=3.0):
     """How much more (or less) HP this agent loses per fight than the pooled expectation.
 
     ``outcomes`` carry the realized loss and the class mean that was expected for that fight
-    (both % of max HP). The ratio is shrunk toward 1 with ``prior_fights`` pseudo-fights at
-    the average expectation and clipped to [low, high].
+    (both % of max HP). The realized loss is ``hp_damage_pct`` (HP removed during the fight,
+    the same quantity as the pooled ``damage_taken``); outcomes recorded without it fall back
+    to the net ``hp_lost_pct``, which healing makes too small. Ratios are computed separately
+    for hallway fights and for elites/bosses, each shrunk toward 1 with ``prior_fights``
+    pseudo-fights at that group's average expectation and clipped to [low, high]. A group
+    without finished fights stays at 1. The top-level ``value`` pools every fight and is
+    reported for reference only; projections use ``by_group``.
     """
-    pairs = [(o["hp_lost_pct"], o["expected_pct"]) for o in outcomes or []
-             if o.get("hp_lost_pct") is not None and o.get("expected_pct")]
-    if not pairs:
-        return {"value": 1.0, "fights": 0, "basis": "no finished fights with a pooled expectation yet"}
-    realized, expected = sum(p[0] for p in pairs), sum(p[1] for p in pairs)
-    prior = prior_fights * expected / len(pairs)
-    raw = realized / expected
-    value = min(high, max(low, (realized + prior) / (expected + prior)))
-    return {"value": round(value, 2), "fights": len(pairs), "raw_ratio": round(raw, 2),
-            "realized_pct_total": round(realized, 1), "expected_pct_total": round(expected, 1),
-            "basis": f"this run's realized HP loss / pooled class mean, shrunk toward 1 with {prior_fights:g} "
-                     f"pseudo-fights and clipped to {low:g}..{high:g}"}
+    rows = []
+    for o in outcomes or []:
+        realized, gross = o.get("hp_damage_pct"), True
+        if realized is None:
+            realized, gross = o.get("hp_lost_pct"), False
+        if realized is None or not o.get("expected_pct"):
+            continue
+        group = SCALE_GROUPS.get(o.get("node_class")) or (
+            "elite_boss" if o.get("encounter_type") in ("elite", "boss") else "hallway")
+        rows.append((group, realized, o["expected_pct"], gross))
+    groups = {g: _shrunk_ratio([(r, e) for grp, r, e, _ in rows if grp == g], prior_fights, low, high)
+              for g in ("hallway", "elite_boss")}
+    result = {**_shrunk_ratio([(r, e) for _, r, e, _ in rows], prior_fights, low, high), "by_group": groups,
+              "applied": "by_group: hallway and ? nodes use hallway; elites and the boss margin use elite_boss. "
+                         "The top-level value pools all fights and is not applied.",
+              "measured_as": {"hp_removed_during_fight": sum(g for *_, g in rows),
+                              "net_change_only_understates": sum(not g for *_, g in rows)}}
+    result["basis"] = ("no finished fights with a pooled expectation yet" if not rows else
+                       f"this run's HP removed per fight / pooled class mean, per group, shrunk toward 1 with "
+                       f"{prior_fights:g} pseudo-fights and clipped to {low:g}..{high:g}")
+    return result
 
 
 def _summary(values):
@@ -107,6 +139,7 @@ def build_risk_model(runs, act_id, *, weak_ids, min_samples, fallback=None):
     kept = [r for r in runs if not r["abandoned"]]
     early_k = early_fight_count(kept, act_id, weak_ids)
     samples = {c: [] for c in CLASSES}
+    recovery = {c: [] for c in CLASSES}
     deaths = {c: 0 for c in CLASSES}
     heal, gold, spend = [], {}, []
     for run in kept:
@@ -124,6 +157,9 @@ def build_risk_model(runs, act_id, *, weak_ids, min_samples, fallback=None):
             if cls and pct is not None:
                 samples[cls].append(pct)
                 deaths[cls] += int(run["win"] == 0 and f["floor"] == last_floor)
+                if prev is not None and prev["hp"] is not None and f["hp"]:   # survivors: hp_after > 0
+                    # hp_after = hp_before - damage_taken + healed, so this is the HP regained on the floor
+                    recovery[cls].append(max(0.0, (f["hp"] - prev["hp"] + f["damage_taken"]) / f["max_hp"] * 100))
             if prev is not None and prev["gold"] is not None and f["gold"] is not None:
                 delta = f["gold"] - prev["gold"]
                 if f["room_type"] == "shop":
@@ -136,11 +172,18 @@ def build_risk_model(runs, act_id, *, weak_ids, min_samples, fallback=None):
             prev = f
     if early_k is None:  # pooled hallway sample serves both hallway classes
         samples["early_hallway"] = list(samples["later_hallway"])
+        recovery["early_hallway"] = list(recovery["later_hallway"])
         deaths["early_hallway"] = deaths["later_hallway"]
+    fights = [v for c in ("later_hallway", "elite") + (("early_hallway",) if early_k is not None else ())
+              for v in recovery[c]]
     classes = {}
     for cls in CLASSES:
         values, n = samples[cls], len(samples[cls])
+        # Too few of its own: a fight class borrows the pooled same-floor recovery of all fights.
+        regained = recovery[cls] if len(recovery[cls]) >= 5 or cls == "unknown" else fights
         row = {"n": n, "mean_pct": round(sum(values) / n, 1) if n else None,
+               "recovery_pct": round(sum(regained) / len(regained), 1) if regained else None,
+               "recovery_n": len(regained),
                "_mean_own": round(sum(values) / n, 3) if n and sum(values) else None,
                "p90_pct": round(_q(values, 0.9), 1) if n >= min_samples else None,
                "death_rate_pct": round(deaths[cls] / n * 100, 2) if n else None,

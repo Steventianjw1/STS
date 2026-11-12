@@ -1072,11 +1072,15 @@ class ExpertDecisionStats:
         support["paths"]["limitations"] = [
             "Projections assume current max HP, pooled class damage and independent fights; deck, relics, potions "
             "and event effects beyond recorded HP loss are not modeled.",
+            "Fight losses are HP removed on the floor (the run files' damage_taken, before healing). After a "
+            "survived fight the projection adds that class's recovery_pct, the HP the pooled players regained on "
+            "the same floor; your own healing relics and potions are not read.",
             "death_risk_* is the share of replays in which sampled fight losses (times agent_loss_scale) used up "
             "the HP: a rough estimate from other players' fights, not a calibrated probability. p10_* is the 10th "
             "percentile across replays; HP below 0 is kept and means the path fell short by that much.",
             "The loss samples come from strong players whose fights usually cost little; agent_loss_scale corrects "
-            "only for this run's own finished fights and starts at 1.",
+            "only for this run's own finished fights, separately for hallway fights and for elites/bosses, and "
+            "each group starts at 1.",
             "Simulated rest choices follow the experts' HEAL share in that HP band; heal size is measured, not assumed.",
             "selected_for labels say what a path is best at; there is no combined score. Python never chooses."]
         if route_state is not None:

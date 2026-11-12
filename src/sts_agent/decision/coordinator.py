@@ -28,6 +28,7 @@ from typing import Callable
 
 from ..client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
 from ..config import Limits
+from ..route_paths import enumerate_routes, map_type
 from ..route_risk import agent_loss_scale, node_class
 from ..strategic import StrategicSnapshot
 from .models import Choice, DecisionFrame
@@ -85,6 +86,19 @@ class _Combat:
     potions_used: int = 0
     act: int | None = None
     floor: int | None = None
+    # HP movement seen between consecutive observations of this fight, whoever played it.
+    last_hp: int | None = None
+    damage: int = 0            # sum of HP decreases: what run files call damage_taken
+    healed: int = 0            # sum of HP increases, including end-of-combat healing
+    hp_tracked: bool = True    # False when part of the fight was not observed with this tracking
+
+    def note_hp(self, hp):
+        if type(hp) is not int:
+            return
+        if self.last_hp is not None:
+            self.damage += max(0, self.last_hp - hp)
+            self.healed += max(0, hp - self.last_hp)
+        self.last_hp = hp
 
 
 @dataclass
@@ -97,6 +111,7 @@ class CoordStats:
     stale: int = 0
     ambiguous: int = 0
     model_retries: int = 0
+    provider_retries: int = 0
     strategic_updates: int = 0
     strategic_failures: int = 0
     combats_finished: int = 0
@@ -157,6 +172,7 @@ class RunCoordinator:
         self.rest_checkpoints: list = []             # projected vs. actual HP on arrival at planned rest sites
         self.coverage: dict = {}                     # screen kind -> summed evidence_coverage counters
         self._coverage_seen: set = set()
+        self.map_memory: dict | None = None          # the act map as last seen, and the node travelled to
         self.state_path = state_path                 # same-run resume file; None disables persistence
         self._restore_pending = state_path is not None
         self.resumed_from: dict | None = None
@@ -171,6 +187,8 @@ class RunCoordinator:
         if type(maximum) is int and maximum >= 0:
             self.energy_observation = {"max_energy": maximum, "run": dict(view.facts.get("run") or {}),
                                        "source": "observed player.max_energy"}
+        if self.combat is not None:
+            self.combat.note_hp((view.facts.get("player") or {}).get("hp"))
         if view.fingerprint != self._last_fp:
             self._last_fp = view.fingerprint
             self.last_progress = self.clock()
@@ -293,7 +311,8 @@ class RunCoordinator:
             if self.combat is None or self.combat.key != v.encounter_key:
                 run = v.facts.get("run") or {}
                 self.combat = _Combat(v.encounter_key, v.state_type, v.facts["player"]["hp"],
-                                      act=run.get("act"), floor=run.get("floor"))
+                                      act=run.get("act"), floor=run.get("floor"),
+                                      last_hp=v.facts["player"]["hp"])
                 self.stats.combats_started += 1
             if v.combat_round is not None:
                 self.combat.rounds = max(self.combat.rounds or 0, v.combat_round)
@@ -312,6 +331,8 @@ class RunCoordinator:
             end_hp = 0
         change = None if (c.start_hp is None or end_hp is None) else end_hp - c.start_hp
         lost = None if change is None else max(0, -change)
+        c.note_hp(end_hp)   # the last step: a killing blow, or healing on the way to this screen
+        damage, healed = (c.damage, c.healed) if c.hp_tracked and c.last_hp is not None else (None, None)
         ordinal = self.hallway_done.get(c.act, 0) + 1
         ref = self.risk_ref if self.risk_ref and self.risk_ref["act"] == c.act else None
         cls = node_class(c.encounter_type, ordinal, ref["early_k"]) if ref else None
@@ -319,13 +340,17 @@ class RunCoordinator:
             self.hallway_done[c.act] = ordinal
         outcome = {"encounter_type": c.encounter_type, "result": result, "act": c.act, "floor": c.floor,
                    "hp_lost": lost, "hp_lost_pct": round(lost / max_hp * 100, 1) if lost is not None and max_hp else None,
+                   "hp_damage": damage, "hp_healed": healed,
+                   "hp_damage_pct": round(damage / max_hp * 100, 1) if damage is not None and max_hp else None,
                    "node_class": cls, "expected_pct": (ref["classes"].get(cls) or {}).get("mean_pct") if cls else None,
                    "expected_p90_pct": (ref["classes"].get(cls) or {}).get("p90_pct") if cls else None}
         item = {"id": f"combat-{c.key}", "encounter_type": c.encounter_type, "result": result,
                 "hp_lost": lost, "turns": c.rounds,
-                "notes": (f"OBSERVED: HP change {change if change is not None else 'unknown'} measured on the first "
-                          f"post-combat screen (includes end-of-combat effects); potions used by this agent: "
-                          f"{c.potions_used}.")}
+                "notes": (f"OBSERVED: net HP change {change if change is not None else 'unknown'} measured on the "
+                          f"first post-combat screen (includes end-of-combat effects); HP removed during the fight "
+                          f"{damage if damage is not None else 'unknown'}, HP regained "
+                          f"{healed if healed is not None else 'unknown'} (between observations, so lower bounds); "
+                          f"potions sent by this agent: {c.potions_used} (a delegated fight's potions are not counted).")}
         self.recent_outcomes.append(item)
         self.route_outcomes.append(outcome)
         self.pending_combat_finished = True
@@ -353,6 +378,82 @@ class RunCoordinator:
         self.rest_checkpoints.append(item)
         if self.rec:
             self.rec.event("route_rest_checkpoint", item)
+
+    # ---------------------------------------------------------- map memory
+    def _remember_map(self, v: ScreenView):
+        """Keep the act graph of the latest map screen; rooms do not show it."""
+        d, run = v.facts.get("screen_details") or {}, v.facts.get("run") or {}
+        if not d.get("nodes"):
+            return
+        self.map_memory = {"act": run.get("act"), "floor": run.get("floor"),
+                           "nodes": [{"col": n["col"], "row": n["row"], "type": n["type"], "children": n["children"]}
+                                     for n in d["nodes"]],
+                           "bosses": list(d.get("bosses") or []), "chosen": None}
+
+    def _route_context(self, v: ScreenView) -> dict | None:
+        """What the map leads to after the current room, from the last observed map.
+
+        Only for the room the agent travelled to from that map (one floor later, same act);
+        anything else is unknown and returns None. Counts are ranges over every distinct
+        continuation, so they hold whichever branch is taken next.
+        """
+        m, run = self.map_memory, v.facts.get("run") or {}
+        if (v.in_combat or v.kind == "map" or not m or not m.get("chosen") or m.get("act") != run.get("act")
+                or type(m.get("floor")) is not int or run.get("floor") != m["floor"] + 1):
+            return None
+        here = (m["chosen"]["col"], m["chosen"]["row"])
+        node = next((n for n in m["nodes"] if (n["col"], n["row"]) == here), None)
+        types = {(n["col"], n["row"]): n["type"] for n in m["nodes"]}
+        boss_at = {(b.get("col"), b.get("row")) for b in m["bosses"]}
+        nxt = [tuple(c) for c in (node or {}).get("children") or [] if len(c) == 2 and
+               (tuple(c) in types or tuple(c) in boss_at)]
+        if node is None or (not nxt and not m["bosses"]):
+            return None
+        options = [{"col": c, "row": r, "type": "boss" if (c, r) in boss_at else types[(c, r)], "preview": True}
+                   for c, r in nxt]
+        routes, truncated, _ = enumerate_routes({"nodes": m["nodes"], "bosses": m["bosses"],
+                                                 "next_options": options}, max_routes=400)
+        paths = [[t for t, _, _ in path] for _, path in routes] or [["boss"]]   # no children: the boss is next
+
+        def before_rest(path):
+            return path[:path.index("rest_site")] if "rest_site" in path else [t for t in path if t != "boss"]
+
+        def span(values):
+            return {"min": min(values), "max": max(values)}
+        elite_first = [("elite" in before_rest(p)) for p in paths]
+        ctx = {
+            "label": "OBSERVED MAP, as shown on the map screen before this room: which rooms follow is fact; "
+                     "the stored route plan and its HP projection are your own earlier hypotheses",
+            "current_room": m["chosen"]["type"],
+            "act_boss": [{"id": b.get("id"), "name": b.get("name")} for b in m["bosses"]],
+            "next_nodes": sorted({p[0] for p in paths}),
+            "next_is_boss": all(p[0] == "boss" for p in paths),
+            "ahead_over_all_continuations": {
+                "distinct_routes": len(paths), "truncated": truncated,
+                "rooms_before_boss": span([sum(t != "boss" for t in p) for p in paths]),
+                "rest_sites_before_boss": span([p.count("rest_site") for p in paths]),
+                "shops_before_boss": span([p.count("shop") for p in paths]),
+                "elites_before_boss": span([p.count("elite") for p in paths]),
+                "fights_before_next_rest_or_boss": span([sum(t in ("monster", "elite") for t in before_rest(p))
+                                                         for p in paths]),
+                "elite_before_next_rest_or_boss": ("on_every_route" if all(elite_first) else
+                                                   "on_some_routes" if any(elite_first) else "on_no_route"),
+                "note": "? rooms can also be fights; they are not counted as fights here."}}
+        plan = self.route_plan
+        if plan and plan.get("act") == run.get("act") and plan.get("trajectory"):
+            coords = [tuple(c) for c in plan.get("coords") or []]
+            if here in coords:
+                rest = plan["trajectory"][coords.index(here) + 1:]
+                ctx["stored_route_plan"] = {
+                    "status": "this room is on the stored plan",
+                    "remaining_rooms": [{"type": step.get("type"), "projected_hp_pct_after": step.get("expected_hp_pct")}
+                                        for step in rest],
+                    "projection_note": "Projected before this room from pooled players' fights; compare with your "
+                                       "current HP rather than trusting it.",
+                    "plan": plan.get("plan"), "change_course_if": plan.get("change_course_if")}
+            else:
+                ctx["stored_route_plan"] = {"status": "this room is not on the stored plan; its projections do not apply"}
+        return ctx
 
     # ---------------------------------------------------------- strategy
     def _strategic_facts(self, v: ScreenView) -> dict:
@@ -398,8 +499,21 @@ class RunCoordinator:
                 if kind:
                     items.append({"id": f"{v.kind}:{c['action_id']}", "kind": kind, "description": _clip(c["description"]),
                                   "details": _clip(json.dumps(c["details"], ensure_ascii=False, sort_keys=True))})
+            ahead = self._route_context(v)
+            if ahead:   # not a choice on this screen: the observed map beyond this room, boss included
+                bosses = ", ".join(str(b.get("name") or b.get("id")) for b in ahead["act_boss"]) or "unknown"
+                items = items[:39] + [{
+                    "id": "map_after_this_room", "kind": "route",
+                    "description": _clip(f"Observed map after this room: next {', '.join(ahead['next_nodes'])}; "
+                                         f"act boss {bosses}."),
+                    "details": _clip(json.dumps({k: ahead[k] for k in ("next_is_boss", "ahead_over_all_continuations")},
+                                                ensure_ascii=False, sort_keys=True))}]
             opps = {"items": items[:40]}
+        glossary = f.get("keyword_glossary")
         return {
+            # Bounded: the snapshot has a size limit and the planner needs definitions, not prose.
+            **({"glossary": {"items": [{"term": _clip(k, 120), "definition": _clip(d, 240)}
+                                       for k, d in list(glossary.items())[:40]]}} if glossary else {}),
             "run": {"character": run.get("character"), "difficulty": run.get("difficulty"), "act": run.get("act"),
                     "floor": run.get("floor"), "encounter_type": v.state_type},
             "resources": {"hp": pl.get("hp"), "max_hp": pl.get("max_hp"), "gold": pl.get("gold"),
@@ -511,6 +625,9 @@ class RunCoordinator:
             facts = {**facts, "energy_observation": {**self.energy_observation,
                      "note": "Last observed maximum, not current energy or guaranteed future capacity. "
                              "Current max_energy remains unknown when null; later effects can change capacity."}}
+        ahead = self._route_context(v)
+        if ahead:
+            facts = {**facts, "route_context": ahead}
         mechanics = _card_zone_constraints(v)
         if mechanics:
             support = {**(support or {}), "card_zone_constraints": mechanics}
@@ -571,6 +688,8 @@ class RunCoordinator:
             self._restore_pending = False
             self._load_state(v)
         self._track_encounter(v)
+        if v.kind == "map":
+            self._remember_map(v)
         # Forced progress needs neither strategy, decision support nor a model call.
         # Classify before rejection filtering so a rejected alternative cannot
         # turn a real choice into an automatic click.
@@ -606,7 +725,8 @@ class RunCoordinator:
         result = self.policy.choose(frame)
         self.last_progress = self.clock()
         self.stats.decisions += 1
-        self.stats.model_retries += max(0, len(result.attempts) - 1)
+        self.stats.provider_retries += result.provider_retries
+        self.stats.model_retries += max(0, len(result.attempts) - 1 - result.provider_retries)
         if result.search is not None:
             if result.source == "llm":
                 self.stats.search_misses += 1
@@ -625,7 +745,8 @@ class RunCoordinator:
                                                                "route_plan": result.choice.route_plan,
                                                                "shop_plan": result.choice.shop_plan},
                             attempts=result.attempts, error_kind=result.error_kind, diagnostic=result.diagnostic,
-                            history_dropped=result.history_dropped, support_trim=result.support_trim)
+                            history_dropped=result.history_dropped, support_trim=result.support_trim,
+                            provider_retries=result.provider_retries)
         if not result.ok:
             reason = {"input_too_large": STOP_INPUT_TOO_LARGE, "invalid_output": STOP_INVALID_MODEL_OUTPUT}.get(
                 result.error_kind, STOP_MODEL_FAILED)
@@ -788,6 +909,9 @@ class RunCoordinator:
         self.stats.actions_resolved += 1
         if cand["kind"] == "use_potion" and self.combat:
             self.combat.potions_used += 1
+        if cand["kind"] == "choose_map_node" and self.map_memory is not None:
+            d = cand["details"]
+            self.map_memory["chosen"] = {"col": d.get("col"), "row": d.get("row"), "type": map_type(d.get("type"))}
         self._remember(seq, cand, ch, verdict, post, pre=pre)
         res = binding["resolution"]
         if res.startswith("shop:") and post.kind == "shop" and pre.shop_stock and post.shop_stock:
@@ -880,9 +1004,12 @@ class RunCoordinator:
                 "coverage": self.coverage, "coverage_seen": sorted(list(k) for k in self._coverage_seen),
                 "last_combat_facts": self.last_combat_facts,
                 "energy_observation": self.energy_observation, "shop_entry": self.shop_entry,
+                "map_memory": self.map_memory,
                 "combat": None if c is None else {"key": c.key, "encounter_type": c.encounter_type,
                                                   "start_hp": c.start_hp, "rounds": c.rounds,
-                                                  "potions_used": c.potions_used, "act": c.act, "floor": c.floor}}
+                                                  "potions_used": c.potions_used, "act": c.act, "floor": c.floor,
+                                                  "last_hp": c.last_hp, "damage": c.damage, "healed": c.healed,
+                                                  "hp_tracked": c.hp_tracked}}
 
     def _save_state(self):
         if self.state_path is None or self.run_id_source == "session_scoped":
@@ -924,6 +1051,8 @@ class RunCoordinator:
         if self.energy_observation is None:
             self.energy_observation = st.get("energy_observation")
         self.shop_entry = st.get("shop_entry")
+        if self.map_memory is None:   # a map screen seen in this session is newer than the file
+            self.map_memory = st.get("map_memory")
         self.route_outcomes = list(st.get("route_outcomes") or [])
         self.recent_outcomes.extend(st.get("recent_outcomes") or [])
         self.hallway_done = {int(k): n for k, n in (st.get("hallway_done") or {}).items() if str(k).isdigit()}
@@ -942,12 +1071,17 @@ class RunCoordinator:
             self.last_combat_facts = st.get("last_combat_facts")
             if c and (v.in_combat and c["key"] == v.encounter_key or v.kind in COMBAT_OVERLAY_KINDS):
                 self.combat = _Combat(c["key"], c.get("encounter_type"), c.get("start_hp"), c.get("rounds"),
-                                      c.get("potions_used") or 0, c.get("act"), c.get("floor"))
+                                      c.get("potions_used") or 0, c.get("act"), c.get("floor"),
+                                      last_hp=c.get("last_hp"), damage=c.get("damage") or 0,
+                                      healed=c.get("healed") or 0,
+                                      hp_tracked=c.get("hp_tracked") is True and c.get("last_hp") is not None)
+                self.combat.note_hp((v.facts.get("player") or {}).get("hp"))   # what happened while unobserved
                 self.seen_combat = True
         elif c:  # the fight that was open when the session stopped ended while nobody was watching
             self.route_outcomes.append({"encounter_type": c.get("encounter_type"), "result": "unobserved",
                                         "act": c.get("act"), "floor": c.get("floor"), "hp_lost": None,
-                                        "hp_lost_pct": None, "node_class": None, "expected_pct": None,
+                                        "hp_lost_pct": None, "hp_damage": None, "hp_healed": None,
+                                        "hp_damage_pct": None, "node_class": None, "expected_pct": None,
                                         "expected_p90_pct": None})
             if c.get("encounter_type") == "monster" and c.get("act") is not None:
                 self.hallway_done[c["act"]] = self.hallway_done.get(c["act"], 0) + 1
@@ -1001,14 +1135,17 @@ class RunCoordinator:
         s = self.stats
         by_class = {}
         for o in self.route_outcomes:
-            if o.get("hp_lost_pct") is None or not o.get("node_class"):
+            # HP removed during the fight is what the pooled expectation measures; older records only have the net.
+            realized = o.get("hp_damage_pct") if o.get("hp_damage_pct") is not None else o.get("hp_lost_pct")
+            if realized is None or not o.get("node_class"):
                 continue
             row = by_class.setdefault(o["node_class"], {"fights": 0, "realized_pct": 0.0, "expected_pct": 0.0,
-                                                        "worse_than_p90": 0})
+                                                        "worse_than_p90": 0, "net_only_fights": 0})
             row["fights"] += 1
-            row["realized_pct"] = round(row["realized_pct"] + o["hp_lost_pct"], 1)
+            row["net_only_fights"] += o.get("hp_damage_pct") is None
+            row["realized_pct"] = round(row["realized_pct"] + realized, 1)
             row["expected_pct"] = round(row["expected_pct"] + (o.get("expected_pct") or 0), 1)
-            row["worse_than_p90"] += o.get("expected_p90_pct") is not None and o["hp_lost_pct"] > o["expected_p90_pct"]
+            row["worse_than_p90"] += o.get("expected_p90_pct") is not None and realized > o["expected_p90_pct"]
         coverage = {}
         for kind, c in self.coverage.items():
             n = c.get("options") or 0
@@ -1043,7 +1180,8 @@ class RunCoordinator:
             "final_player_hp": (final.facts.get("player") or {}).get("hp") if final and final.facts else None,
             "decisions": s.decisions, "actions_sent": s.actions_sent, "actions_resolved": s.actions_resolved,
             "rejections": s.rejections, "stale_decisions": s.stale, "ambiguous_responses": s.ambiguous,
-            "model_corrective_retries": s.model_retries, "strategic_model_updates": s.strategic_updates,
+            "model_corrective_retries": s.model_retries, "model_provider_retries": s.provider_retries,
+            "strategic_model_updates": s.strategic_updates,
             "strategic_failures": s.strategic_failures, "combats_finished": s.combats_finished,
             "evaluation": self._evaluation(),
             "combat_search_decisions": s.search_decisions, "combat_search_misses": s.search_misses,

@@ -8,7 +8,7 @@ import json
 
 from .models import MAX_INTENT_CHARS, MAX_REASON_CHARS, MAX_ROUTE_PLAN_CHARS, DecisionFrame
 
-DECISION_PROMPT_VERSION = "decision-prompt-16"
+DECISION_PROMPT_VERSION = "decision-prompt-17"
 DEFAULT_MAX_INPUT_BYTES = 96 * 1024
 DEFAULT_OBJECTIVE = ("Win the run (ordinary victory) with the current character at the current difficulty. "
                      "No extra challenge objectives.")
@@ -25,6 +25,10 @@ Mechanics check: never replace unknown energy with a guessed base value. current
 At shops compare affordable purchase packages against leaving with gold, not just the next attractive item. decision_support.shop_budget gives feasible remaining-stock combinations and remaining gold; it is partial and unranked. Include purchases already made this visit in your judgment using entry_gold, current_gold and recent_history. Compare the complete expenditure's effect on damage, defense, draw, energy, HP costs and potion protection; account for using up the removal/future-shop budget. Decide the whole visit in one response using shop_plan: list every intended purchase in execution order and then proceed to leave. The total must fit current gold and free potion slots. You may choose more than three purchases and are not limited to the listed comparison packages. Explain why the complete expenditure beats saving. Put card removal last and end the plan there, because its picker needs a new decision. Any other purchase that opens a picker also stops execution for a new decision; changed prices, stock, gold or an unavailable action cause replanning. A permanent card is not automatically better than a potion or keeping gold.
 
 On maps ground every route claim in the SAME path_id you select. Do not borrow a different path's boss HP, risk or rest count. Distinguish death_risk_before_next_rest_pct from death_risk_before_boss_pct and expected_boss_arrival_hp_pct; describe these as rough pooled simulations, never calibrated survival probabilities. If choosing safety to the next rest over better boss projections, say so. Steps are relative to this path, not absolute floors. Check rest_steps and elite_steps before promising a rest before an elite. Explain material changes from the previous route in terms of current deck, HP, preparations or the explicit risk tradeoff.
+
+Outside the map screen, current_facts.route_context (when present) is the map as last observed, read from the room you are in: next_nodes are the rooms that can follow, next_is_boss says the boss is the very next room, act_boss names it, and ahead_over_all_continuations gives ranges that hold whichever branch you take (rest sites, shops and elites before the boss, fights before the next rest site, and whether an elite stands before it on every route, some routes or none). Use it whenever the value of a choice depends on what comes next: resting versus upgrading, buying a potion or defense versus saving gold, a card for the coming elite or boss versus a slower one. Its stored_route_plan, when present, is your own earlier plan with HP projected before this room; trust your current HP over that projection. When route_context is absent the upcoming rooms are unknown, not safe: do not claim that no fight follows.
+
+current_facts.keyword_glossary (when present) holds the game's own tooltip text for terms that appear on your cards, relics, potions and the current offers. Read a term there before reasoning about it; for example, a card that cannot be removed says so in its keyword. A term without an entry and without explanation in the visible text stays unknown: say so instead of guessing what it does.
 """
 
 _CONTRACT = f"""\
@@ -46,8 +50,11 @@ _EVIDENCE = ("At card rewards, tags=['duplicate'] and owned_copies count the sam
              "denominator means offered in that copy-count context. Sparse or single-player rates are withheld; "
              "missing evidence is unknown, not zero or proof against duplicates. These are observational choices, "
              "not recommended copy limits; explain the extra copy's concrete value when selecting a duplicate. "
-             "At rest sites, actively look for a useful smith upgrade and favor strengthening the deck when "
-             "your HP and upcoming fights allow it; compare the best upgrade against the survival value of resting. "
+             "At rest sites, first read current_facts.route_context for what follows this room (the boss next, an "
+             "elite or several fights before another rest site, or easier rooms), then compare the best smith "
+             "upgrade against the survival value of resting for exactly those rooms. An upgrade is the better use "
+             "of the site only when your HP already covers what comes before the next chance to heal; without "
+             "route_context the coming rooms are unknown and resting at low HP is the cautious reading. "
              "For card picks and purchases, use after_pick evidence in decision_support.upgrade_priority.cards "
              "to assess future upgrade demand alongside the card's immediate value. upgrade_priority.cards reports "
              "after_pick (picked unupgraded copies), after_acquisition (all unupgraded acquisitions, including starters), "
@@ -91,9 +98,13 @@ _EVIDENCE = ("At card rewards, tags=['duplicate'] and owned_copies count the sam
              "or below 0 means the average case already runs out of HP) and a sampled view: next_rest (how many "
              "fights and whether an elite come before the next rest site, and the HP you arrive with), "
              "death_risk_before_next_rest_pct, death_risk_before_boss_pct and p10 values (the worst tenth of "
-             "replays). simulation.agent_loss_scale says how much more HP this run has lost per fight than the "
-             "pooled players; projections already include it. Prefer routes whose risk before the next rest is "
-             "low when HP is low or the scale is above 1; several fights and an elite before any rest is a "
+             "replays). hp_risk losses are HP removed on the floor before any healing; each class's recovery_pct is "
+             "the HP the pooled players regained on the same floor, and projections add it back after a survived "
+             "fight. simulation.agent_loss_scale.by_group says how much more HP this run's own fights removed than "
+             "the pooled players': hallway fights correct hallway and ? nodes, elites and bosses correct elites "
+             "and the boss margin, and a group without finished fights stays at 1, so cheap hallway fights never "
+             "discount an elite. Projections already include it. Prefer routes whose risk before the next rest is "
+             "low when HP is low or a scale is above 1; several fights and an elite before any rest is a "
              "commitment you cannot undo. death_risk values are rough estimates from other players' fights, not "
              "calibrated probabilities. selected_for says what a path is best at; it is not a ranking. HP projections use pooled fight "
              "statistics; elite_readiness adds your actual deck: it lists each Spire Codex elite of this act and later "
