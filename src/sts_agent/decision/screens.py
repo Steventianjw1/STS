@@ -12,6 +12,7 @@ from typing import Any
 
 from ..observation import PHASE_COMBAT_ENDED, PHASE_COMBAT_READY, normalize
 from ..combat_preview import action_preview
+from ..expert_stats import _deck_ids, _id
 from .. import enemy_patterns
 from .models import sha
 
@@ -27,7 +28,8 @@ CAPABILITIES: dict[str, dict] = {
     "hand_select": {"status": SOURCE_INSPECTED, "actions": ["combat_select_card", "combat_confirm_selection"],
                     "notes": "Index = selectable hand holders (same list in state and action)."},
     "rewards": {"status": SOURCE_INSPECTED, "actions": ["claim_reward", "proceed", "discard_potion"],
-                "notes": "Index = enabled reward buttons (same filter in state and action)."},
+                "notes": "Index = enabled reward buttons. Gold can be bundled with another reward or proceeding; "
+                         "the coordinator re-observes and rebinds each step."},
     "card_reward": {"status": SOURCE_INSPECTED, "actions": ["select_card_reward", "skip_card_reward"],
                     "notes": "Index = card holders sorted by position (same in state and action)."},
     "map": {"status": SOURCE_INSPECTED, "actions": ["choose_map_node"],
@@ -188,6 +190,58 @@ def _discard_potions(b: _Builder, obs: dict):
         b.add(f"discard_potion_{p['slot']}", "discard_potion",
               f"Discard potion '{p['name']}' from slot {p['slot']} (frees the slot; potion is lost)",
               {"slot": p["slot"], "potion": p["name"]}, {"action": "discard_potion", "slot": p["slot"]})
+
+
+def automatic_action(view: ScreenView) -> dict | None:
+    """Return a forced progress click, before filtering rejected actions.
+
+    Discarding a potion is optional inventory management, not an alternative to
+    progressing. Leaving an offer behind, cancelling a choice, and choosing how
+    many cards to select remain decisions when those alternatives are available.
+    """
+    if not view.ready or view.unsupported or view.terminal:
+        return None
+    details = view.facts.get("screen_details") or {}
+    candidates = [c for c in view.candidates if c["kind"] != "discard_potion"]
+    if view.kind == "card_select" and details.get("preview_showing"):
+        # The card choice is complete; confirm the resulting preview even if
+        # the UI also offers a back button to undo that choice.
+        return next((c for c in candidates if c["kind"] == "confirm_selection"), None)
+    if len(candidates) != 1:
+        return None
+    candidate = candidates[0]
+    if candidate["kind"] in ("reward_batch", "use_potion", "play_card"):
+        return None
+
+    # One supported candidate need not mean one actual choice: an unbound index,
+    # unsupported target, or full potion belt can hide another available action.
+    if view.kind == "map":
+        if len(details.get("next_options") or []) != 1:
+            return None
+    elif view.kind == "combat":
+        hand, potions = view.facts.get("hand"), view.facts.get("potions")
+        if (hand is None or potions is None
+                or any(c.get("can_play") is not False for c in hand)
+                or any(p.get("can_use_in_combat") is not False for p in potions)):
+            return None
+    elif view.kind == "shop":
+        if any(i.get("is_stocked") and i.get("can_afford") for i in details.get("items") or []):
+            return None
+    else:
+        key = {"event": "options", "rest_site": "options", "rewards": "items",
+               "treasure": "relics", "card_reward": "cards", "card_select": "cards",
+               "relic_select": "relics"}.get(view.kind)
+        options = (details.get(key) or []) if key else []
+        if view.kind == "event":
+            options = [] if details.get("in_dialogue") else [o for o in options if not o["is_locked"]]
+        elif view.kind == "rest_site":
+            options = [o for o in options if o["is_enabled"]]
+        if any(o.get("index") is None for o in options):
+            return None
+        if (view.kind == "card_select" and candidate["kind"] == "select_card"
+                and details.get("screen_type") != "choose"):
+            return None  # grid toggles may be unobservable and must not repeat automatically
+    return candidate
 
 
 def build_view(raw: dict) -> ScreenView:
@@ -375,6 +429,19 @@ def _rewards(raw, obs):
               {"action": "claim_reward", "index": x["index"]})
     if r.get("can_proceed") is True:
         b.add("proceed", "proceed", "Leave the rewards screen (unclaimed rewards are left behind)", {}, {"action": "proceed"})
+    gold = [c for c in b.candidates if c["kind"] == "claim_reward" and c["details"]["type"] == "gold"]
+    if gold:
+        # Only gold precedes the final action: other rewards may open a picker.
+        tails = [c for c in b.candidates if c not in gold]
+        if len(gold) > 1:
+            tails.append(None)
+        for tail in tails:
+            steps = gold + ([tail] if tail else [])
+            aid = "collect_gold_then_" + (tail["action_id"] if tail else "finish")
+            b.add(aid, "reward_batch", "Collect all gold; then " + (tail["description"] if tail else "stay on rewards"),
+                  {"steps": [{"action_id": c["action_id"], "description": c["description"], "details": c["details"]}
+                             for c in steps]}, None)
+            b.bindings[aid] = {"steps": [c["action_id"] for c in steps], "resolution": "reward_batch"}
     return _finish(v, b, obs)
 
 
@@ -388,10 +455,18 @@ def _card_info(c):
 def _card_reward(raw, obs):
     r = raw.get("card_reward") if isinstance(raw.get("card_reward"), dict) else {}
     cards = [_card_info(c) for c in r.get("cards") or [] if isinstance(c, dict)]
+    deck = _deck_ids(obs.get("deck"))
+    for c in cards:
+        owned = deck.count(_id(c["id"])) if deck is not None and _id(c["id"]) else None
+        c.update({"owned_copies": owned, "copies_after_pick": owned + 1 if owned is not None else None,
+                  "is_duplicate": owned > 0 if owned is not None else None,
+                  "tags": ["duplicate"] if owned else []})
     v, b = _room("card_reward", raw, obs, {"cards": cards, "can_skip": r.get("can_skip")})
     for c in cards:
         if c["index"] is not None:
-            b.add(f"take_card_{c['index']}", "select_card_reward", f"Add {c['name']} to the deck", c,
+            warning = (f" [DUPLICATE: {c['owned_copies']} already in deck; would be copy {c['copies_after_pick']}]"
+                       if c["is_duplicate"] else "")
+            b.add(f"take_card_{c['index']}", "select_card_reward", f"Add {c['name']} to the deck{warning}", c,
                   {"action": "select_card_reward", "card_index": c["index"]})
     if r.get("can_skip") is True:
         b.add("skip_card_reward", "skip_card_reward", "Skip this card reward", {}, {"action": "skip_card_reward"})

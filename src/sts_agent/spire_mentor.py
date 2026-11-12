@@ -10,11 +10,14 @@ the game and answers the mod. This module only *reads* that advisor:
 * the advisor's raw JSONL log (``advisor-*.jsonl``), whose ``mcts`` records hold
   the ``advice`` it sent for each ``state_id`` / ``request_id``
 
-Nothing is sent to Spire Mentor and it never executes anything for us: the
+In per-action search mode, nothing is sent to Spire Mentor and it never executes anything for us: the
 recommended action is mapped onto one of this agent's own STS2MCP candidates
 and executed by the normal validated path. A recommendation is used only when
 Spire Mentor's board equals the board this agent observed; anything else is a
 miss with a reason, and the caller falls back to the LLM.
+
+MentorAutobattle instead controls native Autobattle through the game-thread
+bridge. The coordinator yields whole fights and never reads non-combat advice.
 
 Field names follow ``spire-mentor-mod/PROTOCOL.md`` and
 ``sts2-pycli/python/realgame_{advisor,control}.py`` as read at source. Not
@@ -33,10 +36,29 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from .client import GameClientError
+
 SOURCE = "spire_mentor_search"
 _TAIL_BYTES = 4 * 1024 * 1024      # how far back to read a log that already exists
 _MAX_ADVICE = 128
 _TIMEOUT_STRIKES = 3               # consecutive timeouts before the cooldown starts
+
+
+class MentorAutobattle:
+    """Control native Autobattle through STS2MCP's game-thread bridge. No advice reads."""
+
+    def __init__(self, client):
+        self.client = client
+
+    def control(self, command: str) -> dict:
+        if command not in ("status", "on", "off"):
+            raise ValueError("Unknown Autobattle command")
+        response = self.client.post_action({"action": "menu_select", "option": f"agent_autobattle_{command}"})
+        body = response.body
+        if not response.accepted or not isinstance(body, dict) or body.get("autobattle_version") != 1:
+            raise GameClientError(f"Spire Mentor Autobattle unavailable: {response.error or body}. "
+                                  "Rebuild/install the agent mod extension and enable Spire Mentor.")
+        return body
 
 
 @dataclass

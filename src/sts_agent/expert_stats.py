@@ -413,7 +413,18 @@ class ExpertDecisionStats:
                     if self.config.enabled and self.config.history_enabled else None)
         if (view.kind == "event" and (view.facts.get("screen_details") or {}).get("is_ancient") is True
                 and self.config.ancient_advisor_enabled):
-            return self._ancient_view(view, deadline=deadline) if self.config.enabled else None
+            if not self.config.enabled:
+                return None
+            support = self._ancient_view(view, deadline=deadline)
+            self._add_upgrade_evidence(view, support, deadline=deadline)
+            return support
+        if self.config.enabled and (view.kind == "rest_site" or
+                                    (view.kind == "card_select" and not view.facts.get("combat_context"))):
+            support = {"tool": "get_expert_decision_stats", "schema_version": 2,
+                       "source": API_ROOT, "status": "unavailable", "options": []}
+            self._add_upgrade_evidence(view, support, deadline=deadline)
+            support["status"] = support["upgrade_priority"]["status"]
+            return support
         support = self._profile_view(view, budget_s=budget)
         if support is None:
             return None
@@ -431,6 +442,9 @@ class ExpertDecisionStats:
             except (OSError, sqlite3.Error) as exc:
                 support["history_index"] = {"status": "unavailable", "reason": type(exc).__name__}
         support["evidence_coverage"] = coverage_summary(support["options"], self.config.min_context_samples)
+        if view.kind == "card_reward":
+            self._add_duplicate_evidence(view, support)
+        self._add_upgrade_evidence(view, support, deadline=deadline)
         if self.config.deck_advice_enabled:
             support["supplementary_deck_advice"] = self._deck_advice(view, deck, deadline=deadline)
         if self.config.elite_readiness_enabled and view.kind in ("card_reward", "shop"):
@@ -438,10 +452,83 @@ class ExpertDecisionStats:
                        for c in view.candidates if c["kind"] in ("select_card_reward", "shop_purchase")]
             support["elite_readiness"] = self._readiness_for_view(view, None, deadline=deadline,
                                                                   offered=[o for o in offered if o])
-        if support["status"] == "unavailable" and any(
-                o.get("history_context", {}).get("status") == "available" for o in support["options"]):
+        if support["status"] == "unavailable" and (any(
+                o.get("history_context", {}).get("status") == "available" for o in support["options"])
+                or support["upgrade_priority"]["status"] in ("available", "partial")
+                or support.get("duplicate_cards", {}).get("status") in ("available", "partial")):
             support["status"] = "partial"
         return support
+
+    def _add_duplicate_evidence(self, view, support):
+        deck = _deck_ids(view.facts.get("deck"))
+        members, scope = support["cohort"]["members"], support["scope"]
+        evidence = {"status": "unavailable", "source": API_ROOT + "/api/runs/shared/{run_hash}",
+                    "label": "OBSERVED REPEAT-COPY REWARD PICKS; advisory, not a recommended copy limit",
+                    "scope": {**scope, "context_basis": "before_floor", "floor_conditioned": False,
+                              "deck_conditioned": False, "copy_count_conditioned": True,
+                              "members": [m["username"] for m in members]},
+                    "limitations": [
+                        "Bounded selected-player history; all floors pooled within the reported scope.",
+                        "Counts base card identity across upgraded and unupgraded copies; upgrades are not conditioned on.",
+                        "Incomplete deck contexts and repeated offers of this card on the same floor are excluded.",
+                        "Other within-floor acquisitions/removals and reward source or eligibility are not modeled.",
+                        "Rates describe takes when offered, not a future probability, win benefit or final-deck frequency."],
+                    "cards": []}
+        reason = ("history_disabled" if not self.config.history_enabled else
+                  "empty_cohort" if not members else None)
+        cache = {}
+        for candidate in view.candidates:
+            if candidate["kind"] != "select_card_reward":
+                continue
+            cid = _id(candidate["details"].get("id"))
+            owned = deck.count(cid) if deck is not None and cid else None
+            if cid not in cache:
+                try:
+                    cache[cid] = ({"status": "unavailable", "reason": reason or "unmatched_card_id"}
+                                  if reason or not cid else
+                                  self.history.card_copy_stats(members, scope, cid, owned_copies=owned))
+                except (OSError, sqlite3.Error) as exc:
+                    cache[cid] = {"status": "unavailable", "reason": "history_index_" + type(exc).__name__}
+            evidence["cards"].append({"id": cid, "action_id": candidate["action_id"],
+                                      "owned_copies": owned,
+                                      "copies_after_pick": owned + 1 if owned is not None else None,
+                                      **cache[cid]})
+        available = sum(c["status"] == "available" for c in evidence["cards"])
+        evidence["status"] = ("available" if available and available == len(evidence["cards"]) else
+                              "partial" if available else "unavailable")
+        support["duplicate_cards"] = evidence
+
+    def _add_upgrade_evidence(self, view, support, *, deadline):
+        from .upgrade_priority import build_upgrade_evidence
+        character, ascension, version = self._run_scope(view.facts.get("run") or {})
+        rows, reason = [], None
+        cohort = support.get("cohort")
+        members = cohort.get("members", []) if isinstance(cohort, dict) else []
+        scope = self._scope(character, ascension, version)
+        if not self.config.history_enabled:
+            reason = "history_disabled"
+        elif not character or type(ascension) is not int or not 0 <= ascension <= 10:
+            reason = "character_or_ascension_unknown"
+        else:
+            try:
+                if not members:
+                    members = self._cohort(character, {}, deadline=deadline)
+                if "history_index" not in support:
+                    support["history_index"] = self.history.sync(self.client, members, scope,
+                                                                deadline=deadline, clock=self.clock)
+                rows = self.history.upgrade_rows(members, scope)
+                if not members:
+                    reason = "no_eligible_character_players"
+            except (StatsUnavailable, OSError, sqlite3.Error) as exc:
+                reason = str(exc) if isinstance(exc, StatsUnavailable) else type(exc).__name__
+        evidence = build_upgrade_evidence(view, rows, min_samples=self.config.min_context_samples)
+        evidence["scope"].update({"character": character, "ascension": ascension, "version": version,
+                                  "members": [m["username"] for m in members]})
+        if version is None:
+            evidence["limitations"].append("Runs span all game versions; no version filter was applied.")
+        if reason:
+            evidence["reason"] = reason
+        support["upgrade_priority"] = evidence
 
     def _deck_advice(self, view, deck, *, deadline):
         result = {"source": API_ROOT, "label": "COMMUNITY DECK ADVICE; separate from expert rates",

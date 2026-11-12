@@ -12,7 +12,6 @@ DEFAULT_CONFIG_FILE = "sts_agent.toml"
 class Limits:
     max_actions: int = 300                 # per play-combat session (card plays + end turns)
     max_run_actions: int = 3000            # per play-run session (every gameplay action)
-    max_elapsed_s: float = 1200.0          # wall-clock cap for one play-combat session
     max_no_progress_s: float = 90.0        # stop if the observed state does not change this long
     poll_interval_s: float = 0.25          # between state polls while waiting
     ready_timeout_s: float = 60.0          # waiting for the player's play phase (covers enemy turns)
@@ -27,7 +26,7 @@ class Limits:
 class LLMConfig:
     provider: str = "deepseek"
     model: str | None = None               # REQUIRED for policy="llm"; no default model is assumed
-    max_output_tokens: int = 1024
+    max_output_tokens: int = 16384
     timeout_s: float = 60.0                # whole-call budget; SDK retries are disabled
     deepseek_reasoning_effort: str | None = None  # None uses the provider default
     max_calls_per_run: int | None = 2000
@@ -74,6 +73,7 @@ class ExpertStatsConfig:
 @dataclass
 class CombatSearchConfig:
     enabled: bool = False                  # combat actions from the Spire Mentor advisor; LLM on any miss
+    autobattle: bool = False               # Mentor executes whole fights; no LLM combat fallback
     control_url: str = "http://127.0.0.1:8079"   # the advisor's localhost control plane
     advisor_log_dir: str | None = None     # folder of advisor-*.jsonl; None = derive from the advisor's /status
     advice_timeout_s: float = 30.0         # wait per decision for a matching board and its advice

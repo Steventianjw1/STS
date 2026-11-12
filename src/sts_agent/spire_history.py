@@ -12,7 +12,7 @@ import urllib.parse
 
 from .expert_stats import StatsUnavailable, _character, _count, _id, _top_contributors, _withhold
 
-NORMALIZER_VERSION = 4  # 2: per-floor route rows; 3: ancient offers; 4: floor-scoped identity issues
+NORMALIZER_VERSION = 5  # 5: per-copy acquisition and first-upgrade history
 
 
 def _act_id(value):
@@ -95,7 +95,8 @@ def _cards(value):
     return value
 
 
-def normalize_run(raw: dict, *, character: str, snapshots_out: dict | None = None) -> tuple[list[dict], list[str]]:
+def normalize_run(raw: dict, *, character: str, snapshots_out: dict | None = None,
+                  upgrades_out: list | None = None) -> tuple[list[dict], list[str]]:
     """Reconstruct pre-floor card lifetimes, not final-deck co-occurrence.
 
     Final survivors plus explicit removals describe lifetimes. Gains validate
@@ -134,7 +135,8 @@ def normalize_run(raw: dict, *, character: str, snapshots_out: dict | None = Non
         born = _count(card.get("floor_added_to_deck"))
         if born is None or born < 1 or born > end:
             issues.add("unknown_card_acquisition_floor")
-        lives.append({"id": cid, "born": born, "end": end, "upgrade_level": 0})
+        lives.append({"id": cid, "born": born, "end": end, "upgrade_level": 0,
+                      "acquired_level": 0 if born == 1 else None, "first_upgrade": None})
 
     for card in _cards(players[0].get("deck")):
         lifetime(card, number + 1)
@@ -161,7 +163,7 @@ def normalize_run(raw: dict, *, character: str, snapshots_out: dict | None = Non
                 else:
                     notes.add("card_added_without_gain_record_lifetime_known")
     snapshots = {}
-    upgrade_issues = set()
+    upgrade_issues, ambiguous_upgrades = set(), set()
     for floor, _, stats, _ in floors:
         present = [c for c in lives if c["born"] is not None and c["born"] < floor <= c["end"]]
         context_issues = sorted(issues | ({"initial_room_deck_unknown"} if floor == 1 else set())
@@ -181,6 +183,7 @@ def normalize_run(raw: dict, *, character: str, snapshots_out: dict | None = Non
             if len(acquisitions) == len(levels) and all(_count(x) is not None for x in levels):
                 for card, level in zip(acquisitions, sorted(levels)):
                     card["upgrade_level"] = level
+                    card["acquired_level"] = level
         upgraded = stats.get("upgraded_cards", [])
         if not isinstance(upgraded, list):
             upgrade_issues.add("invalid_upgrade_history")
@@ -191,12 +194,40 @@ def normalize_run(raw: dict, *, character: str, snapshots_out: dict | None = Non
                         and c["born"] <= floor < c["end"]]
             if not eligible:
                 upgrade_issues.add("ambiguous_upgrade_identity")
+                ambiguous_upgrades.add(cid)
                 continue
-            # Copies of one card are interchangeable while they share a lifetime: upgrade the
-            # least-upgraded one. Only copies that leave the deck at different floors are ambiguous.
+            # Preserve the existing deck reconstruction; upgrade timing additionally
+            # requires matching acquisition floors so copies have the same age.
             if len({c["end"] for c in eligible}) > 1:
                 upgrade_issues.add("ambiguous_upgrade_identity")
-            min(eligible, key=lambda c: (c["upgrade_level"], -c["end"]))["upgrade_level"] += 1
+            if len({(c["born"], c["end"]) for c in eligible}) > 1:
+                ambiguous_upgrades.add(cid)
+            card = min(eligible, key=lambda c: (c["upgrade_level"], -c["end"]))
+            if card["upgrade_level"] == 0:
+                card["first_upgrade"] = floor
+            card["upgrade_level"] += 1
+    if (upgrades_out is not None and not issues and lost_after is None
+            and "invalid_upgrade_history" not in upgrade_issues and None not in ambiguous_upgrades):
+        # Final survivors corroborate the replay. A mismatch can indicate an
+        # unrecorded upgrade source or an already-upgraded acquisition.
+        for cid in {c["id"] for c in lives}:
+            survivors = [c for c in lives if c["id"] == cid and c["end"] == number + 1]
+            final = [c for c in players[0]["deck"] if _id(c["id"]) == cid]
+            levels = [_count(c.get("current_upgrade_level", 0)) for c in final]
+            if any(v is None for v in levels) or sum(c["upgrade_level"] for c in survivors) != sum(levels):
+                ambiguous_upgrades.add(cid)
+        for card in lives:
+            if card["acquired_level"] != 0 or card["id"] in ambiguous_upgrades:
+                continue
+            born = card["born"]
+            stats = floors[born - 1][2]
+            choices = stats.get("card_choices")
+            choices = choices if isinstance(choices, list) else []
+            picked = sum(1 for o in choices if isinstance(o, dict) and o.get("was_picked") is True
+                         and isinstance(o.get("card"), dict) and _id(o["card"].get("id")) == card["id"])
+            copies = sum(c["id"] == card["id"] and c["born"] == born for c in lives)
+            upgrades_out.append({"id": card["id"], "born": born, "end": card["end"],
+                                 "upgrade_floor": card["first_upgrade"], "picked": int(picked == copies)})
     if snapshots_out is not None:
         snapshots_out.update(snapshots)
     decisions = []
@@ -313,16 +344,26 @@ class RunHistoryIndex:
             CREATE TABLE IF NOT EXISTS ancient_offers (
               run_hash TEXT, floor INTEGER, act INTEGER, act_id TEXT, ancient_id TEXT, relic_id TEXT,
               chosen INTEGER, deck TEXT, PRIMARY KEY (run_hash, floor, relic_id));
+            CREATE TABLE IF NOT EXISTS card_upgrades (
+              run_hash TEXT, seq INTEGER, card_id TEXT, born INTEGER, end_floor INTEGER,
+              upgrade_floor INTEGER, picked INTEGER, PRIMARY KEY (run_hash, seq));
         """)
+        if con.execute("PRAGMA user_version").fetchone()[0] < NORMALIZER_VERSION:
+            # Revisit cached API pages immediately after a normalizer upgrade,
+            # rather than waiting for a previous sync cursor's daily refresh.
+            with con:
+                con.execute("DELETE FROM sync")
+                con.execute(f"PRAGMA user_version={NORMALIZER_VERSION}")
         return closing(con)
 
     def ingest(self, con, username, run_hash, raw, scope):
         if (raw.get("ascension") != scope["ascension"] or raw.get("game_mode") != "standard"
                 or (scope["version"] is not None and raw.get("build_id") != scope["version"])):
             raise StatsUnavailable("run_filter_mismatch")
-        snapshots = {}
+        snapshots, upgrades = {}, []
         try:
-            decisions, issues = normalize_run(raw, character=scope["character"], snapshots_out=snapshots)
+            decisions, issues = normalize_run(raw, character=scope["character"], snapshots_out=snapshots,
+                                              upgrades_out=upgrades)
         except StatsUnavailable as exc:
             if str(exc) == "unsupported_run_shape":
                 raise
@@ -330,6 +371,10 @@ class RunHistoryIndex:
             decisions, issues = [], ["decision_history_unavailable:" + str(exc)]
         route, floors, route_issues = normalize_route(raw)
         with con:
+            con.execute("DELETE FROM card_upgrades WHERE run_hash=?", (run_hash,))
+            con.executemany("INSERT INTO card_upgrades VALUES(?,?,?,?,?,?,?)", [
+                (run_hash, i, c["id"], c["born"], c["end"], c["upgrade_floor"], c["picked"])
+                for i, c in enumerate(upgrades)])
             con.execute("DELETE FROM route_floors WHERE run_hash=?", (run_hash,))
             con.execute("DELETE FROM ancient_offers WHERE run_hash=?", (run_hash,))
             con.executemany("INSERT OR REPLACE INTO ancient_offers VALUES(?,?,?,?,?,?,?,?)", [
@@ -444,6 +489,58 @@ class RunHistoryIndex:
                     state.update({"status": "unavailable", "reason": str(exc)})
                     result["status"] = "partial"
         return result
+
+    def card_copy_stats(self, cohort, scope, card_id, *, owned_copies):
+        """Reward take rates by copies held before the floor; incomplete decks never imply zero copies."""
+        names = [m["username"] for m in cohort]
+        if not names:
+            return {"status": "unavailable", "reason": "empty_cohort"}
+        sql = ("SELECT d.*, r.username FROM decisions d JOIN runs r ON r.hash=d.run_hash "
+               "WHERE r.username IN (" + ",".join("?" for _ in names) + ") AND r.character=? "
+               "AND r.ascension=? AND r.mode='standard' AND r.normalizer=? "
+               "AND (? IS NULL OR r.version=?) AND d.kind='card_reward' "
+               "AND d.entity_type='cards' AND d.entity_id=?")
+        with self._connect() as con:
+            rows = [dict(r) for r in con.execute(sql, names + [scope["character"], scope["ascension"],
+                    NORMALIZER_VERSION, scope["version"], scope["version"], card_id])]
+        appearances = Counter((r["run_hash"], r["floor"]) for r in rows)
+        groups, excluded = {}, 0
+        for row in rows:
+            context = json.loads(row["deck"])
+            if not context["identity_complete"] or appearances[row["run_hash"], row["floor"]] > 1:
+                excluded += 1
+                continue
+            copies = sum(c["id"] == card_id for c in context["cards"])
+            groups.setdefault(copies, []).append(row)
+
+        def summarize(sample):
+            n, total = sum(r["chosen"] for r in sample), len(sample)
+            return _withhold({"status": "available" if total else "unavailable", "numerator": n,
+                "denominator": total, "rate_pct": round(100 * n / total, 2) if total else None,
+                "contributing_players": len({r["username"] for r in sample}),
+                "contributing_runs": len({r["run_hash"] for r in sample})}, self.config.min_context_samples)
+
+        return {"status": "available" if groups else "unavailable",
+                "metric": "take_when_offered_by_copies_held", "candidate_observations": len(rows),
+                "excluded_incomplete_or_same_floor_repeat_observations": excluded,
+                "by_copies_held": [{"copies_held": k, "copy_number_if_taken": k + 1, **summarize(groups[k])}
+                                   for k in sorted(groups)],
+                "at_current_copies": (summarize(groups.get(owned_copies, [])) if owned_copies is not None else
+                                      {"status": "unavailable", "reason": "observed_permanent_deck_unknown"}),
+                "when_already_owned": summarize([r for k, sample in groups.items() if k >= 1 for r in sample])}
+
+    def upgrade_rows(self, cohort, scope):
+        """Unupgraded acquired copies with unambiguous first-upgrade histories."""
+        names = [m["username"] for m in cohort]
+        if not names:
+            return []
+        sql = ("SELECT c.*, r.username FROM card_upgrades c JOIN runs r ON r.hash=c.run_hash "
+               "WHERE r.username IN (" + ",".join("?" for _ in names) + ") AND r.character=? "
+               "AND r.ascension=? AND r.mode='standard' AND r.normalizer=? "
+               "AND (? IS NULL OR r.version=?)")
+        with self._connect() as con:
+            return [dict(r) for r in con.execute(sql, names + [scope["character"], scope["ascension"],
+                    NORMALIZER_VERSION, scope["version"], scope["version"]])]
 
     def route_rows(self, cohort, scope, act_id):
         """Every indexed in-scope run that entered ``act_id``, with its full floor list."""

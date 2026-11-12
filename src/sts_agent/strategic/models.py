@@ -179,11 +179,14 @@ def validate_facts(facts: Any) -> None:
     res = facts["resources"]
     if res is not None:
         p = "/resources"
-        _obj(res, p, ("hp", "max_hp", "gold", "max_energy"))
+        _obj(res, p, ("hp", "max_hp", "gold", "max_energy") +
+             (("last_observed_max_energy",) if isinstance(res, dict) and "last_observed_max_energy" in res else ()))
         _int(res["hp"], p + "/hp", lo=0)
         _int(res["max_hp"], p + "/max_hp", lo=1)
         _int(res["gold"], p + "/gold", lo=0)
         _int(res["max_energy"], p + "/max_energy", lo=0)
+        if "last_observed_max_energy" in res:
+            _int(res["last_observed_max_energy"], p + "/last_observed_max_energy", lo=0)
         if res["hp"] is not None and res["max_hp"] is not None and res["hp"] > res["max_hp"]:
             _fail(InputError, p + "/hp", "exceeds max_hp")
 

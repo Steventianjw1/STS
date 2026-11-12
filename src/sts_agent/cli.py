@@ -34,7 +34,7 @@ from .decision.models import DecisionFrame
 from .decision.offline import ScriptedTextModel
 from .decision.policy import LLMDecisionPolicy, model_identity
 from .decision.search_policy import SearchCombatPolicy
-from .spire_mentor import SpireMentorAdvisor
+from .spire_mentor import MentorAutobattle, SpireMentorAdvisor
 from .decision.prompts import DECISION_PROMPT_VERSION, DEFAULT_OBJECTIVE
 from .decision.screens import CAPABILITIES, MOD_REVISION, build_view, capability_table
 from .observation import normalize, summarize
@@ -62,7 +62,7 @@ def _build(args):
         cfg.base_url = args.base_url
     if getattr(args, "trace_dir", None):
         cfg.trace_dir = args.trace_dir
-    for name in ("max_actions", "max_elapsed_s", "max_no_progress_s"):
+    for name in ("max_actions", "max_no_progress_s"):
         v = getattr(args, name, None)
         if v is not None:
             target = "max_run_actions" if (name == "max_actions" and getattr(args, "cmd", None) in ("play-run", "start-run")) else name
@@ -109,18 +109,28 @@ def _advisor(cfg) -> SpireMentorAdvisor:
                               request_timeout_s=cs.request_timeout_s, cooldown_s=cs.cooldown_s)
 
 
-def _doctor_combat_search(cfg, line) -> None:
+def _doctor_combat_search(cfg, line, client) -> bool:
+    if cfg.combat_search.autobattle:
+        try:
+            status = MentorAutobattle(client).control("status")
+        except GameClientError as exc:
+            line("FAIL", str(exc))
+            return False
+        line("ok", f"combat: native Spire Mentor Autobattle ready (mode {status.get('mode')}); "
+                   "no LLM combat fallback; Mentor advice ignored outside combat")
+        return True
     adv = _advisor(cfg)
     status = adv.status()
     if status is None:
         line("WARN", f"combat search: no Spire Mentor advisor at {cfg.combat_search.control_url}. Combat will "
                      "fall back to the LLM. Is the Spire Mentor mod installed with its coach turned on?")
-        return
+        return True
     line("ok" if status.get("connected") else "WARN",
          f"combat search: advisor reachable; connected to the mod: {bool(status.get('connected'))}")
     log = adv.find_log()
     line("ok" if log else "WARN", "combat search: advisor log " + (f"found ({log.name})" if log else
          "not found yet (it appears after the first advice; else set [combat_search].advisor_log_dir)"))
+    return True
 
 
 def _objective(cfg) -> str:
@@ -195,7 +205,7 @@ def cmd_doctor(args) -> int:
     if cfg.game_dir:
         _doctor_game_dir(Path(cfg.game_dir), line)
     if cfg.policy == "llm" and cfg.combat_search.enabled:
-        _doctor_combat_search(cfg, line)
+        ok = _doctor_combat_search(cfg, line, client) and ok
 
     try:
         hello = client.hello()
@@ -428,10 +438,16 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     if facts_source == "synthetic" or getattr(client, "data_source", None) == "synthetic":
         facts_source = "synthetic"
     policy = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes)
+    autobattle = None
     # Live observed combat only: synthetic or scripted sessions never consult a running advisor.
     if cfg.combat_search.enabled and facts_source != "synthetic" and not scripted:
-        policy = SearchCombatPolicy(policy, _advisor(cfg))
-        log(f"combat search: Spire Mentor advisor at {cfg.combat_search.control_url} (LLM on any miss)")
+        if cfg.combat_search.autobattle:
+            autobattle = MentorAutobattle(client)
+            autobattle.control("status")  # Validate the bridge before any model or gameplay action.
+            log("combat: native Spire Mentor Autobattle; DeepSeek controls non-combat decisions")
+        else:
+            policy = SearchCombatPolicy(policy, _advisor(cfg))
+            log(f"combat search: Spire Mentor advisor at {cfg.combat_search.control_url} (LLM on any miss)")
     planner = StrategicPlanner(model) if cfg.llm.strategic_planner else None
     ident = model_identity(model)
     rec = TraceRecorder(cfg.trace_dir, command=command, policy_name=policy.name, policy_version=policy.version,
@@ -447,11 +463,11 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     log(f"session {rec.session_id} -> {rec.dir}  (policy llm, model {ident.get('model')}"
         f"{', SCRIPTED' if scripted else ''})")
     scope = {"step": "step", "play-combat": "combat", "play-run": "run"}[command]
-    coord = RunCoordinator(client, policy, planner=planner, recorder=rec, limits=cfg.limits, scope=scope,
+    coord = RunCoordinator(client, policy, planner=planner, recorder=rec, limits=cfg.limits, scope=scope, autobattle=autobattle,
                            expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build)
                            if facts_source != "synthetic" and not scripted else None,
                            run_id=run_id, run_id_source=run_id_source, facts_source=facts_source,
-                           objective=_objective(cfg), model_timeout_s=getattr(model, "timeout_s", 0.0), log=log,
+                           objective=_objective(cfg), log=log,
                            state_path=_run_state_path(cfg, run_id) if run_id_source == "mod_compendium"
                            and facts_source == "observed" and not scripted else None)
     try:
@@ -498,6 +514,8 @@ def cmd_start_run(args) -> int:
             print(f"pin: WARNING: config declares game_build {cfg.game_build}; the running game is "
                   f"{game_pin.PINNED_GAME_BUILD}", file=sys.stderr)
         client.hello()
+        if cfg.combat_search.enabled and cfg.combat_search.autobattle:
+            MentorAutobattle(client).control("off")
         RunStartup(client, timeout_s=args.setup_timeout_s,
                    poll_interval_s=cfg.limits.poll_interval_s).start(character, ascension)
     except (EOFError, KeyboardInterrupt):
@@ -585,7 +603,6 @@ def main(argv=None) -> int:
         s.add_argument("--no-raw", action="store_true", help="do not write debug_raw.jsonl")
         if name != "step":
             s.add_argument("--max-actions", type=int)
-            s.add_argument("--max-elapsed-s", type=float)
             s.add_argument("--max-no-progress-s", type=float)
         s.set_defaults(fn=fn)
 
@@ -619,7 +636,6 @@ def main(argv=None) -> int:
     s.add_argument("--trace-dir")
     s.add_argument("--no-raw", action="store_true")
     s.add_argument("--max-actions", type=int)
-    s.add_argument("--max-elapsed-s", type=float)
     s.add_argument("--max-no-progress-s", type=float)
     s.set_defaults(fn=cmd_start_run)
 

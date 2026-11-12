@@ -133,6 +133,7 @@ class Choice:
     reason: str
     turn_intent: str
     route_plan: dict | None = None   # map screens only: {"path_id", "plan", "change_course_if"}
+    shop_plan: tuple[str, ...] | None = None  # ordered offered actions, including action_id first
 
 
 def _no_dupes(pairs):
@@ -169,12 +170,14 @@ def parse_choice(text: Any, frame: DecisionFrame) -> Choice:
     is_map = (frame.screen or {}).get("kind") == "map"
     if is_map and "route_plan" in data:
         want = want | {"route_plan"}
+    if (frame.screen or {}).get("kind") == "shop" and "shop_plan" in data:
+        want = want | {"shop_plan"}
     if set(data) != want:
         missing, extra = want - set(data), set(data) - want
         raise ChoiceError(f"keys must be exactly {sorted(want)}"
                           + (f"; missing {sorted(missing)}" if missing else "")
                           + (f"; unexpected {sorted(extra)}" if extra else ""))
-    for k in want - {"route_plan"}:
+    for k in want - {"route_plan", "shop_plan"}:
         if not isinstance(data[k], str):
             raise ChoiceError(f"{k} must be a string")
     if frame.candidate(data["action_id"]) is None:
@@ -188,7 +191,40 @@ def parse_choice(text: Any, frame: DecisionFrame) -> Choice:
     if len(intent) > MAX_INTENT_CHARS:
         raise ChoiceError(f"turn_intent longer than {MAX_INTENT_CHARS} characters")
     return Choice(frame.frame_id, data["action_id"], reason, intent,
-                  _route_plan(data["route_plan"], frame, data["action_id"]) if "route_plan" in want else None)
+                  _route_plan(data["route_plan"], frame, data["action_id"]) if "route_plan" in want else None,
+                  _shop_plan(data["shop_plan"], frame, data["action_id"]) if "shop_plan" in want else None)
+
+
+def _shop_plan(plan, frame, action_id):
+    if (not isinstance(plan, list) or not plan or len(plan) > len(frame.candidates)
+            or not all(isinstance(aid, str) for aid in plan)):
+        raise ChoiceError("shop_plan must be a nonempty ordered list of offered action ids")
+    if plan[0] != action_id or len(set(plan)) != len(plan):
+        raise ChoiceError("shop_plan must start with action_id and contain no repeated actions")
+    cost, potion_count = 0, 0
+    for i, aid in enumerate(plan):
+        candidate = frame.candidate(aid)
+        if candidate is None or candidate["kind"] not in ("shop_purchase", "proceed"):
+            raise ChoiceError(f"shop_plan action {aid[:80]!r} is not an offered shop action")
+        if candidate["kind"] == "proceed":
+            if i != len(plan) - 1:
+                raise ChoiceError("leaving the shop must be the last shop_plan action")
+            continue
+        details = candidate["details"]
+        if details.get("category") == "card_removal" and i != len(plan) - 1:
+            raise ChoiceError("card removal must end shop_plan; choose the card when its picker opens")
+        price = details.get("price")
+        if type(price) is not int or price < 0:
+            raise ChoiceError("shop_plan purchases require known nonnegative prices")
+        cost += price
+        potion_count += details.get("category") == "potion"
+    gold = (frame.facts.get("player") or {}).get("gold")
+    if cost and (type(gold) is not int or cost > gold):
+        raise ChoiceError("shop_plan total cost exceeds known current gold")
+    slots, potions = frame.facts.get("max_potion_slots"), frame.facts.get("potions")
+    if type(slots) is int and isinstance(potions, list) and potion_count > max(0, slots - len(potions)):
+        raise ChoiceError("shop_plan potion purchases exceed free potion slots")
+    return tuple(plan)
 
 
 def _route_plan(plan, frame, action_id):

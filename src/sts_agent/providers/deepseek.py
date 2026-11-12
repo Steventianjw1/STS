@@ -19,7 +19,7 @@ class DeepSeekTextModel:
     provider = "deepseek"
     is_scripted = False
 
-    def __init__(self, model: str | None, *, max_output_tokens: int = 4096,
+    def __init__(self, model: str | None, *, max_output_tokens: int = 16384,
                  timeout_s: float = 60.0, budget: UsageBudget | None = None,
                  reasoning_effort: str | None = None,
                  client: Any = None, clock: Callable[[], float] = time.monotonic):

@@ -1,35 +1,38 @@
-"""Run coordinator: the LLM chooses every gameplay action on supported screens.
+"""Run coordinator: LLM choices, with optional native Mentor ownership of whole fights.
 
 Loop per decision:
 
     observe -> wait until a supported screen is ready AND stable
             -> track encounter memory / combat outcomes
+            -> execute forced progress clicks without calling a model, otherwise
             -> refresh the strategic assessment if strategic facts changed
             -> build DecisionFrame -> LLM picks one action id (<= 1 corrective retry)
             -> record decision (before execution)
             -> re-observe; send only if the screen is unchanged and the binding still exists
             -> send ONCE -> wait for screen-specific resolution -> record outcome
 
-No heuristic fallback, no automatic gold/potion/reward handling: code only
-waits and observes. Ambiguous deliveries are inspected and never resent.
+No heuristic fallback for actual choices: optional reward batches and shop plans must be
+explicitly selected by the model. Ambiguous deliveries are inspected and never resent.
 Single-caller, synchronous.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import time
+from itertools import combinations
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from ..client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
 from ..config import Limits
 from ..route_risk import agent_loss_scale, node_class
 from ..strategic import StrategicSnapshot
-from .models import DecisionFrame
+from .models import Choice, DecisionFrame
 from .policy import LLMDecisionPolicy, model_identity
-from .screens import CAPABILITIES, MOD_REVISION, ScreenView, build_view
+from .screens import CAPABILITIES, MOD_REVISION, ScreenView, automatic_action, build_view
 
 # stop reasons (shared names with the baseline runner where they mean the same thing)
 STOP_COMBAT_ENDED = "combat_ended"
@@ -42,7 +45,6 @@ STOP_UNRESOLVED_ACTION = "unresolved_action"
 STOP_AMBIGUOUS_UNRESOLVED = "ambiguous_outcome_unresolved"
 STOP_REPEATED_REJECTIONS = "repeated_rejections"
 STOP_MAX_ACTIONS = "max_actions"
-STOP_MAX_ELAPSED = "max_elapsed"
 STOP_NO_PROGRESS = "no_progress"
 STOP_GAME_UNAVAILABLE = "game_unavailable"
 STOP_INTERRUPTED = "interrupted"
@@ -53,6 +55,7 @@ STOP_INVALID_MODEL_OUTPUT = "invalid_model_output"
 STOP_INPUT_TOO_LARGE = "decision_input_too_large"
 STOP_NO_ACTIONS = "no_actions_on_actionable_screen"
 STOP_INDEX_MISMATCH = "adapter_index_mismatch"
+STOP_AUTOBATTLE_FAILED = "autobattle_failed"
 
 LLM_PROVENANCE_LIVE = {"data_source": "agent_generated", "behavior": "llm_policy", "is_expert_demonstration": False,
                        "note": "Choices made by an LLM through this harness. Not human or expert play."}
@@ -100,6 +103,7 @@ class CoordStats:
     combats_started: int = 0
     search_decisions: int = 0
     search_misses: int = 0
+    autobattle_combats: int = 0
     blocked: set = field(default_factory=set)   # (view fingerprint, action_id)
 
 
@@ -110,19 +114,19 @@ _REWARD_KIND = {"gold": "gold_reward", "potion": "potion_reward", "relic": "reli
 
 
 class RunCoordinator:
-    def __init__(self, client, policy: LLMDecisionPolicy, *, planner=None, recorder=None, expert_stats=None,
+    def __init__(self, client, policy: LLMDecisionPolicy, *, planner=None, recorder=None, expert_stats=None, autobattle=None,
                  limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
-                 facts_source: str = "observed", objective: str, model_timeout_s: float = 0.0,
+                 facts_source: str = "observed", objective: str,
                  state_path=None, clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
                  log: Callable[[str], None] = print):
         if scope not in ("run", "combat", "step"):
             raise ValueError("scope must be run, combat or step")
         self.client, self.policy, self.planner, self.rec = client, policy, planner, recorder
         self.expert_stats = expert_stats
+        self.autobattle = autobattle
         self.lim = limits or Limits()
         self.scope, self.run_id, self.run_id_source = scope, run_id, run_id_source
         self.facts_source, self.objective = facts_source, objective
-        self.model_timeout_s = model_timeout_s
         self.clock, self.sleep, self.log = clock, sleep, log
         self.stats = CoordStats()
         self.session_start = clock()
@@ -142,6 +146,9 @@ class RunCoordinator:
         self.strat_facts = None
         self.pending_combat_finished = False
         self.last_planner_result = None
+        self.strat_route_key = None
+        self.energy_observation: dict | None = None
+        self.shop_entry: dict | None = None
         self.seq = 0
         self.last_combat_facts: dict | None = None   # shown on pickers that open during a fight
         self.incoming_changes: list = []             # this encounter: intent damage moved by the agent's own actions
@@ -160,6 +167,10 @@ class RunCoordinator:
         if self.rec:
             self.rec.raw(label, raw)
         view = build_view(raw)
+        maximum = (view.facts.get("player") or {}).get("max_energy")
+        if type(maximum) is int and maximum >= 0:
+            self.energy_observation = {"max_energy": maximum, "run": dict(view.facts.get("run") or {}),
+                                       "source": "observed player.max_energy"}
         if view.fingerprint != self._last_fp:
             self._last_fp = view.fingerprint
             self.last_progress = self.clock()
@@ -174,22 +185,26 @@ class RunCoordinator:
                 raise _Stop(STOP_GAME_UNAVAILABLE, str(e), self.last_view)
             return None
 
-    def _deadline(self) -> float:
-        return self.session_start + self.lim.max_elapsed_s
-
     def _check_global(self):
         now = self.clock()
-        if now >= self._deadline():
-            raise _Stop(STOP_MAX_ELAPSED, f"session exceeded {self.lim.max_elapsed_s}s", self.last_view)
         if now - self.last_progress >= self.lim.max_no_progress_s:
             raise _Stop(STOP_NO_PROGRESS, f"state unchanged for {self.lim.max_no_progress_s}s", self.last_view)
 
     def _wait_ready(self) -> ScreenView:
-        deadline = min(self.clock() + self.lim.ready_timeout_s, self._deadline())
+        deadline = self.clock() + self.lim.ready_timeout_s
         stable, prev = 0, None
         while True:
             self._check_global()
             v = self._observe_tolerant("wait_ready", deadline)
+            if v is not None and self.autobattle is not None:
+                status = self._autobattle_control("status", v)
+                if status.get("combat_in_progress"):
+                    self._delegate_autobattle(v)
+                    deadline = self.clock() + self.lim.ready_timeout_s
+                    stable, prev = 0, None
+                    continue
+                if status.get("mode") != "Off" or status.get("autoplay"):
+                    self._autobattle_control("off", v)
             if v is not None:
                 stable = stable + 1 if v.fingerprint == prev else 1
                 prev = v.fingerprint
@@ -201,6 +216,51 @@ class RunCoordinator:
                 raise _Stop(STOP_READY_TIMEOUT, f"no ready screen after {self.lim.ready_timeout_s}s "
                                                 f"(last: {v.kind if v else 'unreadable'})", v)
             self.sleep(self.lim.poll_interval_s)
+
+    def _autobattle_control(self, command, view):
+        try:
+            return self.autobattle.control(command)
+        except GameClientError as exc:
+            raise _Stop(STOP_AUTOBATTLE_FAILED, str(exc), view) from exc
+
+    def _delegate_autobattle(self, view):
+        """Yield the whole fight, including its selection screens, to native Autobattle."""
+        if self._restore_pending:
+            self._restore_pending = False
+            self._load_state(view)
+        if view.in_combat:
+            self._track_encounter(view)
+        self._autobattle_control("on", view)
+        self.log("combat: handing the fight to Spire Mentor Autobattle (no LLM combat actions)")
+        if self.rec:
+            self.rec.event("autobattle_started", {"source": "spire_mentor_autobattle", "encounter": view.encounter_key})
+        while True:
+            self._check_global()
+            status = self._autobattle_control("status", view)
+            if not status.get("combat_in_progress"):
+                self._autobattle_control("off", view)
+                after = self._observe("autobattle_finished")
+                if after.terminal:
+                    self._raise_if_stop(after)
+                self._finish_combat(after, "victory")
+                self.stats.autobattle_combats += 1
+                self._save_state()
+                if self.rec:
+                    self.rec.event("autobattle_finished", {"source": "spire_mentor_autobattle", "screen": after.kind})
+                self.log(f"combat: Autobattle finished; DeepSeek resumes on {after.kind}")
+                if self.scope in ("combat", "step"):
+                    raise _Stop(STOP_COMBAT_ENDED, "Spire Mentor Autobattle finished", after)
+                return
+            if status.get("mode") != "Advisor" or not status.get("autobattle") or not status.get("autoplay"):
+                raise _Stop(STOP_AUTOBATTLE_FAILED, "Mentor stopped Autobattle; no LLM combat fallback", view)
+            self.sleep(self.lim.poll_interval_s)
+            observed = self._observe_tolerant("autobattle", self.last_progress + self.lim.ready_timeout_s)
+            if observed is not None:
+                view = observed
+                if view.in_combat:
+                    self._track_encounter(view)
+                if view.terminal:
+                    self._raise_if_stop(view)
 
     def _raise_if_stop(self, v: ScreenView):
         if v.terminal:
@@ -342,7 +402,9 @@ class RunCoordinator:
         return {
             "run": {"character": run.get("character"), "difficulty": run.get("difficulty"), "act": run.get("act"),
                     "floor": run.get("floor"), "encounter_type": v.state_type},
-            "resources": {"hp": pl.get("hp"), "max_hp": pl.get("max_hp"), "gold": pl.get("gold"), "max_energy": None},
+            "resources": {"hp": pl.get("hp"), "max_hp": pl.get("max_hp"), "gold": pl.get("gold"),
+                          "max_energy": pl.get("max_energy"),
+                          "last_observed_max_energy": (self.energy_observation or {}).get("max_energy")},
             "deck": deck,
             "relics": relics, "potions": potions, "opportunities": opps,
             "recent_outcomes": {"items": list(self.recent_outcomes)},
@@ -354,8 +416,22 @@ class RunCoordinator:
         if (v.in_combat or self._fight_overlay(v)) and self.strat_revision > 0:
             return  # ordinary card plays never trigger a refresh; refresh after the combat ends
         facts = self._strategic_facts(v)
-        if self.strat_revision > 0 and facts == self.strat_facts and not self.pending_combat_finished:
-            return
+        route_key = ((facts["run"]["act"], facts["run"]["floor"],
+                      tuple((c["details"].get("col"), c["details"].get("row"))
+                            for c in v.candidates if c["kind"] == "choose_map_node"))
+                     if v.kind == "map" and sum(c["kind"] == "choose_map_node" for c in v.candidates) > 1 else None)
+        if self.strat_revision > 0 and not self.pending_combat_finished:
+            old = self.strat_facts
+            relics = lambda f: [(r["id"], r["description"]) for r in (f.get("relics") or {}).get("items", [])]
+            meaningful = ((facts["deck"] is not None and facts["deck"] != old["deck"])
+                          or (facts["relics"] is not None and relics(facts) != relics(old))
+                          or facts["run"]["act"] != old["run"]["act"]
+                          or facts["resources"]["max_hp"] != old["resources"]["max_hp"]
+                          or (facts["resources"]["max_energy"] is not None and
+                              facts["resources"]["max_energy"] != old["resources"]["max_energy"])
+                          or (route_key is not None and route_key != self.strat_route_key))
+            if not meaningful:
+                return
         reasons = _change_reasons(self.strat_facts, facts, initial=self.strat_revision == 0,
                                   combat_finished=self.pending_combat_finished)
         self.strat_revision += 1
@@ -373,6 +449,8 @@ class RunCoordinator:
         self.last_progress = self.clock()   # model latency is not a game stall
         self.last_planner_result = result
         self.strat_facts, self.pending_combat_finished = facts, False
+        if route_key is not None:
+            self.strat_route_key = route_key
         if result.model_called:
             self.stats.strategic_updates += 1
         if result.status == "failed":
@@ -397,7 +475,14 @@ class RunCoordinator:
         base = {"label": "REVISABLE MODEL JUDGMENT - NOT FACT", "based_on_revision": a.input_revision,
                 "snapshot_id": a.snapshot_id, "content": a.content}
         if pr is not None and pr.current_assessment is a:
-            status = "current_in_combat_not_refreshed" if v.in_combat else "current"
+            if v.in_combat:
+                status = "current_in_combat_not_refreshed"
+            elif self._strategic_facts(v) == self.strat_facts:
+                status = "current"
+            else:
+                status = "reused_between_refreshes"
+                base["note"] = ("Reused through routine resource/screen changes. Current facts and candidates override "
+                                "old HP, gold, potions and opportunities; assess newly revealed offers directly.")
         else:
             status = "historical"
             base["note"] = ("The latest strategic update failed or facts changed; this assessment is from an older "
@@ -406,7 +491,9 @@ class RunCoordinator:
 
     # ---------------------------------------------------------- one decision
     def _frame(self, v: ScreenView) -> DecisionFrame:
-        cands = [c for c in v.candidates if (v.fingerprint, c["action_id"]) not in self.stats.blocked]
+        cands = [c for c in v.candidates if (v.fingerprint, c["action_id"]) not in self.stats.blocked
+                 and not any((v.fingerprint, aid) in self.stats.blocked
+                             for aid in v.bindings[c["action_id"]].get("steps", []))]
         blocked = [c["action_id"] for c in v.candidates if (v.fingerprint, c["action_id"]) in self.stats.blocked]
         lims = list(v.limitations)
         if blocked:
@@ -416,11 +503,22 @@ class RunCoordinator:
         if self.expert_stats is not None:
             started = self.clock()
             support = self.expert_stats.for_view(
-                v, budget_s=max(0.0, self._deadline() - started - self.model_timeout_s),
-                route_state={"plan": self.route_plan, "outcomes": self.route_outcomes})
+                v, route_state={"plan": self.route_plan, "outcomes": self.route_outcomes})
             self.last_progress += self.clock() - started  # evidence latency is not a game stall
             self._note_support(v, support)
         facts = v.facts
+        if self.energy_observation is not None:
+            facts = {**facts, "energy_observation": {**self.energy_observation,
+                     "note": "Last observed maximum, not current energy or guaranteed future capacity. "
+                             "Current max_energy remains unknown when null; later effects can change capacity."}}
+        mechanics = _card_zone_constraints(v)
+        if mechanics:
+            support = {**(support or {}), "card_zone_constraints": mechanics}
+        if v.kind == "shop":
+            if self.shop_entry is None or self.shop_entry["encounter_key"] != v.encounter_key:
+                self.shop_entry = {"encounter_key": v.encounter_key,
+                                   "gold": (v.facts.get("player") or {}).get("gold")}
+            support = {**(support or {}), "shop_budget": _shop_packages(v, self.shop_entry["gold"])}
         overlay = self._fight_overlay(v)
         if overlay:
             lims.append("This picker opened during a fight that is still in progress: choose with the enemy intent, "
@@ -473,13 +571,35 @@ class RunCoordinator:
             self._restore_pending = False
             self._load_state(v)
         self._track_encounter(v)
+        # Forced progress needs neither strategy, decision support nor a model call.
+        # Classify before rejection filtering so a rejected alternative cannot
+        # turn a real choice into an automatic click.
+        cand = automatic_action(v)
+        if cand is not None:
+            aid = cand["action_id"]
+            if (v.fingerprint, aid) in self.stats.blocked:
+                raise _Stop(STOP_REPEATED_REJECTIONS, "forced progress action was rejected in this state", v)
+            source = "single_map_destination" if v.kind == "map" else "forced_progress"
+            reason = ("Only one map destination is available." if v.kind == "map"
+                      else "Confirm the selected cards." if v.kind == "card_select" and
+                      v.facts["screen_details"].get("preview_showing")
+                      else "Only one progress action is available.")
+            ch = Choice(frame_id="", action_id=aid, reason=reason, turn_intent="")
+            binding = v.bindings[aid]
+            self.seq += 1
+            self.stats.decisions += 1
+            if self.rec:
+                self.rec.record("automatic_decision", seq=self.seq, decision_source=source,
+                                facts_source=self.facts_source, observation_fingerprint=v.fingerprint,
+                                candidate=cand, binding=binding, reason=ch.reason)
+            self.log(f"[{self.seq}] {v.kind}: {cand['description']} - {ch.reason} Skipping LLM.")
+            self._execute_action(self.seq, cand, ch, binding, v)
+            return
         self._maybe_refresh_strategy(v)
         frame = self._frame(v)
         if not frame.candidates:
             raise _Stop(STOP_NO_ACTIONS if not v.candidates else STOP_REPEATED_REJECTIONS,
                         f"ready {v.kind} screen offers no actions", v)
-        if self._deadline() - self.clock() < self.model_timeout_s:
-            raise _Stop(STOP_MAX_ELAPSED, "not enough session time left for a model call", v)
 
         self.seq += 1
         seq = self.seq
@@ -502,7 +622,8 @@ class RunCoordinator:
                             choice=None if not result.ok else {"action_id": result.choice.action_id,
                                                                "reason": result.choice.reason,
                                                                "turn_intent": result.choice.turn_intent,
-                                                               "route_plan": result.choice.route_plan},
+                                                               "route_plan": result.choice.route_plan,
+                                                               "shop_plan": result.choice.shop_plan},
                             attempts=result.attempts, error_kind=result.error_kind, diagnostic=result.diagnostic,
                             history_dropped=result.history_dropped, support_trim=result.support_trim)
         if not result.ok:
@@ -520,6 +641,100 @@ class RunCoordinator:
             self.route_plan = _stored_route_plan(ch.route_plan, frame, v, len(self.route_outcomes))
         self.log(f"[{seq}] {v.kind}: {cand['description']} - {ch.reason}")
 
+        if v.kind == "shop" and ch.shop_plan is not None:
+            self._execute_shop_plan(seq, ch, frame, v)
+        elif cand["kind"] == "reward_batch":
+            self._execute_reward_batch(seq, ch, binding, v)
+        else:
+            self._execute_action(seq, cand, ch, binding, v)
+
+    def _execute_shop_plan(self, seq, ch, frame, view):
+        """Execute one model's ordered basket, observing and validating every purchase."""
+        def signature(item):
+            # Sold entries can lose their model/description after the purchase resolves.
+            keys = ("index", "category", "is_stocked") if item.get("is_stocked") is False else item
+            return {k: item[k] for k in keys if k != "can_afford"}
+
+        def stock(v):
+            return [signature(item) for item in v.facts["screen_details"]["items"]]
+
+        expected_stock = stock(view)
+        expected_gold = (view.facts.get("player") or {}).get("gold")
+        current = view
+        for number, aid in enumerate(ch.shop_plan, 1):
+            if (current.kind != "shop" or current.encounter_key != view.encounter_key
+                    or not current.ready or stock(current) != expected_stock
+                    or (current.facts.get("player") or {}).get("gold") != expected_gold):
+                self._outcome(seq, "shop_plan_stopped_state_changed", None, current,
+                              "shop, prices, stock or gold changed unexpectedly; unexecuted actions abandoned")
+                return
+            step = next((c for c in current.candidates if c["action_id"] == aid), None)
+            if (step is None or step != frame.candidate(aid)
+                    or (current.fingerprint, aid) in self.stats.blocked
+                    or current.bindings.get(aid) != frame.bindings[aid]):
+                self._outcome(seq, "shop_plan_stopped_unavailable", None, current,
+                              "next planned shop action changed or is unavailable; unexecuted actions abandoned")
+                return
+            if self.rec:
+                self.rec.event("shop_plan_step", {"seq": seq, "step": number, "action_id": aid,
+                                                  "binding": current.bindings[aid]})
+            if not self._execute_action(seq, step, replace(ch, action_id=aid, shop_plan=None),
+                                        current.bindings[aid], current):
+                return
+            if step["kind"] == "shop_purchase":
+                details = step["details"]
+                for i, item in enumerate(expected_stock):
+                    if item["index"] == details["index"]:
+                        expected_stock[i] = signature({**item, "is_stocked": False})
+                if type(expected_gold) is int:
+                    expected_gold -= details["price"]
+            current = self.last_view
+
+    def _execute_reward_batch(self, seq, ch, binding, view):
+        """One model choice, with individually observed and validated game actions.
+
+        Only gold may precede the last step. Match the remaining ordered rewards
+        without their shifting UI indices, then bind each step to its current index.
+        Any unexpected change or uncertain delivery abandons the remaining steps.
+        """
+        remaining = list(view.facts["screen_details"]["items"])
+        steps = {c["action_id"]: c for c in view.candidates}
+        current = view
+
+        def signatures(items):
+            return [{k: val for k, val in x.items() if k != "index"} for x in items]
+
+        for number, aid in enumerate(binding["steps"], 1):
+            original = steps[aid]
+            items = (current.facts.get("screen_details") or {}).get("items", [])
+            if (current.kind != "rewards" or current.encounter_key != view.encounter_key
+                    or signatures(items) != signatures(remaining)):
+                self._outcome(seq, "batch_stopped_state_changed", None, current,
+                              "remaining rewards changed unexpectedly; unexecuted steps abandoned")
+                return
+            if original["kind"] == "claim_reward":
+                position = remaining.index(original["details"])
+                current_id = f"reward_{items[position]['index']}"
+            else:
+                position, current_id = None, aid
+            step = next((c for c in current.candidates if c["action_id"] == current_id), None)
+            if step is None or (current.fingerprint, current_id) in self.stats.blocked:
+                self._outcome(seq, "batch_stopped_unavailable", None, current,
+                              "next reward action is unavailable; unexecuted steps abandoned")
+                return
+            if self.rec:
+                self.rec.event("reward_batch_step", {"seq": seq, "batch_action_id": ch.action_id,
+                                                     "step": number, "action_id": current_id,
+                                                     "binding": current.bindings[current_id]})
+            # Each step has its own outcome/history entry under the batch decision's seq.
+            if not self._execute_action(seq, step, replace(ch, action_id=current_id),
+                                        current.bindings[current_id], current):
+                return
+            if position is not None:
+                remaining.pop(position)
+            current = self.last_view
+
+    def _execute_action(self, seq, cand, ch, binding, v) -> bool | None:
         # Fresh validation: same screen state and the same binding must still exist.
         try:
             fresh = self._observe("validate")
@@ -532,9 +747,10 @@ class RunCoordinator:
             self._remember(seq, cand, ch, "stale_not_sent", fresh)
             self._save_state()
             return
-        if self.clock() >= self._deadline():
-            self._outcome(seq, "not_sent_deadline", None, fresh, "session deadline reached before sending")
-            raise _Stop(STOP_MAX_ELAPSED, "deadline reached before sending", fresh)
+        max_actions = self.lim.max_run_actions if self.scope == "run" else self.lim.max_actions
+        if self.stats.actions_sent >= max_actions:
+            self._outcome(seq, "not_sent_action_limit", None, fresh, "action limit reached before sending")
+            raise _Stop(STOP_MAX_ACTIONS, f"reached {max_actions} actions", fresh)
 
         t0 = self.clock()
         self.stats.actions_sent += 1
@@ -566,6 +782,7 @@ class RunCoordinator:
             raise _Stop(STOP_UNRESOLVED_ACTION, f"{ch.action_id} accepted but did not resolve ({verdict})", post)
         self._after_resolved(seq, cand, ch, binding, fresh, post, verdict)
         self._save_state()
+        return True
 
     def _after_resolved(self, seq, cand, ch, binding, pre, post, verdict):
         self.stats.actions_resolved += 1
@@ -597,7 +814,7 @@ class RunCoordinator:
     def _wait_resolution(self, pre: ScreenView, resolution: str) -> tuple[ScreenView, str]:
         timeout = (self.lim.end_turn_resolution_timeout_s if resolution == "end_turn"
                    else self.lim.play_resolution_timeout_s)
-        deadline = min(self.clock() + timeout, self._deadline())
+        deadline = self.clock() + timeout
         changed, stable, prev, last = False, 0, None, pre
         while True:
             v = self._observe_tolerant("resolve", deadline)
@@ -662,6 +879,7 @@ class RunCoordinator:
                 "risk_ref": self.risk_ref, "rest_checkpoints": self.rest_checkpoints,
                 "coverage": self.coverage, "coverage_seen": sorted(list(k) for k in self._coverage_seen),
                 "last_combat_facts": self.last_combat_facts,
+                "energy_observation": self.energy_observation, "shop_entry": self.shop_entry,
                 "combat": None if c is None else {"key": c.key, "encounter_type": c.encounter_type,
                                                   "start_hp": c.start_hp, "rounds": c.rounds,
                                                   "potions_used": c.potions_used, "act": c.act, "floor": c.floor}}
@@ -702,6 +920,10 @@ class RunCoordinator:
                 self.rec.event("run_state_not_restored", {"reason": why, "saved": saved, "observed": here})
             return
         self.route_plan = st.get("route_plan")
+        # A fresh API observation takes precedence over persisted energy information.
+        if self.energy_observation is None:
+            self.energy_observation = st.get("energy_observation")
+        self.shop_entry = st.get("shop_entry")
         self.route_outcomes = list(st.get("route_outcomes") or [])
         self.recent_outcomes.extend(st.get("recent_outcomes") or [])
         self.hallway_done = {int(k): n for k, n in (st.get("hallway_done") or {}).items() if str(k).isdigit()}
@@ -764,6 +986,13 @@ class RunCoordinator:
             stop, detail, final = s.reason, s.detail, s.view or self.last_view
         except KeyboardInterrupt:
             stop, detail, final = STOP_INTERRUPTED, "Ctrl+C", self.last_view
+        finally:
+            if self.autobattle is not None:
+                try:
+                    self.autobattle.control("off")
+                except GameClientError as exc:
+                    stop = STOP_AUTOBATTLE_FAILED
+                    detail = f"{detail}; could not turn Mentor off: {exc}".lstrip("; ")
         self._save_state()
         return self.summary(stop, detail, final)
 
@@ -818,6 +1047,7 @@ class RunCoordinator:
             "strategic_failures": s.strategic_failures, "combats_finished": s.combats_finished,
             "evaluation": self._evaluation(),
             "combat_search_decisions": s.search_decisions, "combat_search_misses": s.search_misses,
+            "autobattle_combats": s.autobattle_combats,
             "recent_outcomes": list(self.recent_outcomes),
             "model_usage": budget.summary() if budget is not None else None,
             "elapsed_s": round(self.clock() - self.session_start, 2),
@@ -839,6 +1069,57 @@ def _clip(s, n=1000):
 def _last_call(model):
     lc = getattr(model, "last_call", None)
     return lc.to_dict() if hasattr(lc, "to_dict") else None
+
+def _card_zone_constraints(view: ScreenView) -> dict | None:
+    """Only explicit standalone Exhaust text establishes self-exhaust here."""
+    cards = list(view.facts.get("deck") or [])
+    for candidate in view.candidates:
+        d = candidate.get("details") or {}
+        if d.get("card_name"):
+            cards.append({"name": d["card_name"], "description": d.get("card_description")})
+        elif d.get("name") and d.get("description"):
+            cards.append(d)
+    exhausting = sorted({c["name"] for c in cards if c.get("name") and
+                         re.search(r"(?:^|[.!?]\s*)Exhaust\s*(?:[.!](?:\s|$)|$)", c.get("description") or "")})
+    retrieval = sorted({c["name"] for c in cards if c.get("name") and
+                        re.search(r"from (?:your |the )?Discard Pile", c.get("description") or "", re.I)})
+    if not exhausting and not retrieval:
+        return None
+    return {"source": "explicit visible card descriptions; partial text checks, not a combat simulation",
+            "self_exhausting_after_play": exhausting, "retrieves_from_discard": retrieval,
+            "constraint": "A self-exhausting card goes to exhaust after play; discard-only retrieval cannot "
+                          "recover it afterward. Exhausting another card does not imply self-exhaust. "
+                          "Unlisted interactions remain unknown; inspect their text."}
+
+
+def _shop_packages(view: ScreenView, entry_gold) -> dict:
+    """Partial basket comparisons; shop_plan can select any feasible offered sequence."""
+    gold = (view.facts.get("player") or {}).get("gold")
+    result = {"entry_gold": entry_gold, "current_gold": gold,
+              "leave_now": {"action_id": "proceed", "gold_remaining": gold},
+              "scope": "current prices/remaining stock, up to 3 purchases; no utility ranking; "
+                       "shop_plan may include more than 3 purchases and need not match a listed package; "
+                       "execution rechecks each step and abandons the plan if prices or stock change",
+              "packages": [], "truncated": False}
+    if type(gold) is not int:
+        return result
+    items = [c for c in view.candidates if c["kind"] == "shop_purchase"
+             and type(c["details"].get("price")) is int and c["details"]["price"] >= 0]
+    slots = view.facts.get("max_potion_slots")
+    free_slots = max(0, slots - len(view.facts.get("potions") or [])) if type(slots) is int else None
+    for count in range(1, min(3, len(items)) + 1):
+        for package in combinations(items, count):
+            cost = sum(c["details"]["price"] for c in package)
+            potions = sum(c["details"].get("category") == "potion" for c in package)
+            if cost > gold or (free_slots is not None and potions > free_slots):
+                continue
+            if len(result["packages"]) >= 64:
+                result["truncated"] = True
+                return result
+            result["packages"].append({"action_ids": [c["action_id"] for c in package],
+                                       "total_cost": cost, "gold_remaining": gold - cost})
+    return result
+
 
 def _change_reasons(old, new, *, initial, combat_finished) -> list:
     if initial or old is None:

@@ -11,7 +11,7 @@ Safety properties:
 * An action whose outcome is ambiguous (timeout / dropped connection / 5xx)
   is never resent. The runner inspects the game: if the state changed it
   continues from the new state; if not, it stops with a diagnostic.
-* Every wait is bounded (ready, resolution, no-progress, total elapsed,
+* Every wait is bounded (ready, resolution, no-progress,
   action count) and Ctrl+C stops cleanly with the trace closed.
 """
 from __future__ import annotations
@@ -38,7 +38,6 @@ STOP_UNRESOLVED_ACTION = "unresolved_action"
 STOP_AMBIGUOUS_UNRESOLVED = "ambiguous_outcome_unresolved"
 STOP_REPEATED_REJECTIONS = "repeated_rejections"
 STOP_MAX_ACTIONS = "max_actions"
-STOP_MAX_ELAPSED = "max_elapsed"
 STOP_NO_PROGRESS = "no_progress"
 STOP_GAME_UNAVAILABLE = "game_unavailable"
 STOP_INTERRUPTED = "interrupted"
@@ -120,13 +119,8 @@ class Runner:
         self.last_obs = obs
         return obs
 
-    def _session_deadline(self) -> float:
-        return self.session_start + self.lim.max_elapsed_s
-
     def _check_global(self) -> None:
         now = self.clock()
-        if now >= self._session_deadline():
-            raise _Stop(STOP_MAX_ELAPSED, f"session exceeded {self.lim.max_elapsed_s}s", self.last_obs)
         if now - self.last_progress >= self.lim.max_no_progress_s:
             raise _Stop(STOP_NO_PROGRESS, f"state unchanged for {self.lim.max_no_progress_s}s", self.last_obs)
 
@@ -146,7 +140,7 @@ class Runner:
         Returns a ready observation. Raises ``_Stop`` for terminal or
         unsupported states and for timeouts.
         """
-        deadline = min(self.clock() + (timeout_s or self.lim.ready_timeout_s), self._session_deadline())
+        deadline = self.clock() + (timeout_s or self.lim.ready_timeout_s)
         stable, prev_fp = 0, None
         while True:
             self._check_global()
@@ -185,7 +179,7 @@ class Runner:
         end_turn: wait until a new player round is ready, or combat ends.
         """
         timeout = self.lim.end_turn_resolution_timeout_s if kind == ACTION_END_TURN else self.lim.play_resolution_timeout_s
-        deadline = min(self.clock() + timeout, self._session_deadline())
+        deadline = self.clock() + timeout
         pre_round = (pre.get("combat") or {}).get("round")
         changed = False
         stable, prev_fp = 0, None
