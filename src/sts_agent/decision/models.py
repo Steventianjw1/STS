@@ -3,7 +3,9 @@
 A ``DecisionFrame`` is everything the model may see for one choice, plus the
 private execution bindings (raw HTTP payloads) that the model never sees. The
 ``frame_id`` is computed in code over the whole decision context, including
-bindings, and the model must echo it.
+bindings. The model is not asked to echo it: a reply is bound to the frame that
+was sent (one synchronous call per frame), and the coordinator re-checks the
+screen fingerprint and binding before sending anything to the game.
 """
 from __future__ import annotations
 
@@ -160,7 +162,10 @@ def parse_choice(text: Any, frame: DecisionFrame) -> Choice:
         raise ChoiceError(f"malformed JSON: {e}") from None
     if not isinstance(data, dict):
         raise ChoiceError("response must be a JSON object")
-    want = {"frame_id", "action_id", "reason", "turn_intent"}
+    want = {"action_id", "reason", "turn_intent"}
+    # An echoed frame_id is tolerated and ignored (older prompts asked for it; copying a
+    # long opaque id only produced avoidable rejections).
+    data.pop("frame_id", None)
     is_map = (frame.screen or {}).get("kind") == "map"
     if is_map and "route_plan" in data:
         want = want | {"route_plan"}
@@ -172,8 +177,6 @@ def parse_choice(text: Any, frame: DecisionFrame) -> Choice:
     for k in want - {"route_plan"}:
         if not isinstance(data[k], str):
             raise ChoiceError(f"{k} must be a string")
-    if data["frame_id"] != frame.frame_id:
-        raise ChoiceError("frame_id does not match the current frame")
     if frame.candidate(data["action_id"]) is None:
         raise ChoiceError(f"action_id {data['action_id'][:80]!r} was not offered in this frame")
     reason = data["reason"].strip()

@@ -10,9 +10,9 @@ import sqlite3
 import time
 import urllib.parse
 
-from .expert_stats import StatsUnavailable, _character, _count, _id, _top_contributors
+from .expert_stats import StatsUnavailable, _character, _count, _id, _top_contributors, _withhold
 
-NORMALIZER_VERSION = 3  # 2: per-floor route rows; 3: ancient offers
+NORMALIZER_VERSION = 4  # 2: per-floor route rows; 3: ancient offers; 4: floor-scoped identity issues
 
 
 def _act_id(value):
@@ -99,9 +99,12 @@ def normalize_run(raw: dict, *, character: str, snapshots_out: dict | None = Non
     """Reconstruct pre-floor card lifetimes, not final-deck co-occurrence.
 
     Final survivors plus explicit removals describe lifetimes. Gains validate
-    their acquisition counts; upgrades are replayed forward. Unknown metadata,
-    unmatched gains, transforms without lifetimes, and ambiguous upgrades are
-    retained as issues. Only complete card-identity contexts enter similarity.
+    their acquisition counts; upgrades are replayed forward. Unknown metadata and
+    transforms without lifetimes are run-wide issues. A gained card that has no
+    lifetime left the deck at an unknown later floor, so it only spoils the deck
+    contexts after that gain. A card whose own record gives its acquisition floor
+    but which has no gain record (event, relic or other source) keeps a known
+    lifetime and is only noted. Only complete card-identity contexts enter similarity.
     """
     players, acts = raw.get("players"), raw.get("map_point_history")
     if (not isinstance(players, list) or len(players) != 1 or not isinstance(players[0], dict)
@@ -144,17 +147,26 @@ def normalize_run(raw: dict, *, character: str, snapshots_out: dict | None = Non
         for card in gained:
             if _count(card.get("current_upgrade_level", 0)) is None:
                 issues.add("unknown_acquired_upgrade_level")
+    transforms = "transformation_lifetimes_unverified" in issues
+    notes, lost_after = set(), None   # lost_after: first floor whose gain has no lifetime
     for floor, _, stats, _ in floors:
         if floor > 1:
             actual = Counter(_id(c.get("id")) for c in stats.get("cards_gained", []))
             expected = Counter(c["id"] for c in lives if c["born"] == floor)
-            if actual != expected:
-                issues.add("gains_do_not_reconcile_with_lifetimes")
+            if actual - expected:
+                lost_after = floor if lost_after is None else min(lost_after, floor)
+            if expected - actual:
+                if transforms:
+                    issues.add("gains_do_not_reconcile_with_lifetimes")
+                else:
+                    notes.add("card_added_without_gain_record_lifetime_known")
     snapshots = {}
     upgrade_issues = set()
     for floor, _, stats, _ in floors:
         present = [c for c in lives if c["born"] is not None and c["born"] < floor <= c["end"]]
-        context_issues = sorted(issues | ({"initial_room_deck_unknown"} if floor == 1 else set()))
+        context_issues = sorted(issues | ({"initial_room_deck_unknown"} if floor == 1 else set())
+                                | ({"gained_card_without_lifetime_earlier"}
+                                   if lost_after is not None and floor > lost_after else set()))
         snapshots[floor] = {
             "cards": [{"id": c["id"], "upgrade_level": c["upgrade_level"]} for c in present],
             "identity_complete": not context_issues,
@@ -177,10 +189,14 @@ def normalize_run(raw: dict, *, character: str, snapshots_out: dict | None = Non
             cid = _id(item.get("id") if isinstance(item, dict) else item)
             eligible = [c for c in lives if c["id"] == cid and c["born"] is not None
                         and c["born"] <= floor < c["end"]]
-            if len(eligible) == 1:
-                eligible[0]["upgrade_level"] += 1
-            else:
+            if not eligible:
                 upgrade_issues.add("ambiguous_upgrade_identity")
+                continue
+            # Copies of one card are interchangeable while they share a lifetime: upgrade the
+            # least-upgraded one. Only copies that leave the deck at different floors are ambiguous.
+            if len({c["end"] for c in eligible}) > 1:
+                upgrade_issues.add("ambiguous_upgrade_identity")
+            min(eligible, key=lambda c: (c["upgrade_level"], -c["end"]))["upgrade_level"] += 1
     if snapshots_out is not None:
         snapshots_out.update(snapshots)
     decisions = []
@@ -225,7 +241,12 @@ def normalize_run(raw: dict, *, character: str, snapshots_out: dict | None = Non
                 else:
                     issues.add("invalid_purchase_records")
                 if entity_type == "cards" and stats.get("cards_gained") and "bought_cards" not in stats:
-                    issues.add("shop_card_gain_purchase_attribution_unknown")
+                    # No purchase list: a card gained on a shop floor that was on the shelf was bought.
+                    gained_ids = {_id(c.get("id")) for c in stats["cards_gained"] if isinstance(c, dict)}
+                    for eid in gained_ids & set(seen):
+                        seen[eid] = 1
+                    if gained_ids - set(seen):
+                        issues.add("shop_card_gain_purchase_attribution_unknown")
             for eid, chosen in seen.items():
                 decisions.append({**common, "kind": "shop", "entity_type": entity_type,
                                   "entity_id": eid, "event_id": "", "chosen": chosen})
@@ -237,14 +258,16 @@ def normalize_run(raw: dict, *, character: str, snapshots_out: dict | None = Non
             title = choice.get("title") if isinstance(choice, dict) else None
             if not isinstance(title, dict) or title.get("table") != "events":
                 continue  # Ancient relic titles aren't ordinary event options.
-            match = re.fullmatch(r"([A-Z0-9_]+)(?:\.pages\.[A-Z0-9_]+)?\.options\.([A-Z0-9_]+)\.title",
+            match = re.fullmatch(r"([A-Z0-9_]+)(?:\.pages\.[A-Z0-9_]+)*\.options\.([A-Z0-9_]+)\.title",
                                  str(title.get("key", "")), re.I)
             if match:
                 decisions.append({**common, "kind": "event", "entity_type": "events",
                                   "event_id": match[1].upper(), "entity_id": match[2].upper(), "chosen": 1})
             else:
                 issues.add("unmatched_event_option")
-    return decisions, sorted(issues | upgrade_issues)
+    if lost_after is not None:
+        notes.add("gained_card_without_lifetime")
+    return decisions, sorted(issues | upgrade_issues | notes)
 
 
 def _similarity(cards, target):
@@ -523,8 +546,11 @@ class RunHistoryIndex:
         numerator, denominator = sum(c[0] for c in contributions.values()), len(selected)
         top, other = _top_contributors([{"username": u, "numerator": c[0], "denominator": c[1]}
                                         for u, c in contributions.items()])
-        return {"status": "available", "metric": option["metric"], "numerator": numerator,
+        rung = chosen_scope["level"] + ("+deck" if chosen_scope["deck_conditioned"] else "")
+        return _withhold({"status": "available", "metric": option["metric"], "numerator": numerator,
                 "denominator": denominator, "rate_pct": round(numerator / denominator * 100, 2),
+                "selected_rung": rung, "rung_qualifies": denominator >= self.config.min_context_samples,
+                "largest_contributor_share_pct": round(max(c[1] for c in contributions.values()) / denominator * 100, 1),
                 "scope": {**chosen_scope, "game_mode": "standard", "context_basis": "before_floor",
                           "similarity": "base_card_multiset_jaccard", "similarity_min": self.config.deck_similarity_min},
                 "sparse": denominator < self.config.min_context_samples,
@@ -537,4 +563,5 @@ class RunHistoryIndex:
                 "candidate_contexts": len(rows), "complete_identity_contexts": complete,
                 "incomplete_identity_contexts": len(rows) - complete,
                 "normalization_issues": sorted({i for r in selected for i in json.loads(r["run_issues"])}),
-                "selected_context_issues": sorted({i for r in selected for i in r["context"]["issues"]})}
+                "selected_context_issues": sorted({i for r in selected for i in r["context"]["issues"]})},
+                self.config.min_context_samples)

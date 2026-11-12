@@ -187,7 +187,9 @@ def labels(options):
     best("removes_most_cards", lambda o: o["effects"].get("removes_cards") if isinstance(o["effects"].get("removes_cards"), int) else None)
     best("best_deck_archetype_fit", lambda o: max([f["deck_core_share"] or 0 for f in o["archetype_fit"]], default=None))
     best("highest_community_lift", lambda o: (o.get("community") or {}).get("lift"), positive=False)
-    best("safest_route_outlook", lambda o: (o.get("route_outlook") or {}).get("safest_bad_case_min_hp_pct"), positive=False)
+    best("safest_route_outlook",
+         lambda o: -x if (x := (o.get("route_outlook") or {}).get("lowest_death_risk_before_boss_pct")) is not None else None,
+         positive=False)
     best("best_boss_arrival_outlook",
          lambda o: (o.get("route_outlook") or {}).get("best_expected_boss_arrival_hp_pct"), positive=False)
     best("most_taken_by_experts_when_offered",

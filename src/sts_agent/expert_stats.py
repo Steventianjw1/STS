@@ -96,6 +96,96 @@ def _top_contributors(rows):
                                       "denominator": sum(r["denominator"] for r in rest)} if rest else None)
 
 
+def evidence_strength(denominator, players, min_samples):
+    """Whether a pooled count supports quoting a rate at all."""
+    if not denominator:
+        return "none"
+    if denominator < min_samples:
+        return "insufficient_sample"
+    return "single_contributor" if players < 2 else "adequate"
+
+
+def _withhold(row, min_samples):
+    """Keep the counts; quote ``rate_pct`` only for an adequate, multi-player sample."""
+    strength = evidence_strength(row.get("denominator"), row.get("contributing_players") or 0, min_samples)
+    row["evidence_strength"] = strength
+    if strength != "adequate" and row.get("rate_pct") is not None:
+        row["rate_pct"] = None
+        row["rate_withheld"] = ("too few observations or a single contributing player: read the counts as "
+                                f"anecdote, not as a rate (needs >= {min_samples} observations from >= 2 players)")
+    return row
+
+
+def _loose_title(value):
+    """Title without numbers, punctuation and bracketed variables, for tolerant option matching."""
+    return " ".join(re.sub(r"[^a-z ]+", " ", _title(value)).split())
+
+
+def match_event_option(details, exact, loose_index):
+    """(option_id, how) for one observed event option; (None, None) when nothing matches uniquely."""
+    option_id = _id(details.get("option_id"))
+    if option_id:
+        return option_id, "mod_option_id"
+    title = details.get("title")
+    matches = exact.get(_title(title), set()) - {None}
+    if len(matches) == 1:
+        return next(iter(matches)), "exact_title"
+    loose = _loose_title(title)
+    if len(loose) >= 4:
+        matches = loose_index.get(loose, set()) - {None}
+        if len(matches) == 1:
+            return next(iter(matches)), "title_without_numbers"
+        partial = set()
+        for other, ids in loose_index.items():
+            if len(other) >= 4 and (other in loose or loose in other):
+                partial |= ids - {None}
+        if len(partial) == 1:
+            return next(iter(partial)), "unique_partial_title"
+    return None, None
+
+
+def coverage_summary(options, min_samples):
+    """How far each option's evidence got: identifier matched, ladder rung reached, rate quotable."""
+    out = {"options": len(options), "identifier_matched": 0, "profile_rate_quoted": 0, "history_available": 0,
+           "history_rate_quoted": 0, "qualifying_any_rung": 0, "qualifying_nearby_floor": 0,
+           "qualifying_deck_matched": 0, "single_contributor": 0, "selected_rung": {},
+           "min_samples": min_samples}
+    for o in options:
+        out["identifier_matched"] += o.get("reason") != "unmatched_identifier_or_unsupported_action"
+        out["profile_rate_quoted"] += o.get("rate_pct") is not None
+        h = o.get("history_context") or {}
+        if h.get("status") != "available":
+            out["selected_rung"]["none"] = out["selected_rung"].get("none", 0) + 1
+            continue
+        out["history_available"] += 1
+        out["history_rate_quoted"] += h.get("rate_pct") is not None
+        rung = h.get("selected_rung") or "unknown"
+        out["selected_rung"][rung] = out["selected_rung"].get(rung, 0) + 1
+        out["single_contributor"] += h.get("contributing_players") == 1
+        if h.get("rung_qualifies"):
+            out["qualifying_any_rung"] += 1
+            out["qualifying_nearby_floor"] += rung.startswith("nearby_floor")
+            out["qualifying_deck_matched"] += rung.endswith("+deck")
+    return out
+
+
+def _ranked_draft(rows):
+    """Offer-local rank and gap; the raw number is renamed so it is not read as a lift or a rate."""
+    def num(r):
+        v = r.get("score")
+        return v if type(v) in (int, float) else None
+    scored = sorted((r for r in rows if num(r) is not None), key=lambda r: -num(r))
+    out = []
+    for i, r in enumerate(scored):
+        nxt = num(scored[i + 1]) if i + 1 < len(scored) else None
+        out.append({"id": r.get("id"), "rank": i + 1, "of": len(scored),
+                    "composite_score_uncalibrated": num(r),
+                    "gap_to_next": None if nxt is None else round(num(r) - nxt, 4),
+                    **{k: r[k] for k in ("base", "reasons") if k in r}})
+    return out + [{"id": r.get("id"), "rank": None, "composite_score_uncalibrated": None}
+                  for r in rows if num(r) is None]
+
+
 def _iso(stamp):
     return datetime.fromtimestamp(stamp, timezone.utc).isoformat()
 
@@ -340,6 +430,7 @@ class ExpertDecisionStats:
                                                                      floor=run.get("floor"), act=run.get("act"), deck=deck)
             except (OSError, sqlite3.Error) as exc:
                 support["history_index"] = {"status": "unavailable", "reason": type(exc).__name__}
+        support["evidence_coverage"] = coverage_summary(support["options"], self.config.min_context_samples)
         if self.config.deck_advice_enabled:
             support["supplementary_deck_advice"] = self._deck_advice(view, deck, deadline=deadline)
         if self.config.elite_readiness_enabled and view.kind in ("card_reward", "shop"):
@@ -378,7 +469,11 @@ class ExpertDecisionStats:
                 # Restrict results to offered IDs; scores remain raw scores.
                 rows = [{k: _bounded(r[k]) for k in ("id", "score", "base", "reasons") if k in r}
                         for r in ranked if isinstance(r, dict) and r.get("id") in offer]
-                result["draft_advice"] = {"status": "available" if rows else "unavailable", "ranked": rows,
+                result["draft_advice"] = {"status": "available" if rows else "unavailable",
+                                          "ranked": _ranked_draft(rows),
+                                          "score_meaning": "composite_score_uncalibrated is a unitless community "
+                                                           "ranking score. It is not a lift, win rate, pick rate or "
+                                                           "probability; use rank and gap_to_next within this offer only.",
                                           **response.provenance()}
             except StatsUnavailable as exc:
                 result["draft_advice"] = {"status": "unavailable", "reason": str(exc)}
@@ -709,7 +804,9 @@ class ExpertDecisionStats:
         support["map_outlook"] = {
             "status": base.get("status"), "reason": base.get("reason"), "act_id": act_id, "bosses": bosses,
             "first_nodes": [{"node": o["node"], "coords": o["coords"], "distinct_routes": o["distinct_routes"],
-                             "max_elites": o["max_elites"], "best_bad_case_min_hp_pct": o["best_bad_case_min_hp_pct"]}
+                             "max_elites": o["max_elites"],
+                             "lowest_death_risk_before_boss_pct": o["lowest_death_risk_before_boss_pct"],
+                             "fewest_fights_before_next_rest": o["fewest_fights_before_next_rest"]}
                             for o in base.get("by_next_option") or []],
             "distinct_routes": base.get("distinct_routes"), "outlook": base.get("outlook"),
             "route_ranges": base.get("route_ranges"),
@@ -868,7 +965,8 @@ class ExpertDecisionStats:
             return
         risk = self._risk_model(runs, act_id, act_entry, encounters, weak, character, player.get("max_hp"),
                                 version, deadline=deadline)
-        support["hp_risk"] = risk
+        from .route_risk import public_risk
+        support["hp_risk"] = public_risk(risk)
         plan = (route_state or {}).get("plan")
         here = tuple(c for c in [(details.get("current_position") or {}).get("col"),
                                  (details.get("current_position") or {}).get("row")])
@@ -882,11 +980,16 @@ class ExpertDecisionStats:
         support["paths"] = plan_paths(details, hp=player.get("hp"), max_hp=player.get("max_hp"), gold=player.get("gold"),
                                       risk=risk, profile=support.get("profile"),
                                       candidates=self.config.route_candidates, max_routes=self.config.route_max_routes,
-                                      previous_nodes=previous, elite_pool=pool)
+                                      previous_nodes=previous, elite_pool=pool,
+                                      outcomes=(route_state or {}).get("outcomes"))
         support["paths"]["limitations"] = [
             "Projections assume current max HP, pooled class damage and independent fights; deck, relics, potions "
             "and event effects beyond recorded HP loss are not modeled.",
-            "bad_case applies the 90th percentile to every fight: a stress test, not a likely outcome.",
+            "death_risk_* is the share of replays in which sampled fight losses (times agent_loss_scale) used up "
+            "the HP: a rough estimate from other players' fights, not a calibrated probability. p10_* is the 10th "
+            "percentile across replays; HP below 0 is kept and means the path fell short by that much.",
+            "The loss samples come from strong players whose fights usually cost little; agent_loss_scale corrects "
+            "only for this run's own finished fights and starts at 1.",
             "Simulated rest choices follow the experts' HEAL share in that HP band; heal size is measured, not assumed.",
             "selected_for labels say what a path is best at; there is no combined score. Python never chooses."]
         if route_state is not None:
@@ -974,7 +1077,7 @@ class ExpertDecisionStats:
                 member.update({"status": "unavailable", "reason": str(exc)})
         support["cohort"]["available_players"] = len(profiles)
         event_id = _id((view.facts.get("screen_details") or {}).get("event_id"))
-        event_options = {}
+        event_options, event_loose = {}, {}
         if view.kind == "event" and event_id and profiles:
             try:
                 catalog = self.client.get("/api/events/" + event_id, {"lang": self.config.lang}, deadline=deadline)
@@ -990,9 +1093,10 @@ class ExpertDecisionStats:
                         if not isinstance(option, dict) or not isinstance(option.get("title"), str):
                             raise StatsUnavailable("invalid_event_catalog")
                         event_options.setdefault(_title(option["title"]), set()).add(_id(option.get("id")))
+                        event_loose.setdefault(_loose_title(option["title"]), set()).add(_id(option.get("id")))
             except StatsUnavailable as exc:
                 support["event_catalog_error"] = str(exc)
-                event_options = {}
+                event_options, event_loose = {}, {}
         for candidate in candidates:
             details = candidate["details"]
             row = {"action_id": candidate["action_id"], "status": "unavailable"}
@@ -1005,12 +1109,13 @@ class ExpertDecisionStats:
                 table, metric = "shops", "buy_rate"
                 row.update({"entity_type": key[0] if key else None, "id": key[1] if key else None})
             else:
-                option_id = _id(details.get("option_id"))
-                matches = event_options.get(_title(details.get("title")), set()) - {None}
-                if option_id is None and len(matches) == 1:
-                    option_id = next(iter(matches))
+                option_id, how = match_event_option(details, event_options, event_loose)
                 key, table, metric = (event_id, option_id), "events", "choice_share"
-                row.update({"event_id": event_id, "option_id": option_id})
+                row.update({"event_id": event_id, "option_id": option_id, "option_match": how})
+                if option_id is None:  # kept in the trace so the missing identifier can be fixed
+                    row["unmatched_detail"] = {"observed_title": str(details.get("title"))[:80],
+                                               "catalog_option_titles": len(event_options),
+                                               "event_catalog_error": support.get("event_catalog_error")}
             invalid_key = key is None or (isinstance(key, tuple) and None in key)
             if invalid_key:
                 row["reason"] = "unmatched_identifier_or_unsupported_action"
@@ -1041,6 +1146,7 @@ class ExpertDecisionStats:
                 if observations:
                     row.update({"status": "available", "largest_player_sample_share_pct":
                                 round(max(o["denominator"] for o in observations) / denominator * 100, 2)})
+                    _withhold(row, self.config.min_context_samples)
                 else:
                     row["reason"] = "no_recorded_observations"
             support["options"].append(row)
