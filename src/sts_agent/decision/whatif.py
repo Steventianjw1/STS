@@ -61,7 +61,9 @@ class WhatIfTools:
     def _route_inputs(self, frame):
         run, player = frame.facts.get("run") or {}, frame.facts.get("player") or {}
         model = getattr(self.c.expert_stats, "last_route_model", None)
-        remaining = self.c.remaining_route_nodes(run.get("act"), run.get("floor"), frame.screen.get("kind"))
+        # The frame's own route_context already says which rooms of the stored plan are still ahead.
+        stored = (frame.facts.get("route_context") or {}).get("stored_route_plan") or {}
+        remaining = [str(r.get("type")) for r in stored.get("remaining_rooms") or []]
         if (not model or model.get("act") != run.get("act") or not remaining or not player.get("max_hp")
                 or frame.screen.get("kind") == "map" or "combat" in frame.facts):
             return None
@@ -134,6 +136,7 @@ class WhatIfTools:
             return {"status": "error", "error": f"hp_values must be 1 to 3 integers between 1 and {max_hp}"}
         risk, act = model["risk"], (frame.facts.get("run") or {}).get("act")
         scale = agent_loss_scale(self.c.route_outcomes)
+        factors = {group: row["value"] for group, row in scale["by_group"].items()}   # as on the map screen
         rng = random.Random(20261112)   # fixed, as on the map screen: the same question gives the same numbers
         uniforms = [[rng.random() for _ in remaining] for _ in range(SIMULATIONS)]
         path = [(kind, None, None) for kind in remaining]
@@ -141,7 +144,7 @@ class WhatIfTools:
         for hp in values:
             sim = simulate(path, hp_pct=hp / max_hp * 100, gold=player.get("gold") or 0, risk=risk,
                            profile=model.get("profile"), hallway_done=self.c.hallway_done.get(act, 0),
-                           draws=loss_draws(risk), scale=scale["value"], uniforms=uniforms)
+                           draws=loss_draws(risk), scale=factors, uniforms=uniforms)
             rows.append({"hp": hp, "hp_pct": round(hp / max_hp * 100, 1),
                          "expected_boss_arrival_hp_pct": round(sim["boss_arrival"], 1),
                          "p10_boss_arrival_hp_pct": _r(sim["p10_boss_arrival"]),
@@ -149,8 +152,9 @@ class WhatIfTools:
                          "fights_before_next_rest": sim["fights_before_rest"],
                          "death_risk_before_next_rest_pct": _r(sim["death_before_rest"]),
                          "death_risk_before_boss_pct": _r(sim["death_before_boss"])})
-        return {"status": "ok", "remaining_nodes": remaining, "agent_loss_scale": scale["value"], "projections": rows,
-                "limits": "Pooled fight losses from other players' runs times this run's loss scale; the boss fight "
+        return {"status": "ok", "remaining_nodes": remaining, "agent_loss_scale_by_group": factors, "projections": rows,
+                "limits": "Pooled fight losses from other players' runs times this run's loss scale for that kind of "
+                          "fight, with the pooled same-floor recovery added back; the boss fight "
                           "itself is not subtracted; deck, relics, potions and upgrades are not modeled, so the HP "
                           "value of a smith upgrade is not in these numbers. Rough estimates, not calibrated "
                           "probabilities. The remaining nodes come from your stored route plan and may be stale."}

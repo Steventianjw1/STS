@@ -3,7 +3,7 @@
 This is the current architecture reference, replacing the original implementation
 handoff. The code in `src/sts_agent/decision/` is authoritative for field shapes,
 capabilities, and execution behavior. The current decision prompt is
-`decision-prompt-10`, frame schema `sts2-decision-frame-1`, and LLM policy version
+`decision-prompt-18`, frame schema `sts2-decision-frame-1`, and LLM policy version
 `1.0.0`. See [compatibility](COMPATIBILITY.md) for validation limits.
 
 ## Responsibilities
@@ -25,15 +25,17 @@ STS2MCP -> normalized observation -> supported screen + candidates
 One configured provider instance is shared by the strategic assessor and action
 policy. DeepSeek is the default; Anthropic is supported. Both implement
 `TextModel.complete(system=..., user=...)`, use optional SDKs, and share call/token
-budgets across decisions, strategic updates, and corrective retries. SDK retries
-are disabled. Core/offline execution is standard-library-only.
+budgets across decisions, strategic updates, corrective retries, provider retries,
+and what-if tool calls. SDK retries are disabled; the policy itself retries a
+transient provider failure. Core/offline execution is standard-library-only.
 
 | Module | Responsibility |
 | --- | --- |
 | `decision/screens.py` | Raw screen state to allowlisted facts, candidates, private payload bindings, readiness, and limitations. |
 | `decision/models.py` | Frame hash, serialization, choice parsing, and map-plan validation. |
-| `decision/prompts.py` | Versioned instructions, advisory labels, and prompt-size reduction. |
-| `decision/policy.py` | Model call, validation, and at most one corrective retry. |
+| `decision/prompts.py` | Versioned instruction modules assembled per screen, advisory labels, and prompt-size reduction. |
+| `decision/policy.py` | Model call, validation, one corrective retry, bounded provider retries, and the optional what-if tool round. |
+| `decision/whatif.py` | The two read-only what-if calculations the model may request. |
 | `decision/coordinator.py` | Session bounds, memory, strategic refresh, fresh validation, execution, and resolution. |
 | `decision/offline.py` | Explicitly synthetic clients and scripted model replies. |
 | `providers/` | DeepSeek/Anthropic transport, sanitized diagnostics, usage, and budget accounting. |
@@ -65,6 +67,45 @@ use observed `can_play` and verified targeting; X-cost or unparsed effect text
 alone does not exclude a playable card. The baseline parser's narrower support
 does not constrain LLM choices.
 
+Three blocks are added to `current_facts` when available:
+
+- `route_context` (non-map rooms): the act graph as last seen on the map, read
+  from the room the agent travelled to: next rooms, the act boss, and ranges over
+  every continuation (rest sites, shops, elites, fights before the next rest).
+  `stored_route_plan` adds the remaining rooms of the model's own route plan when
+  the room is on it. Absent means the coming rooms are unknown.
+- `keyword_glossary`: the game's own tooltip text for terms on the cards,
+  relics, potions, and offers of this state, collected from the patched mod. A
+  term without an entry stays unknown.
+- `energy_observation`: the last observed maximum energy, labeled as dated.
+
+The `strategic_assessment` block carries the planner's `standing_plan` (deck
+needs, what to avoid, removal and upgrade targets, a skip rule, boss preparation)
+on every screen. See [strategic planner](STRATEGIC_PLANNER.md).
+
+## Instructions per screen
+
+The system prompt is assembled by `prompts.system_instruction(frame)`. The
+harness knows the screen kind, so it picks the modules; the model never selects
+or loads instructions. Every prompt has the core rules and the response contract.
+The rest depends on the screen:
+
+| Screen | Added modules |
+| --- | --- |
+| `combat`, `hand_select` | Combat play and combat-state reading. |
+| Picker opened during a fight | Fight-picker rules and combat-state reading. |
+| `card_reward` | Non-combat rules, card-reward rules, expert-profile, duplicate, upgrade-after-pick, and elite-readiness notes. |
+| `shop` | Non-combat rules, shop rules, expert-profile, upgrade-after-pick, and elite-readiness notes; `shop_plan` contract. |
+| `map` | Non-combat rules, map rules, route evidence notes; `route_plan` contract. |
+| `rest_site`, non-combat `card_select` | Non-combat rules, rest or grid rules, upgrade-choice notes. |
+| `event` | Non-combat rules, expert-profile and upgrade-choice notes; ancient events use the ancient-offer notes instead. |
+| `rewards` | Non-combat rules; reward-batch contract. |
+| Anything else | Non-combat rules and expert-profile notes. |
+
+Module names used for a decision are recorded as `prompt_modules`.
+`SYSTEM_INSTRUCTION` is every module concatenated, kept for inspection only; it is
+never sent.
+
 Supported screens cover combat, hand selections, rewards, map, events, rest,
 regular shops, card grids, relic selection, and treasure. Unsupported screens
 stop before selecting an action. Source-inspected coverage, synthetic checks,
@@ -76,19 +117,19 @@ Each response is one bare JSON object:
 
 ```json
 {
-  "frame_id": "copy-the-current-frame-id",
   "action_id": "one-offered-action-id",
   "reason": "Brief explanation grounded in the current position.",
   "turn_intent": "Short conditional plan for later choices."
 }
 ```
 
+The model is not asked to echo the frame ID; an echoed `frame_id` is ignored.
 Reject wrappers, duplicate/missing/extra keys, nonfinite values, incorrect types,
-mismatched frame IDs, and unoffered action IDs. `reason` is nonempty and at most
+and unoffered action IDs. `reason` is nonempty and at most
 500 characters; `turn_intent` is at most 300 characters and may be empty.
 Response text is capped at 8 KiB. Payloads are never accepted from the model.
 
-On map screens only, an optional fifth key is allowed:
+On map screens only, an optional `route_plan` key is allowed:
 
 ```json
 {
@@ -100,16 +141,42 @@ On map screens only, an optional fifth key is allowed:
 }
 ```
 
-This is a fragment to add to the four-key response, not a standalone reply.
+This is a fragment to add to the base response, not a standalone reply.
 Both text fields are at most 300 characters; `plan` must be nonempty. A nonempty
 `path_id` must occur in `decision_support.paths.candidates` and start with the
 chosen `action_id`. An empty ID permits a textual plan without a supplied path.
 Omitting `route_plan` retains the previous plan. Non-map responses cannot include it.
 
-Invalid output permits one corrective retry against the same frame. Provider
-failures are not retried. No fallback chooses an action. The
+On shop screens an optional `shop_plan` lists the whole visit: offered
+`shop_purchase`/`proceed` action IDs in execution order, starting with
+`action_id`, without repeats, within current gold and free potion slots. Leaving
+must be last, and so must card removal. The coordinator executes the steps one by
+one with state checks and abandons the rest when prices, stock, or gold change.
+
+Invalid output permits one corrective retry against the same frame. A transient
+provider failure (timeout, dropped connection, 408/409/425/429, 5xx) is retried
+up to `[llm].provider_retries` times (default 2) with the same prompt; nothing is
+sent to the game in between, and the screen is revalidated before any action.
+Other provider failures stop. No fallback chooses an action. The
 [strategic planner](STRATEGIC_PLANNER.md) separately allows one corrective retry
 for invalid assessment output using the same budget.
+
+## What-if tools
+
+With `[llm].what_if_tools = true` (default) the user message lists
+`available_tools` for the screen. Instead of a choice the model may reply once
+with `{"tool": "<name>", "args": {...}}`; it then receives the same frame again
+with `tool_result` and must choose. The tool call is one extra model call, is not
+a corrective retry, and never acts in the game. Bad arguments return an error
+result.
+
+| Tool | Offered when | Returns |
+| --- | --- | --- |
+| `deck_after` | Non-combat screens with the permanent deck | Deck size, cards by type, cost counts, basics, curses, and draw-cycle length before and after hypothetical additions (offered action IDs) and removals (card names). Counts only. |
+| `route_projection` | Non-map rooms on the stored route plan, after a map screen of this act produced a risk model | The plan's remaining rooms re-projected from one to three hypothetical HP values: expected and worst-tenth boss-arrival HP, death risk before the next rest and before the boss. Same pooled model and limits as map paths. |
+
+Tool lists and results travel only in the message; the recorded frame and
+`frame_id` are unchanged.
 
 ## Evidence, route planning, and memory
 
@@ -128,7 +195,10 @@ labels; unexpected external-data errors become unavailable support rather than
 stopping gameplay. Python does not select a route, reward, or purchase.
 
 A session retains the strategic assessment, up to ten combat summaries for the
-assessor, a map plan, and combat outcomes used for replanning. Decision frames
+assessor, a map plan, the act graph of the last map screen, and combat outcomes
+used for replanning. Combat outcomes record the net HP change and, separately, HP
+removed and regained during the fight; route projections scale hallway fights and
+elites/bosses separately from HP removed. Decision frames
 carry the assessment and up to eight encounter-local decision/outcome history
 entries. Encounter-local history and turn intent reset on encounter changes.
 A stored route plan records
@@ -177,8 +247,16 @@ purchases; supported discard choices allow the model to free a slot. Rest sites
 with neither enabled options nor proceed are not ready, so transitional states
 are polled rather than immediately reported as actionable with no candidates.
 
-The model chooses every gameplay action, including confirmations, end turn,
-rewards, and leaving. Polling is automatic; gameplay decisions are not. The mod
+With `[combat_search].autobattle`, Spire Mentor plays whole fights. With
+`offer_handoff` (default on) the bridge asks Mentor to hold in-fight
+choose-a-card offers through its own `pause_on` list and reports the held screen.
+A held offer is answered exactly once: one that opened during the enemy's turn (a
+boss's forced debuff choice) is decided by the model with the fight in view; any
+other is handed back to Mentor's own pick. An older mod or Mentor build that
+cannot hold leaves fights entirely with Mentor.
+
+Outside delegated fights the model chooses every gameplay action, including
+confirmations, end turn, rewards, and leaving. Polling is automatic; gameplay decisions are not. The mod
 can open inventory/chests as a side effect of state reads. Limits include model
 latency; progress accounting avoids treating normal model/evidence latency as a
 game stall. Budget exhaustion, unsupported screens, unresolved actions, and
@@ -188,8 +266,8 @@ not certified victory.
 ## Recording and verification
 
 LLM sessions use `sts2-trace-2`; explicit baseline sessions use `sts2-trace-1`.
-Frames, choices, optional map plans, retries, provider usage, strategy updates,
-trimming, and outcomes are recorded separately. No private reasoning transcript
+Frames, choices, optional map and shop plans, retries, tool calls, prompt modules,
+provider usage, strategy updates, trimming, and outcomes are recorded separately. No private reasoning transcript
 is requested or stored. Replay validates saved LLM frames and offered action IDs
 without resampling a model or contacting the game/evidence service. See
 [trace format](TRACE_FORMAT.md) for exact replay limits.

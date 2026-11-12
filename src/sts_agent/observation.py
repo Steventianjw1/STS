@@ -210,11 +210,52 @@ def _pile_groups(raw: Any) -> list[dict] | None:
             for (n, cost, star, text), k in sorted(c.items(), key=lambda kv: _sort_key(kv[0]))]
 
 
+MAX_GLOSSARY_TERMS = 60
+
+
+def keyword_glossary(raw: Any) -> dict | None:
+    """Tooltip term -> definition, from every ``keywords`` list the mod attached to this state.
+
+    The mod serializes the game's own hover tips (card keywords, referenced powers and
+    cards) as ``{"name", "description"}`` on hand cards, offers, relics, potions and
+    powers, and once for the permanent deck as ``deck_keywords``. Collected verbatim,
+    never inferred; sorted so the same state always yields the same glossary.
+    """
+    terms: dict = {}
+
+    def walk(value, depth):
+        if depth > 10:
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in ("keywords", "deck_keywords") and isinstance(item, list):
+                    for tip in item:
+                        if (isinstance(tip, dict) and isinstance(tip.get("name"), str) and tip["name"].strip()
+                                and isinstance(tip.get("description"), str) and tip["description"].strip()):
+                            terms.setdefault(tip["name"].strip()[:80], tip["description"].strip()[:400])
+                else:
+                    walk(item, depth + 1)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item, depth + 1)
+
+    walk(raw, 0)
+    return dict(sorted(terms.items())[:MAX_GLOSSARY_TERMS]) or None
+
+
+def _keyword_names(value: Any) -> tuple | None:
+    if not isinstance(value, list):
+        return None
+    names = (k if isinstance(k, str) else k.get("name") if isinstance(k, dict) else None for k in value)
+    return tuple(n.strip()[:80] for n in names if isinstance(n, str) and n.strip())
+
+
 def _deck_groups(raw: Any) -> list[dict] | None:
     """Permanent deck (patched mod only), grouped by identical card with counts.
 
     All-or-nothing: one malformed entry makes the deck unknown, never partial.
-    Older patch builds send only id/is_upgraded; missing fields stay null.
+    Older patch builds send only id/is_upgraded; missing fields stay null, and
+    ``keywords`` (tooltip term names) is present only when the mod build sends it.
     """
     if not isinstance(raw, list) or not all(
             isinstance(c, dict) and isinstance(c.get("id"), str) and c["id"].strip() for c in raw):
@@ -225,11 +266,13 @@ def _deck_groups(raw: Any) -> list[dict] | None:
         c[(card["id"], _str_or_none(card.get("name")) or card["id"],
            upgraded if isinstance(upgraded, bool) else None, _str_or_none(card.get("cost")),
            _str_or_none(card.get("star_cost")), _str_or_none(card.get("type")),
-           _str_or_none(card.get("rarity")), _str_or_none(card.get("description")))] += 1
+           _str_or_none(card.get("rarity")), _str_or_none(card.get("description")),
+           _keyword_names(card.get("keywords")))] += 1
     return [{"id": cid, "name": name, "upgraded": up, "cost": cost,
              **({"star_cost": star} if star is not None else {}),
-             "type": ctype, "rarity": rarity, "description": text, "count": k}
-            for (cid, name, up, cost, star, ctype, rarity, text), k
+             "type": ctype, "rarity": rarity, "description": text,
+             **({"keywords": list(words)} if words is not None else {}), "count": k}
+            for (cid, name, up, cost, star, ctype, rarity, text, words), k
             in sorted(c.items(), key=lambda kv: _sort_key(kv[0]))]
 
 
@@ -346,7 +389,10 @@ def normalize(raw: dict) -> dict:
     # piles are not a permanent deck and must never be substituted here.
     if isinstance(player.get("deck"), list):
         obs["deck"] = _deck_groups(player["deck"])
-    obs["fingerprint"] = fingerprint(obs)
+    glossary = keyword_glossary(raw)
+    if glossary:
+        obs["keyword_glossary"] = glossary
+    obs["fingerprint"] = fingerprint(obs)   # last: replay re-hashes the stored observation
     return obs
 
 

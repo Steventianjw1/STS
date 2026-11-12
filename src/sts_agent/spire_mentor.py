@@ -18,11 +18,6 @@ miss with a reason, and the caller falls back to the LLM.
 
 MentorAutobattle instead controls native Autobattle through the game-thread
 bridge. The coordinator yields whole fights and never reads non-combat advice.
-With ``hold_offers`` the bridge adds ``card_reward`` to Mentor's own ``pause_on``
-list while Autobattle is on, so Mentor holds an in-fight choose-a-card offer
-(a generated card, or a boss's forced debuff pick) for "the player" instead of
-answering it with its deck-pick head; the bridge reports that hold as
-``held`` and only then does the coordinator let the LLM make that one pick.
 
 Field names follow ``spire-mentor-mod/PROTOCOL.md`` and
 ``sts2-pycli/python/realgame_{advisor,control}.py`` as read at source. Not
@@ -52,25 +47,19 @@ _TIMEOUT_STRIKES = 3               # consecutive timeouts before the cooldown st
 class MentorAutobattle:
     """Control native Autobattle through STS2MCP's game-thread bridge. No advice reads."""
 
-    def __init__(self, client, *, hold_offers: bool = False):
-        self.client, self.hold_offers = client, hold_offers
+    def __init__(self, client):
+        self.client = client
 
     def control(self, command: str) -> dict:
-        if command not in ("status", "on", "off"):
+        """``hold_offers`` makes Mentor hold in-fight choose-a-card screens (its ``pause_on``);
+        ``ai_pick`` has Mentor play its own recommendation on the screen it is holding, once."""
+        if command not in ("status", "on", "off", "hold_offers", "ai_pick"):
             raise ValueError("Unknown Autobattle command")
-        option = "on_hold" if command == "on" and self.hold_offers else command
-        response = self.client.post_action({"action": "menu_select", "option": f"agent_autobattle_{option}"})
+        response = self.client.post_action({"action": "menu_select", "option": f"agent_autobattle_{command}"})
         body = response.body
         if not response.accepted or not isinstance(body, dict) or body.get("autobattle_version") != 1:
             raise GameClientError(f"Spire Mentor Autobattle unavailable: {response.error or body}. "
                                   "Rebuild/install the agent mod extension and enable Spire Mentor.")
-        if self.hold_offers and (type(body.get("held")) is not bool
-                                 or (command == "on" and body.get("hold_offers") is not True)):
-            # Never fall back silently: without a confirmed hold Mentor would answer the offer itself.
-            raise GameClientError("Spire Mentor cannot hold in-fight offers for the LLM "
-                                  f"(held={body.get('held')!r}, hold_offers={body.get('hold_offers')!r}). Rebuild/install "
-                                  "the agent mod extension (tools/patch_mod_preview.py), use a Spire Mentor build with "
-                                  "Autobattle and pause_on, or set [combat_search].llm_fight_offers = false.")
         return body
 
 

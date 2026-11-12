@@ -28,7 +28,7 @@ from pathlib import Path
 from . import AGENT_VERSION, STS2MCP_SOURCE_DESCRIBE
 from .client import GameClient, GameClientError, parse_mod_version
 from .config import load_config
-from . import enemy_patterns, game_pin, glossary
+from . import enemy_patterns, game_pin
 from .decision.coordinator import LLM_PROVENANCE_LIVE, LLM_PROVENANCE_SCRIPTED, RunCoordinator
 from .decision.models import DecisionFrame
 from .decision.offline import ScriptedTextModel
@@ -74,7 +74,6 @@ def _build(args):
     if getattr(args, "model", None):
         cfg.llm.model = args.model
     enemy_patterns.configure(cfg.monster_data_path, game_build=cfg.game_build)
-    glossary.configure(cfg.keyword_data_dir)
     client = GameClient(cfg.base_url, cfg.read_timeout_s, cfg.action_timeout_s)
     return cfg, used, client
 
@@ -113,14 +112,18 @@ def _advisor(cfg) -> SpireMentorAdvisor:
 def _doctor_combat_search(cfg, line, client) -> bool:
     if cfg.combat_search.autobattle:
         try:
-            status = MentorAutobattle(client, hold_offers=cfg.combat_search.llm_fight_offers).control("status")
+            status = MentorAutobattle(client).control("status")
         except GameClientError as exc:
             line("FAIL", str(exc))
             return False
         line("ok", f"combat: native Spire Mentor Autobattle ready (mode {status.get('mode')}); "
-                   "no LLM combat fallback; Mentor advice ignored outside combat"
-                   + ("; in-fight choose-a-card offers are held for the LLM"
-                      if cfg.combat_search.llm_fight_offers else ""))
+                   "no LLM combat fallback; Mentor advice ignored outside combat")
+        if cfg.combat_search.offer_handoff:
+            if "fight_offer_hold" in status:
+                line("ok", "combat: the mod can have Mentor hold in-fight offers; offers an enemy opens go to the LLM")
+            else:
+                line("WARN", "combat: this mod build cannot hold in-fight offers, so Mentor answers them itself. "
+                             "Rebuild the agent mod extension to enable [combat_search] offer_handoff.")
         return True
     adv = _advisor(cfg)
     status = adv.status()
@@ -189,11 +192,6 @@ def cmd_doctor(args) -> int:
     line("info", "limits: " + ", ".join(f"{k}={v}" for k, v in cfg.limits.__dict__.items()))
     line("info", f"declared game_build: {cfg.game_build or 'not set (the API does not report the game build)'}")
     line("info", f"gameplay policy: {cfg.policy}" + (" (explicit comparison mode)" if cfg.policy == "baseline" else ""))
-    terms = glossary.status()
-    line("ok" if terms["path"] else "WARN",
-         f"keyword glossary: {terms['card_keywords']} card keywords, {terms['powers']} powers, "
-         f"{terms['curse_cards']} curse/status cards"
-         + ("" if terms["path"] else f" (no reference data in {cfg.keyword_data_dir}; run tools/fetch_monster_data.py)"))
     if cfg.policy == "llm":
         provider = cfg.llm.provider
         sdk_name = "openai" if provider == "deepseek" else provider
@@ -445,15 +443,17 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     scripted = bool(getattr(model, "is_scripted", False))
     if facts_source == "synthetic" or getattr(client, "data_source", None) == "synthetic":
         facts_source = "synthetic"
-    policy = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes)
+    policy = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes,
+                               provider_retries=cfg.llm.provider_retries)
     autobattle = None
     # Live observed combat only: synthetic or scripted sessions never consult a running advisor.
     if cfg.combat_search.enabled and facts_source != "synthetic" and not scripted:
         if cfg.combat_search.autobattle:
-            autobattle = MentorAutobattle(client, hold_offers=cfg.combat_search.llm_fight_offers)
+            autobattle = MentorAutobattle(client)
             autobattle.control("status")  # Validate the bridge before any model or gameplay action.
             log("combat: native Spire Mentor Autobattle; DeepSeek controls non-combat decisions"
-                + ("; Mentor holds in-fight choose-a-card offers for the LLM" if autobattle.hold_offers else ""))
+                + (" and in-fight offers an enemy opens ([combat_search] offer_handoff)"
+                   if cfg.combat_search.offer_handoff else ""))
         else:
             policy = SearchCombatPolicy(policy, _advisor(cfg))
             log(f"combat search: Spire Mentor advisor at {cfg.combat_search.control_url} (LLM on any miss)")
@@ -473,10 +473,11 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
         f"{', SCRIPTED' if scripted else ''})")
     scope = {"step": "step", "play-combat": "combat", "play-run": "run"}[command]
     coord = RunCoordinator(client, policy, planner=planner, recorder=rec, limits=cfg.limits, scope=scope, autobattle=autobattle,
+                           offer_handoff=cfg.combat_search.offer_handoff, what_if_tools=cfg.llm.what_if_tools,
                            expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build)
                            if facts_source != "synthetic" and not scripted else None,
                            run_id=run_id, run_id_source=run_id_source, facts_source=facts_source,
-                           objective=_objective(cfg), log=log, what_if_tools=cfg.llm.what_if_tools,
+                           objective=_objective(cfg), log=log,
                            state_path=_run_state_path(cfg, run_id) if run_id_source == "mod_compendium"
                            and facts_source == "observed" and not scripted else None)
     try:

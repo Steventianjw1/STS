@@ -31,9 +31,6 @@ pinned_game_dir = "data/game"
 # combat prompt's offsets 2-3 after the observed next move. Data is pinned to v0.107.1;
 # forecasts are base values, not native simulations. A missing file leaves them unknown.
 monster_data_path = "data/monster_reference/monsters.json"
-# Keyword glossary reference (same fetch tool): power and curse/status card text. Definitions for
-# keywords found in the visible text are added to every prompt; missing = built-in card keywords only.
-keyword_data_dir = "data/keyword_reference"
 
 [limits]
 max_actions = 300                  # card plays + end turns per play-combat session
@@ -54,7 +51,10 @@ provider = "deepseek"              # or "anthropic" for the original Claude adap
 # Set DEEPSEEK_API_KEY in .env. DEEPSEEK_BASE_URL optionally overrides https://api.deepseek.com.
 # For anthropic, use ANTHROPIC_API_KEY instead. Never put credentials here.
 max_output_tokens = 16384
-timeout_s = 60.0                   # whole call; SDK retries are disabled
+timeout_s = 60.0                   # SDK timeout per connect and per wait for data; a call that keeps
+                                   # receiving bytes can run longer. SDK retries are disabled.
+provider_retries = 2               # extra decision calls after a timeout, dropped connection, 429 or 5xx;
+                                   # nothing is sent to the game in between. 0 stops on the first failure.
 # deepseek_reasoning_effort = "high"  # low, high, or max; omit for provider default (model support varies)
 max_calls_per_run = 2000           # shared per session: decisions + strategy + corrective retries
 # max_input_tokens_per_run = 5000000
@@ -101,15 +101,14 @@ ancient_advisor_enabled = true    # relic effects vs. deck/state, offer stats, c
 # Spire Mentor mod installed beside STS2_MCP with its coach (Advisor mode) on, on a game build it
 # supports. With autobattle=false, this agent reads combat advice and executes through STS2_MCP,
 # using the LLM on a search miss. With autobattle=true, Mentor executes whole fights, including
-# in-fight selections, and stops on failure. Mentor is off between fights; the LLM makes all
+# in-fight selections (except as offer_handoff says below), and stops on failure. Mentor is off between fights; the LLM makes all
 # non-combat choices without reading Mentor's card or path suggestions.
 [combat_search]
 enabled = false
 autobattle = false                # true: Mentor plays whole fights; LLM only outside combat, no combat fallback
-llm_fight_offers = false          # autobattle only. true: Mentor holds in-fight choose-a-card offers (a generated
-                                  # card, a boss's forced debuff pick) and the LLM makes that one pick with the combat
-                                  # state; Mentor then plays on. Needs the rebuilt agent mod extension. The session
-                                  # refuses to start if Mentor cannot confirm the hold; it never falls back silently.
+offer_handoff = true              # with autobattle: Mentor holds in-fight "choose a card" offers. One an enemy opens
+                                  # (a boss's debuff choice) is decided by the LLM, because Mentor would score it as a
+                                  # deck pick; any other goes back to Mentor's own pick. false: Mentor answers them all.
 control_url = "http://127.0.0.1:8079"   # the advisor's control port (8079 for the mod's default port 9002)
 # advisor_log_dir = 'C:\Users\<you>\AppData\Local\SpireMentor\logs\realgame_advisor'  # default: auto-detected
 advice_timeout_s = 30.0            # per decision: wait for the advisor's board to match ours and for its advice

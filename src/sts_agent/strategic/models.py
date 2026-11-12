@@ -23,13 +23,9 @@ Fact shapes (version 0). Each top-level key is required; its value is either
     recent_outcomes: {items: [{id: str, encounter_type?: str, result?: str, hp_lost?: int>=0,
                       turns?: int>=0, notes?: str}]}   # result in OUTCOME_RESULTS
 
-Optional top-level keys (version 1), omitted or ``None`` when unknown:
+Optional top-level key (may be absent, never null):
 
-    route:           {act?: int>=1, boss?: str, plan?: str, change_course_if?: str,
-                      plan_set_at_floor?: int>=0, remaining_nodes?: [str], next_rest_in?: int>=1,
-                      next_elite_in?: int>=1, next_shop_in?: int>=1, boss_in?: int>=1}
-                      boss observed on the act map; the rest from the stored route plan
-    glossary:        {items: [{term: str, definition: str}]}   # reference rules text, not state
+    glossary:        {items: [{term: str, definition: str}]}   # game tooltip text for terms used above
 """
 from __future__ import annotations
 
@@ -39,7 +35,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-SNAPSHOT_SCHEMA_VERSION = "sts2-strategic-snapshot-1"
+SNAPSHOT_SCHEMA_VERSION = "sts2-strategic-snapshot-0"
 ASSESSMENT_SCHEMA_VERSION = "sts2-strategic-assessment-1"
 
 MAX_SNAPSHOT_BYTES = 64 * 1024
@@ -56,18 +52,17 @@ OPPORTUNITY_KINDS = ("card_reward", "relic_reward", "potion_reward", "gold_rewar
                      "card_removal", "rest_site", "route", "event", "encounter", "other")
 OUTCOME_RESULTS = ("victory", "defeat", "fled", "unknown")
 FACT_KEYS = ("run", "resources", "deck", "relics", "potions", "opportunities", "recent_outcomes")
-OPTIONAL_FACT_KEYS = ("route", "glossary")
-ROUTE_KEYS = ("act", "boss", "plan", "change_course_if", "plan_set_at_floor", "remaining_nodes",
-              "next_rest_in", "next_elite_in", "next_shop_in", "boss_in")
-PLAN_LISTS = {"deck_needs": 160, "avoid": 160, "removal_targets": 80, "upgrade_targets": 80}   # key -> item chars
-PLAN_TEXTS = {"skip_rule": 240, "boss_prep": 240}
-MAX_PLAN_ITEMS = 4
 
 DIMENSIONS = ("immediate_threats", "damage", "defense", "scaling", "draw_consistency",
               "potion_needs", "upcoming_opportunities")
 CONFIDENCE = ("low", "medium", "high")
+# standing_plan: the maintained deck plan every later choice is checked against.
+PLAN_LISTS = {"deck_needs": 160, "avoid": 160, "removal_targets": 80, "upgrade_targets": 80}   # key -> item chars
+PLAN_TEXTS = {"skip_rule": 240, "boss_prep": 240}
+MAX_PLAN_ITEMS = 4
 
 _SHORT, _NAME, _TEXT = 80, 120, 1000
+MAX_GLOSSARY_TERMS = 60
 
 
 class InputError(ValueError):
@@ -178,32 +173,18 @@ def _check_json_values(v, path):
 
 def validate_facts(facts: Any) -> None:
     _check_json_values(facts, "")
-    _obj(facts, "", FACT_KEYS + tuple(k for k in OPTIONAL_FACT_KEYS if isinstance(facts, dict) and k in facts))
+    _obj(facts, "", FACT_KEYS + (("glossary",) if isinstance(facts, dict) and "glossary" in facts else ()))
 
-    route = facts.get("route")
-    if route is not None:
-        p = "/route"
-        _obj(route, p, ROUTE_KEYS)
-        _int(route["act"], p + "/act", lo=1)
-        _str(route["boss"], p + "/boss", maxlen=240)
-        _str(route["plan"], p + "/plan", maxlen=300)
-        _str(route["change_course_if"], p + "/change_course_if", maxlen=300)
-        _int(route["plan_set_at_floor"], p + "/plan_set_at_floor", lo=0)
-        if route["remaining_nodes"] is not None:
-            for i, node in enumerate(_list(route["remaining_nodes"], p + "/remaining_nodes", maxlen=40)):
-                _str(node, f"{p}/remaining_nodes/{i}", maxlen=40, nullable=False, nonempty=True)
-        for key in ("next_rest_in", "next_elite_in", "next_shop_in", "boss_in"):
-            _int(route[key], f"{p}/{key}", lo=1)
-
-    glossary = facts.get("glossary")
-    if glossary is not None:
+    if "glossary" in facts:
         p = "/glossary"
-        _obj(glossary, p, ("items",))
-        for i, x in enumerate(_list(glossary["items"], p + "/items", maxlen=40)):
+        _obj(facts["glossary"], p, ("items",))
+        items = _list(facts["glossary"]["items"], p + "/items", maxlen=MAX_GLOSSARY_TERMS)
+        for i, x in enumerate(items):
             q = f"{p}/items/{i}"
             _obj(x, q, ("term", "definition"))
-            _str(x["term"], q + "/term", maxlen=_SHORT, nullable=False, nonempty=True)
-            _str(x["definition"], q + "/definition", maxlen=400, nullable=False, nonempty=True)
+            _str(x["term"], q + "/term", maxlen=_NAME, nullable=False, nonempty=True)
+            _str(x["definition"], q + "/definition", maxlen=_TEXT, nullable=False, nonempty=True)
+        _unique(items, "term", p + "/items")
 
     run = facts["run"]
     if run is not None:
