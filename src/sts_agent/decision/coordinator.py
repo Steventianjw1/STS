@@ -119,6 +119,8 @@ class CoordStats:
     search_decisions: int = 0
     search_misses: int = 0
     autobattle_combats: int = 0
+    offer_handoffs: int = 0       # in-fight offers Mentor held that this agent's model decided
+    offer_ai_picks: int = 0       # held in-fight offers handed back to Mentor's own recommendation
     blocked: set = field(default_factory=set)   # (view fingerprint, action_id)
 
 
@@ -130,7 +132,7 @@ _REWARD_KIND = {"gold": "gold_reward", "potion": "potion_reward", "relic": "reli
 
 class RunCoordinator:
     def __init__(self, client, policy: LLMDecisionPolicy, *, planner=None, recorder=None, expert_stats=None, autobattle=None,
-                 limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
+                 offer_handoff: bool = False, limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
                  facts_source: str = "observed", objective: str,
                  state_path=None, clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
                  log: Callable[[str], None] = print):
@@ -139,6 +141,10 @@ class RunCoordinator:
         self.client, self.policy, self.planner, self.rec = client, policy, planner, recorder
         self.expert_stats = expert_stats
         self.autobattle = autobattle
+        self.offer_handoff = offer_handoff and autobattle is not None
+        self._offer_hold: bool | None = None         # Mentor's answer to the last hold request (None: not asked)
+        self._offers_answered: dict = {}             # held offer id -> clock time one answer was sent
+        self._handoff = False                        # True only while deciding a held offer
         self.lim = limits or Limits()
         self.scope, self.run_id, self.run_id_source = scope, run_id, run_id_source
         self.facts_source, self.objective = facts_source, objective
@@ -242,14 +248,17 @@ class RunCoordinator:
             raise _Stop(STOP_AUTOBATTLE_FAILED, str(exc), view) from exc
 
     def _delegate_autobattle(self, view):
-        """Yield the whole fight, including its selection screens, to native Autobattle."""
+        """Yield the whole fight to native Autobattle; a held in-fight offer is answered once (offer_handoff)."""
         if self._restore_pending:
             self._restore_pending = False
             self._load_state(view)
         if view.in_combat:
             self._track_encounter(view)
+        hold = self._request_offer_hold()
+        self._offers_answered.clear()
         self._autobattle_control("on", view)
-        self.log("combat: handing the fight to Spire Mentor Autobattle (no LLM combat actions)")
+        self.log("combat: handing the fight to Spire Mentor Autobattle (no LLM combat actions"
+                 + ("; offers an enemy opens come back to DeepSeek)" if hold else ")"))
         if self.rec:
             self.rec.event("autobattle_started", {"source": "spire_mentor_autobattle", "encounter": view.encounter_key})
         while True:
@@ -271,6 +280,8 @@ class RunCoordinator:
                 return
             if status.get("mode") != "Advisor" or not status.get("autobattle") or not status.get("autoplay"):
                 raise _Stop(STOP_AUTOBATTLE_FAILED, "Mentor stopped Autobattle; no LLM combat fallback", view)
+            if hold and status.get("fight_offer_held") is not None:
+                self._answer_held_offer(str(status["fight_offer_held"]))
             self.sleep(self.lim.poll_interval_s)
             observed = self._observe_tolerant("autobattle", self.last_progress + self.lim.ready_timeout_s)
             if observed is not None:
@@ -279,6 +290,81 @@ class RunCoordinator:
                     self._track_encounter(view)
                 if view.terminal:
                     self._raise_if_stop(view)
+
+    def _request_offer_hold(self) -> bool:
+        """Ask Mentor to hold in-fight choose-a-card offers instead of answering them.
+
+        False leaves the fight exactly as before: Mentor answers every offer itself.
+        """
+        if not self.offer_handoff:
+            return False
+        try:
+            active, detail = self.autobattle.control("hold_offers").get("fight_offer_hold") is True, ""
+        except GameClientError as exc:
+            active, detail = False, str(exc)[:300]
+        if active != self._offer_hold:
+            self._offer_hold = active
+            self.log("combat: Mentor holds in-fight offers for this agent" if active else
+                     f"combat: in-fight offers stay with Mentor (hold unavailable{': ' + detail if detail else ''})")
+            if self.rec:
+                self.rec.event("autobattle_offer_hold", {"active": active, "detail": detail})
+        return active
+
+    def _answer_held_offer(self, offer: str):
+        """Mentor is holding one in-fight offer: answer it exactly once, then Mentor plays on.
+
+        An offer an enemy opened during its turn has no fight search in Mentor (it would score the
+        options as deck picks), so the model decides it with the fight in view. Any other held
+        offer goes back to Mentor's own recommendation, which is what it would have played.
+        """
+        sent = self._offers_answered.get(offer)
+        if sent is not None:
+            if self.clock() - sent >= self.lim.ready_timeout_s:
+                raise _Stop(STOP_AUTOBATTLE_FAILED, "an in-fight offer stayed open after it was answered; "
+                                                    "not answering it twice", self.last_view)
+            return
+        deadline = self.clock() + self.lim.ready_timeout_s
+        stable, prev = 0, None
+        while True:   # the screen as this agent reads it must be the settled choose-a-card picker
+            self._check_global()
+            v = self._observe_tolerant("held_offer", deadline)
+            if v is not None:
+                if v.terminal:
+                    self._raise_if_stop(v)
+                choose = (v.kind == "card_select" and v.ready and bool(v.candidates)
+                          and v.facts["screen_details"].get("screen_type") == "choose")
+                stable = stable + 1 if choose and v.fingerprint == prev else int(choose)
+                prev = v.fingerprint
+                if stable >= self.lim.settle_polls:
+                    break
+            if self.clock() >= deadline:
+                raise _Stop(STOP_AUTOBATTLE_FAILED, "Mentor is holding an in-fight offer this agent cannot read "
+                                                    f"(screen {v.kind if v else 'unreadable'})", v)
+            self.sleep(self.lim.poll_interval_s)
+        side = ((v.facts.get("combat_context") or {}).get("combat") or {}).get("turn_side")
+        by = "llm" if side == "enemy" else "mentor"
+        cards = [c.get("name") for c in v.facts["screen_details"].get("cards") or []]
+        if self.rec:
+            self.rec.event("autobattle_offer", {"offer": offer, "turn_side": side, "decided_by": by, "cards": cards,
+                                                "observation_fingerprint": v.fingerprint})
+        if by == "mentor":
+            self._offers_answered[offer] = self.clock()   # one request only; its effect is seen by polling
+            try:
+                self.autobattle.control("ai_pick")
+            except GameClientError as exc:   # e.g. the hold ended by itself; a still-open offer stops the run above
+                self.log(f"combat: Mentor did not take the held offer back: {str(exc)[:200]}")
+                return
+            self.stats.offer_ai_picks += 1
+            self.log(f"combat: held offer {cards} (turn side {side}) -> Mentor's own pick")
+            return
+        self.log(f"combat: held offer {cards} opened in the enemy's turn -> DeepSeek decides this one choice")
+        self._handoff = True
+        try:
+            if self._decide(v):
+                self._offers_answered[offer] = self.clock()
+                self.stats.offer_handoffs += 1
+        finally:
+            self._handoff = False
 
     def _raise_if_stop(self, v: ScreenView):
         if v.terminal:
@@ -527,7 +613,7 @@ class RunCoordinator:
     def _maybe_refresh_strategy(self, v: ScreenView):
         if self.planner is None:
             return
-        if (v.in_combat or self._fight_overlay(v)) and self.strat_revision > 0:
+        if (v.in_combat or self._fight_overlay(v) or self._handoff) and self.strat_revision > 0:
             return  # ordinary card plays never trigger a refresh; refresh after the combat ends
         facts = self._strategic_facts(v)
         route_key = ((facts["run"]["act"], facts["run"]["floor"],
@@ -636,7 +722,14 @@ class RunCoordinator:
                 self.shop_entry = {"encounter_key": v.encounter_key,
                                    "gold": (v.facts.get("player") or {}).get("gold")}
             support = {**(support or {}), "shop_budget": _shop_packages(v, self.shop_entry["gold"])}
-        overlay = self._fight_overlay(v)
+        overlay = self._fight_overlay(v) or self._handoff
+        if self._handoff:
+            lims.append("AUTOBATTLE HANDOFF: an enemy's action opened this offer during its turn. Spire Mentor is "
+                        "playing this fight and is holding it for this one choice, because it has no fight search for "
+                        "an enemy-opened offer. Read each option's own text for what it does. A choice an enemy forces "
+                        "is normally a cost to you in this fight, not a card worth owning: do not score it as a deck "
+                        "pick. Compare what each option costs over the turns this fight is likely to last with your "
+                        "current HP, Block and draw (facts.combat_context). Mentor resumes after your choice.")
         if overlay:
             lims.append("This picker opened during a fight that is still in progress: choose with the enemy intent, "
                         "your HP, Block and energy in mind (facts.combat_context).")
@@ -653,6 +746,7 @@ class RunCoordinator:
             screen={"kind": v.kind, "state_type": v.state_type,
                     "encounter_key": self.encounter_key if overlay else v.encounter_key,
                     **({"during_combat": True} if overlay else {}),
+                    **({"autobattle_handoff": True} if self._handoff else {}),
                     "capability": {"status": cap.get("status"), "live_validated": False, "mod_revision": MOD_REVISION}},
             observation_fingerprint=v.fingerprint, facts_source=self.facts_source, facts=facts,
             candidates=cands, bindings={c["action_id"]: v.bindings[c["action_id"]] for c in cands},
@@ -690,6 +784,10 @@ class RunCoordinator:
         self._track_encounter(v)
         if v.kind == "map":
             self._remember_map(v)
+        self._decide(v)
+
+    def _decide(self, v: ScreenView) -> bool | None:
+        """One decision on a ready screen. True when a single action was sent and resolved."""
         # Forced progress needs neither strategy, decision support nor a model call.
         # Classify before rejection filtering so a rejected alternative cannot
         # turn a real choice into an automatic click.
@@ -712,8 +810,7 @@ class RunCoordinator:
                                 facts_source=self.facts_source, observation_fingerprint=v.fingerprint,
                                 candidate=cand, binding=binding, reason=ch.reason)
             self.log(f"[{self.seq}] {v.kind}: {cand['description']} - {ch.reason} Skipping LLM.")
-            self._execute_action(self.seq, cand, ch, binding, v)
-            return
+            return self._execute_action(self.seq, cand, ch, binding, v)
         self._maybe_refresh_strategy(v)
         frame = self._frame(v)
         if not frame.candidates:
@@ -767,7 +864,7 @@ class RunCoordinator:
         elif cand["kind"] == "reward_batch":
             self._execute_reward_batch(seq, ch, binding, v)
         else:
-            self._execute_action(seq, cand, ch, binding, v)
+            return self._execute_action(seq, cand, ch, binding, v)
 
     def _execute_shop_plan(self, seq, ch, frame, view):
         """Execute one model's ordered basket, observing and validating every purchase."""
@@ -953,6 +1050,8 @@ class RunCoordinator:
                     if resolution == "end_turn" and v.kind == "combat" and v.ready:
                         done = (pre.combat_round is None or v.combat_round is None
                                 or v.combat_round > pre.combat_round)
+                    if self._handoff and v.kind != pre.kind:
+                        return v, "resolved"   # the picker closed; Mentor is already playing the fight on
                     if stable >= self.lim.settle_polls and done:
                         return v, "resolved"
             if self.clock() >= deadline:
@@ -1186,6 +1285,8 @@ class RunCoordinator:
             "evaluation": self._evaluation(),
             "combat_search_decisions": s.search_decisions, "combat_search_misses": s.search_misses,
             "autobattle_combats": s.autobattle_combats,
+            "autobattle_offer_hold": self._offer_hold,
+            "autobattle_offer_handoffs": s.offer_handoffs, "autobattle_offer_ai_picks": s.offer_ai_picks,
             "recent_outcomes": list(self.recent_outcomes),
             "model_usage": budget.summary() if budget is not None else None,
             "elapsed_s": round(self.clock() - self.session_start, 2),

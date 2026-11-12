@@ -7,7 +7,10 @@ using Godot;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Nodes.Screens;
+using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Runs;
 
 namespace STS2_MCP;
@@ -16,7 +19,8 @@ public static partial class McpMod
 {
     private static Dictionary<string, object?>? ExecuteAgentStartupOption(string option, Node root)
     {
-        if (option is "agent_autobattle_status" or "agent_autobattle_on" or "agent_autobattle_off")
+        if (option is "agent_autobattle_status" or "agent_autobattle_on" or "agent_autobattle_off"
+            or "agent_autobattle_hold_offers" or "agent_autobattle_ai_pick")
             return ExecuteAgentAutobattle(option);
         if (option != "agent_startup_status" && option != "agent_abandon_run" &&
             !option.StartsWith("agent_ascension_", StringComparison.Ordinal)) return null;
@@ -89,13 +93,29 @@ public static partial class McpMod
                     advisorType.GetMethod("ToggleAutoPlay")!.Invoke(advisor, null);
                 mode.SetValue(null, Enum.Parse(mode.PropertyType, "Off"));
                 config.GetProperty("CoachOnAtLaunch")!.SetValue(null, false);
+                try { SetAgentOfferHold(assembly, advisorType, false); } catch { }
+            }
+            else if (option == "agent_autobattle_hold_offers")
+            {
+                // Mentor's own pause_on: Autobattle then holds every in-fight choose-a-card screen
+                // instead of answering it, and carries on after the choice is made.
+                SetAgentOfferHold(assembly, advisorType, true);
+            }
+            else if (option == "agent_autobattle_ai_pick")
+            {
+                // Mentor's own one-decision takeover (its F6): it plays its standing recommendation once.
+                if (AgentHeldOfferId(advisorType, advisor) == null)
+                    return Error("Spire Mentor is not holding an in-fight offer.");
+                advisorType.GetMethod("ExecuteBestOnce")!.Invoke(advisor, null);
             }
             return new Dictionary<string, object?>
             {
                 ["status"] = "ok", ["autobattle_version"] = 1,
                 ["combat_in_progress"] = fighting, ["mode"] = mode.GetValue(null)!.ToString(),
                 ["autobattle"] = autobattle.GetValue(advisor), ["autoplay"] = armed.GetValue(null),
-                ["brain"] = advisorType.GetProperty("CurrentBrain")!.GetValue(null)
+                ["brain"] = advisorType.GetProperty("CurrentBrain")!.GetValue(null),
+                ["fight_offer_hold"] = AgentOfferHoldActive(assembly),
+                ["fight_offer_held"] = AgentHeldOfferId(advisorType, advisor)
             };
         }
         catch (Exception exc)
@@ -103,5 +123,70 @@ public static partial class McpMod
             return Error("Spire Mentor Autobattle API is incompatible: " +
                          (exc is TargetInvocationException call ? call.InnerException?.Message : exc.Message));
         }
+    }
+
+    // pause_on id of the screen Mentor shows for an in-fight "choose a card" offer (its ScreenName, normalized).
+    private const string AgentOfferHoldId = "nchooseacardselectionscreen";
+    private static bool _agentAddedOfferHold;
+
+    private static object? MentorPauseConfig(Assembly assembly, out PropertyInfo? pauseOn, out PropertyInfo? effective)
+    {
+        var type = assembly.GetType("SpireMentor.SimConfig");
+        pauseOn = type?.GetProperty("PauseOn");
+        effective = type?.GetProperty("EffectivePauseOn");
+        return type?.GetField("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+    }
+
+    private static FieldInfo? MentorPausedKey(Type advisorType) =>
+        advisorType.GetField("_pausedKey", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    // Null when this Mentor build has no pause_on; otherwise whether the hold applies to this launch.
+    private static bool? AgentOfferHoldActive(Assembly assembly)
+    {
+        try
+        {
+            var instance = MentorPauseConfig(assembly, out _, out var effective);
+            if (instance == null || effective == null) return null;
+            return effective.GetValue(instance) is IEnumerable<string> ids && ids.Contains(AgentOfferHoldId);
+        }
+        catch { return null; }
+    }
+
+    private static void SetAgentOfferHold(Assembly assembly, Type advisorType, bool on)
+    {
+        var instance = MentorPauseConfig(assembly, out var pauseOn, out _);
+        // Without the paused-decision record and the one-shot takeover a held offer could never be released.
+        if (instance == null || pauseOn == null || MentorPausedKey(advisorType) == null ||
+            advisorType.GetMethod("ExecuteBestOnce") == null)
+            throw new InvalidOperationException("this Spire Mentor build cannot hold in-fight offers");
+        var ids = (pauseOn.GetValue(instance) as IEnumerable<string> ?? Array.Empty<string>()).ToList();
+        if (on && !ids.Contains(AgentOfferHoldId))
+        {
+            ids.Add(AgentOfferHoldId);
+            _agentAddedOfferHold = true;
+        }
+        else if (!on && _agentAddedOfferHold)
+        {
+            ids.Remove(AgentOfferHoldId);
+            _agentAddedOfferHold = false;
+        }
+        else return;
+        pauseOn.SetValue(instance, ids);
+    }
+
+    // The open in-fight choose-a-card screen, when Mentor recorded that it is holding exactly that screen.
+    // Mentor's record is "<advice_for>|<event>|<floor>|<screen node id>"; null means "not held" or "unknown".
+    private static string? AgentHeldOfferId(Type advisorType, object advisor)
+    {
+        try
+        {
+            if (!CombatManager.Instance.IsInProgress) return null;
+            if (NOverlayStack.Instance?.Peek() is not NChooseACardSelectionScreen screen) return null;
+            string id = screen.GetInstanceId().ToString();
+            return MentorPausedKey(advisorType)?.GetValue(advisor) is string key &&
+                   key.StartsWith("card_reward|", StringComparison.Ordinal) &&
+                   key.EndsWith("|" + id, StringComparison.Ordinal) ? id : null;
+        }
+        catch { return null; }
     }
 }

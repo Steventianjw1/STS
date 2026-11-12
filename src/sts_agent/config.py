@@ -75,6 +75,8 @@ class ExpertStatsConfig:
 class CombatSearchConfig:
     enabled: bool = False                  # combat actions from the Spire Mentor advisor; LLM on any miss
     autobattle: bool = False               # Mentor executes whole fights; no LLM combat fallback
+    offer_handoff: bool = True             # autobattle only: Mentor holds in-fight card offers; the LLM decides the
+                                           # ones an enemy opens, Mentor's own pick answers the rest
     control_url: str = "http://127.0.0.1:8079"   # the advisor's localhost control plane
     advisor_log_dir: str | None = None     # folder of advisor-*.jsonl; None = derive from the advisor's /status
     advice_timeout_s: float = 30.0         # wait per decision for a matching board and its advice
