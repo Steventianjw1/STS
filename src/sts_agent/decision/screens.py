@@ -625,6 +625,13 @@ def _card_select(raw, obs):
                "can_confirm": cs.get("can_confirm"), "can_cancel": cs.get("can_cancel"),
                "can_skip": cs.get("can_skip")}
     v, b = _room("card_select", raw, obs, details)
+    if stype == "transform" and details["preview_showing"]:
+        # These UI samples cycle while waiting for confirmation (observed with
+        # Astrolabe). They are not committed cards and must not keep readiness,
+        # resolution, and fresh-binding checks from settling on the confirm.
+        details["preview_cards"] = []
+        v.limitations.append("Transform preview cards change while awaiting confirmation and are omitted; "
+                             "the resulting cards are unknown until the selection is confirmed.")
     if obs["combat"] is not None:  # a picker opened during a fight (potion, card effect): the fight is still on
         v.facts["combat_context"] = {"label": "THIS PICKER IS OPEN DURING A COMBAT; current combat state",
                                      **{k: val for k, val in _combat_facts(obs).items()
