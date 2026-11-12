@@ -28,7 +28,7 @@ from pathlib import Path
 from . import AGENT_VERSION, STS2MCP_SOURCE_DESCRIBE
 from .client import GameClient, GameClientError, parse_mod_version
 from .config import load_config
-from . import enemy_patterns
+from . import enemy_patterns, game_pin
 from .decision.coordinator import LLM_PROVENANCE_LIVE, LLM_PROVENANCE_SCRIPTED, RunCoordinator
 from .decision.models import DecisionFrame
 from .decision.offline import ScriptedTextModel
@@ -216,6 +216,12 @@ def cmd_doctor(args) -> int:
         line("WARN", f"mod version {mod_version} has not been checked by this adapter (checked: {SOURCE_VERIFIED_MOD})")
 
     try:
+        line("ok", f"running game is the pinned build {game_pin.PINNED_GAME_BUILD}: {game_pin.require_running()}")
+    except game_pin.GamePinError as e:
+        line("FAIL", f"game build: {e}")
+        ok = False
+
+    try:
         raw = client.get_state()
     except GameClientError as e:
         line("FAIL", f"GET /api/v1/singleplayer failed: {e}")
@@ -366,6 +372,11 @@ def _run(args, command: str) -> int:
     except GameClientError as e:
         print(f"cannot reach the mod at {cfg.base_url}: {e}", file=sys.stderr)
         return 2
+    try:
+        game_pin.require_running()   # never act on a build the mod and simulator do not support
+    except game_pin.GamePinError as e:
+        print(f"Refusing to play: {e}", file=sys.stderr)
+        return 2
     if cfg.policy == "llm":
         return run_llm_session(cfg, client, model, command)
     mod_version, run_id = _versions(client)
@@ -392,6 +403,7 @@ def _shareable_config(cfg) -> dict:
     """Config for the manifest, minus local filesystem paths."""
     d = cfg.to_dict()
     d.pop("game_dir", None)
+    d.pop("pinned_game_dir", None)
     d.pop("trace_dir", None)
     d.get("expert_stats", {}).pop("cache_dir", None)
     d.get("combat_search", {}).pop("advisor_log_dir", None)
@@ -470,18 +482,28 @@ def cmd_play_run(args) -> int:
 
 def cmd_start_run(args) -> int:
     try:
-        character, ascension = prompt_settings(args.character, args.ascension)
         cfg, _, client = _build(args)
+        if args.pin_only:
+            copy = game_pin.frozen_copy(cfg.pinned_game_dir)
+            game_pin.save_copy(copy, game_pin.verify_running(), cfg.game_dir)
+            print(f"pin: {game_pin.PINNED_GAME_BUILD} is saved at {copy}")
+            return 0
+        character, ascension = prompt_settings(args.character, args.ascension)
         if cfg.policy != "llm":
             raise SetupError("start-run requires policy 'llm'.")
         model = _build_model(cfg)  # Validate provider before replacing the current run; no model call.
+        # Pinned build only: launches the saved copy when no game runs, refuses any other build.
+        game_pin.start_pinned(client, game_dir=cfg.game_dir, copy_root=cfg.pinned_game_dir)
+        if cfg.game_build and not game_pin.is_pinned(cfg.game_build):
+            print(f"pin: WARNING: config declares game_build {cfg.game_build}; the running game is "
+                  f"{game_pin.PINNED_GAME_BUILD}", file=sys.stderr)
         client.hello()
         RunStartup(client, timeout_s=args.setup_timeout_s,
                    poll_interval_s=cfg.limits.poll_interval_s).start(character, ascension)
     except (EOFError, KeyboardInterrupt):
         print("Run setup cancelled.", file=sys.stderr)
         return 130
-    except (StartupError, SetupError, GameClientError, OSError, ValueError) as exc:
+    except (StartupError, SetupError, game_pin.GamePinError, GameClientError, OSError, ValueError) as exc:
         print(f"Cannot start run: {exc}", file=sys.stderr)
         return 2
     return run_llm_session(cfg, client, model, "play-run")
@@ -592,6 +614,8 @@ def main(argv=None) -> int:
     s.add_argument("--character", type=character_id, help="character name or number (default: prompt)")
     s.add_argument("--ascension", type=ascension_level, help="0-10 (default: prompt)")
     s.add_argument("--setup-timeout-s", type=float, default=120.0)
+    s.add_argument("--pin-only", action="store_true",
+                   help=f"only save the frozen {game_pin.PINNED_GAME_BUILD} game copy, then exit")
     s.add_argument("--trace-dir")
     s.add_argument("--no-raw", action="store_true")
     s.add_argument("--max-actions", type=int)

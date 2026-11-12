@@ -92,6 +92,7 @@ class Config:
     record_raw: bool = True                # write debug_raw.jsonl (not training data)
     game_build: str | None = None          # declare your STS2 build; the API does not report it
     game_dir: str | None = None            # optional, used by `doctor` to read the mod manifest
+    pinned_game_dir: str = "data/game"     # frozen copy of the supported game build lives in <this>/<build>
     monster_data_path: str | None = "data/monster_reference/monsters.json"  # enemy move patterns; missing = unused
     limits: Limits = field(default_factory=Limits)
     llm: LLMConfig = field(default_factory=LLMConfig)
