@@ -22,6 +22,8 @@ class ChoiceResult:
     attempts: list = field(default_factory=list)   # [{"response_text", "error", "call"}]
     history_dropped: int = 0
     support_trim: str | None = None      # decision_support reduction step used for this prompt
+    source: str = "llm"                  # "llm" or "spire_mentor_search"
+    search: dict | None = None           # combat-search record (hit, or the miss that led to the LLM)
 
     @property
     def ok(self) -> bool:

@@ -98,6 +98,8 @@ class CoordStats:
     strategic_failures: int = 0
     combats_finished: int = 0
     combats_started: int = 0
+    search_decisions: int = 0
+    search_misses: int = 0
     blocked: set = field(default_factory=set)   # (view fingerprint, action_id)
 
 
@@ -485,8 +487,15 @@ class RunCoordinator:
         self.last_progress = self.clock()
         self.stats.decisions += 1
         self.stats.model_retries += max(0, len(result.attempts) - 1)
+        if result.search is not None:
+            if result.source == "llm":
+                self.stats.search_misses += 1
+                self.log(f"[{seq}] combat search miss -> LLM: {result.search.get('miss')}")
+            else:
+                self.stats.search_decisions += 1
         if self.rec:
-            self.rec.record("llm_decision", seq=seq, provenance=self._provenance_label(),
+            self.rec.record("llm_decision", seq=seq, provenance=self._provenance_label(result.source),
+                            decision_source=result.source, search=result.search,
                             policy={"name": self.policy.name, "version": self.policy.version},
                             prompt_version=self.policy.prompt_version, model=model_identity(self.policy.model),
                             frame=frame.to_record(),
@@ -728,7 +737,9 @@ class RunCoordinator:
         self.log(f"resumed run state saved at act {saved[0]} floor {saved[1]}"
                  f"{' (route plan restored)' if self.route_plan else ''}")
 
-    def _provenance_label(self) -> str:
+    def _provenance_label(self, source: str = "llm") -> str:
+        if source != "llm":
+            return "search_generated_synthetic_input" if self.facts_source == "synthetic" else "search_generated"
         if self.policy.scripted:
             return "synthetic_scripted_model"
         return "llm_generated_synthetic_input" if self.facts_source == "synthetic" else "llm_generated"
@@ -806,6 +817,7 @@ class RunCoordinator:
             "model_corrective_retries": s.model_retries, "strategic_model_updates": s.strategic_updates,
             "strategic_failures": s.strategic_failures, "combats_finished": s.combats_finished,
             "evaluation": self._evaluation(),
+            "combat_search_decisions": s.search_decisions, "combat_search_misses": s.search_misses,
             "recent_outcomes": list(self.recent_outcomes),
             "model_usage": budget.summary() if budget is not None else None,
             "elapsed_s": round(self.clock() - self.session_start, 2),

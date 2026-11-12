@@ -87,3 +87,17 @@ elite_block_attack_pct = 20.0     # block gap rule: elite attack turn >= this % 
 elite_trigger_steps = 3           # re-plan trigger: planned elite within this many steps while gaps remain
 ancient_advisor_enabled = true    # relic effects vs. deck/state, offer stats, community lift, patched act-map outlook
 # Optional SPIRE_CODEX_API_KEY belongs in .env, never in this file.
+
+# Combat search (optional). Combat actions come from the Spire Mentor mod's advisor
+# (https://github.com/tfriedel/spire-mentor, MIT): MCTS over a simulator of the game. Requires the
+# Spire Mentor mod installed beside STS2_MCP with its coach (Advisor mode) on, on a game build it
+# supports. This agent only reads the advisor and still executes through STS2_MCP. Every other
+# screen, and any combat decision the search cannot answer, is decided by the LLM.
+[combat_search]
+enabled = false
+control_url = "http://127.0.0.1:8079"   # the advisor's control port (8079 for the mod's default port 9002)
+# advisor_log_dir = 'C:\Users\<you>\AppData\Local\SpireMentor\logs\realgame_advisor'  # default: auto-detected
+advice_timeout_s = 30.0            # per decision: wait for the advisor's board to match ours and for its advice
+poll_interval_s = 0.2
+request_timeout_s = 2.0
+cooldown_s = 120.0                 # after 3 consecutive timeouts, skip the search this long
