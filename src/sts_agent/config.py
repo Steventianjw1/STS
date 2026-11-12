@@ -72,6 +72,17 @@ class ExpertStatsConfig:
 
 
 @dataclass
+class CombatSearchConfig:
+    enabled: bool = False                  # combat actions from the Spire Mentor advisor; LLM on any miss
+    control_url: str = "http://127.0.0.1:8079"   # the advisor's localhost control plane
+    advisor_log_dir: str | None = None     # folder of advisor-*.jsonl; None = derive from the advisor's /status
+    advice_timeout_s: float = 30.0         # wait per decision for a matching board and its advice
+    poll_interval_s: float = 0.2
+    request_timeout_s: float = 2.0
+    cooldown_s: float = 120.0              # pause the search this long after 3 consecutive timeouts
+
+
+@dataclass
 class Config:
     policy: str = "llm"                    # "llm" (default) or "baseline" (explicit comparison mode)
     base_url: str = "http://127.0.0.1:15526"
@@ -85,6 +96,7 @@ class Config:
     limits: Limits = field(default_factory=Limits)
     llm: LLMConfig = field(default_factory=LLMConfig)
     expert_stats: ExpertStatsConfig = field(default_factory=ExpertStatsConfig)
+    combat_search: CombatSearchConfig = field(default_factory=CombatSearchConfig)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -107,7 +119,8 @@ _SECRET_KEYS = {"api_key", "anthropic_api_key", "openai_api_key", "deepseek_api_
 
 
 def _apply(cfg: Config, data: dict, p: Path) -> None:
-    tables = {"limits": cfg.limits, "llm": cfg.llm, "expert_stats": cfg.expert_stats}
+    tables = {"limits": cfg.limits, "llm": cfg.llm, "expert_stats": cfg.expert_stats,
+              "combat_search": cfg.combat_search}
     top = {f.name for f in fields(Config)} - set(tables)
     for k, v in data.items():
         if k in tables:

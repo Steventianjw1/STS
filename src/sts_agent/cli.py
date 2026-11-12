@@ -32,6 +32,8 @@ from .decision.coordinator import LLM_PROVENANCE_LIVE, LLM_PROVENANCE_SCRIPTED, 
 from .decision.models import DecisionFrame
 from .decision.offline import ScriptedTextModel
 from .decision.policy import LLMDecisionPolicy, model_identity
+from .decision.search_policy import SearchCombatPolicy
+from .spire_mentor import SpireMentorAdvisor
 from .decision.prompts import DECISION_PROMPT_VERSION, DEFAULT_OBJECTIVE
 from .decision.screens import CAPABILITIES, MOD_REVISION, build_view, capability_table
 from .observation import normalize, summarize
@@ -96,6 +98,27 @@ def _build_model(cfg):
     except ProviderConfigError as e:
         raise SetupError(f"LLM policy is not set up: {e}. Nothing was sent. "
                          "(Use --policy baseline only if you explicitly want the heuristic comparison mode.)") from None
+
+
+def _advisor(cfg) -> SpireMentorAdvisor:
+    cs = cfg.combat_search
+    return SpireMentorAdvisor(cs.control_url, advisor_log_dir=cs.advisor_log_dir,
+                              advice_timeout_s=cs.advice_timeout_s, poll_interval_s=cs.poll_interval_s,
+                              request_timeout_s=cs.request_timeout_s, cooldown_s=cs.cooldown_s)
+
+
+def _doctor_combat_search(cfg, line) -> None:
+    adv = _advisor(cfg)
+    status = adv.status()
+    if status is None:
+        line("WARN", f"combat search: no Spire Mentor advisor at {cfg.combat_search.control_url}. Combat will "
+                     "fall back to the LLM. Is the Spire Mentor mod installed with its coach turned on?")
+        return
+    line("ok" if status.get("connected") else "WARN",
+         f"combat search: advisor reachable; connected to the mod: {bool(status.get('connected'))}")
+    log = adv.find_log()
+    line("ok" if log else "WARN", "combat search: advisor log " + (f"found ({log.name})" if log else
+         "not found yet (it appears after the first advice; else set [combat_search].advisor_log_dir)"))
 
 
 def _objective(cfg) -> str:
@@ -169,6 +192,8 @@ def cmd_doctor(args) -> int:
 
     if cfg.game_dir:
         _doctor_game_dir(Path(cfg.game_dir), line)
+    if cfg.policy == "llm" and cfg.combat_search.enabled:
+        _doctor_combat_search(cfg, line)
 
     try:
         hello = client.hello()
@@ -367,6 +392,7 @@ def _shareable_config(cfg) -> dict:
     d.pop("game_dir", None)
     d.pop("trace_dir", None)
     d.get("expert_stats", {}).pop("cache_dir", None)
+    d.get("combat_search", {}).pop("advisor_log_dir", None)
     return d
 
 
@@ -381,6 +407,10 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     if facts_source == "synthetic" or getattr(client, "data_source", None) == "synthetic":
         facts_source = "synthetic"
     policy = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes)
+    # Live observed combat only: synthetic or scripted sessions never consult a running advisor.
+    if cfg.combat_search.enabled and facts_source != "synthetic" and not scripted:
+        policy = SearchCombatPolicy(policy, _advisor(cfg))
+        log(f"combat search: Spire Mentor advisor at {cfg.combat_search.control_url} (LLM on any miss)")
     planner = StrategicPlanner(model) if cfg.llm.strategic_planner else None
     ident = model_identity(model)
     rec = TraceRecorder(cfg.trace_dir, command=command, policy_name=policy.name, policy_version=policy.version,
