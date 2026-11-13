@@ -24,7 +24,8 @@ record_raw = true         # also write debug_raw.jsonl (raw API responses; not t
 
 # The agent only plays the game build its mod and simulator support (v0.107.1; see game_pin.py).
 # `./start` saves a frozen copy of that build under <pinned_game_dir>/<build>, outside Steam's
-# reach, and launches it when no game is running. `./start --pin-only` just saves the copy.
+# reach, and launches it when no game is running, refusing a copy whose mods folder lacks
+# STS2_MCP.dll. `./start --pin-only` just saves the copy and checks its mod.
 pinned_game_dir = "data/game"
 
 # Enemy move-pattern reference (fetch with `python tools/fetch_monster_data.py`). Fills the

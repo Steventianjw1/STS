@@ -2,11 +2,14 @@
 
 The build is read from the running game's own files, never from configuration.
 A frozen copy of that build is kept outside Steam's library so an update cannot
-replace it; the start script launches that copy. Change PINNED_GAME_BUILD only
-after the mod and the simulator/reference data have been ported to a newer patch.
+replace it; the start script launches that copy, after confirming the mod is
+installed in it, and then confirms that build is what is running. Change
+PINNED_GAME_BUILD only after the mod and the simulator/reference data have been
+ported to a newer patch.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -23,6 +26,7 @@ STEAM_APP_ID = "2868840"
 GAME_FOLDER = "Slay the Spire 2"
 RELEASE_INFO = "release_info.json"
 MARKER = "sts_agent_pin.json"
+MOD_NAME = "STS2_MCP"
 _VERSION = re.compile(r"v?\d+(\.\d+)+", re.I)
 
 
@@ -149,6 +153,42 @@ def _marker(copy: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def mod_files(game_dir) -> tuple[Path | None, Path | None]:
+    """The mod's DLL and manifest under <game>/mods: top level, or one folder down."""
+    mods = Path(game_dir) / "mods"
+
+    def find(name):
+        places = [mods / name, *sorted(mods.glob(f"*/{name}"))] if mods.is_dir() else []
+        return next((p for p in places if p.is_file()), None)
+    return find(MOD_NAME + ".dll"), find(MOD_NAME + ".json")
+
+
+def describe_mod(game_dir) -> str | None:
+    """Which mod build a game folder holds; None when the DLL is not there."""
+    dll, manifest = mod_files(game_dir)
+    if dll is None:
+        return None
+    try:
+        version = json.loads(manifest.read_text(encoding="utf-8-sig")).get("version") if manifest else None
+    except (OSError, ValueError, AttributeError):
+        version = None
+    built = time.strftime("%Y-%m-%d %H:%M", time.localtime(dll.stat().st_mtime))
+    digest = hashlib.sha256(dll.read_bytes()).hexdigest()[:12]
+    label = f"version {version}" if version else ("manifest unreadable" if manifest else f"no {MOD_NAME}.json manifest")
+    return f"{MOD_NAME} mod ({label}, file dated {built}, sha256 {digest}) at {dll}"
+
+
+def require_mod(game_dir) -> str:
+    """Description of the mod in a game folder. Fails closed when the game would start without it."""
+    found = describe_mod(game_dir)
+    if found is None:
+        raise GamePinError(
+            f"{Path(game_dir) / 'mods'} has no {MOD_NAME}.dll, so this {PINNED_GAME_BUILD} copy would start without "
+            f"the mod. Copy the {MOD_NAME}.dll built for {PINNED_GAME_BUILD} with this repository's extension, and "
+            f"its manifest {MOD_NAME}.json, into that folder, then run ./start again.")
+    return found
+
+
 def save_copy(copy: Path, games, game_dir=None, log=print) -> None:
     """Create the frozen copy when it is missing, from the running or installed pinned game."""
     if copy.exists():
@@ -178,8 +218,8 @@ def save_copy(copy: Path, games, game_dir=None, log=print) -> None:
     except BaseException:
         shutil.rmtree(partial, ignore_errors=True)
         raise
-    if not (copy / "mods" / "STS2_MCP.dll").is_file():
-        log(f"pin: WARNING: {copy / 'mods'} has no STS2_MCP.dll; install the mod there before launching this copy")
+    if describe_mod(copy) is None:
+        log(f"pin: WARNING: {copy / 'mods'} has no {MOD_NAME}.dll; install the mod there before launching this copy")
     log(f"pin: saved; a Steam update can no longer replace {PINNED_GAME_BUILD}")
 
 
@@ -218,8 +258,38 @@ def _reachable(client) -> bool:
         return False
 
 
+def _await_mod(client, wait_s: float, launched: bool) -> None:
+    """Wait for the mod to answer; stop early when the game closes or another build takes its place."""
+    started = time.monotonic()
+    next_look = started + 15.0
+    seen, misses = False, 0
+    while not _reachable(client):
+        now = time.monotonic()
+        if now >= next_look:
+            next_look = now + 10.0
+            try:
+                games = verify_running()
+            except GamePinError as exc:
+                if not launched:
+                    raise
+                raise GamePinError(f"{exc} It appeared after the saved copy was launched; if that repeats, the "
+                                   f"launch is being handed to Steam's own install.") from None
+            seen, misses = seen or bool(games), 0 if games else misses + 1
+            if launched and seen and misses >= 2:
+                raise GamePinError(
+                    f"the {PINNED_GAME_BUILD} game closed before the mod answered at {client.base_url}. "
+                    f"Start Steam first, then run ./start again; if the game still closes, read the game's own log.")
+        if now >= started + wait_s:
+            state = ("is running but the mod never answered: mods are disabled in the game (enable them in the "
+                     "game's mod settings and restart it), the mod failed to load, or it listens on another port "
+                     f"than {client.base_url}" if seen else
+                     f"did not bring up the mod at {client.base_url}: check that Steam is running and mods are enabled")
+            raise GamePinError(f"after {wait_s:.0f}s the {PINNED_GAME_BUILD} game {state}.")
+        time.sleep(1.0)
+
+
 def start_pinned(client, *, game_dir=None, copy_root="data/game", wait_s=180.0, log=print) -> Path:
-    """Start-script gate: save the pinned build, launch it when no game runs, and verify what is running."""
+    """Start-script gate: save the pinned build, launch it with the mod when no game runs, verify what runs."""
     copy = frozen_copy(copy_root)
     games = verify_running()
     try:
@@ -232,14 +302,12 @@ def start_pinned(client, *, game_dir=None, copy_root="data/game", wait_s=180.0, 
         if games:
             log(f"pin: {PINNED_GAME_BUILD} is running; waiting for the mod")
         else:
+            log(f"pin: {require_mod(copy)}")   # never launch a copy that would come up without the mod
             launch(copy, log)
-        deadline = time.monotonic() + wait_s
-        while not _reachable(client):
-            if time.monotonic() >= deadline:
-                raise GamePinError(
-                    f"the {PINNED_GAME_BUILD} game did not bring up the mod at {client.base_url} within {wait_s:.0f}s. "
-                    f"Check that Steam is running, mods are enabled, and STS2_MCP is installed in the game's mods folder.")
-            time.sleep(1.0)
+        _await_mod(client, wait_s, launched=not games)
     folder = require_running()
-    log(f"pin: game build {PINNED_GAME_BUILD} verified at {folder}")
+    log(f"pin: game build {PINNED_GAME_BUILD} verified at {folder}; the mod answers at {client.base_url}")
+    if folder.resolve() != copy.resolve():
+        log(f"pin: this game runs from {folder}, not the saved copy; "
+            f"{describe_mod(folder) or 'its mods folder has no ' + MOD_NAME + '.dll'}")
     return folder

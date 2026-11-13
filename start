@@ -2,7 +2,8 @@
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 # start-run only plays the pinned game build (src/sts_agent/game_pin.py): it launches the
-# frozen copy when no game is running and refuses a game that Steam has updated.
+# frozen copy, after checking the mod is installed in it, when no game is running, and refuses
+# a game that Steam has updated.
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 
 for python in .venv/bin/python .venv/Scripts/python.exe .venv/python.exe; do
