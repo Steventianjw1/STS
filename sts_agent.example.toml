@@ -1,6 +1,6 @@
 # Copy to sts_agent.toml (in the folder you run sts-agent from) and edit.
-# Keys are optional. Values match code defaults except max_output_tokens=4096 below
-# (code default: 1024). Supply a model via DEEPSEEK_MODEL, [llm].model, or --model.
+# Keys are optional. No local model/text/action budgets apply by default.
+# Supply a model via DEEPSEEK_MODEL, [llm].model, or --model.
 
 # Gameplay policy: "llm" (default; configured model chooses every action) or "baseline"
 # (explicit heuristic comparison mode, combat only; never used as a fallback).
@@ -33,7 +33,7 @@ pinned_game_dir = "data/game"
 monster_data_path = "data/monster_reference/monsters.json"
 
 [limits]
-max_actions = 300                  # card plays + end turns per play-combat session
+# max_actions = 300                # optional explicit action cap; omitted = unlimited
 max_no_progress_s = 90.0           # stop if the observed state never changes for this long
 poll_interval_s = 0.25
 ready_timeout_s = 60.0             # wait for the player's play phase (covers enemy turns)
@@ -42,7 +42,7 @@ play_resolution_timeout_s = 10.0   # accepted card play must visibly resolve wit
 end_turn_resolution_timeout_s = 60.0
 max_consecutive_rejections = 3
 max_total_rejections = 10
-max_run_actions = 3000             # per play-run session
+# max_run_actions = 3000           # optional explicit run action cap; omitted = unlimited
 
 [llm]
 provider = "deepseek"              # or "anthropic" for the original Claude adapter
@@ -50,18 +50,18 @@ provider = "deepseek"              # or "anthropic" for the original Claude adap
 # model = "<model id>"
 # Set DEEPSEEK_API_KEY in .env. DEEPSEEK_BASE_URL optionally overrides https://api.deepseek.com.
 # For anthropic, use ANTHROPIC_API_KEY instead. Never put credentials here.
-max_output_tokens = 16384
+# max_output_tokens = 16384        # optional override; DeepSeek default uses the provider limit
 timeout_s = 60.0                   # SDK timeout per connect and per wait for data; a call that keeps
                                    # receiving bytes can run longer. SDK retries are disabled.
-provider_retries = 2               # extra decision calls after a timeout, dropped connection, 429 or 5xx;
-                                   # nothing is sent to the game in between. 0 stops on the first failure.
-# deepseek_reasoning_effort = "high"  # low, high, or max; omit for provider default (model support varies)
-max_calls_per_run = 2000           # shared per session: decisions + strategy + corrective retries
+# provider_retries = 2             # optional cap; omitted = retry recoverable model failures
+# corrective_retries = 1           # optional cap; omitted = keep requesting a valid action
+deepseek_reasoning_effort = "medium" # low, medium (mapped to high), high, or max
+# max_calls_per_run = 2000         # optional explicit shared model-call budget; omitted = unlimited
 # max_input_tokens_per_run = 5000000
 # max_output_tokens_per_run = 500000
 # price_input_usd_per_mtok = 0.0   # set both prices to get an estimated cost in the summary
 # price_output_usd_per_mtok = 0.0
-max_input_bytes = 98304            # trim support detail, community advice, history, then all support; preserve facts/candidates
+# max_input_bytes = 98304          # optional local prompt cap; omitted = provider context limit only
 # objective = "Win the run (ordinary victory) with the current character at the current difficulty."
 strategic_planner = true
 what_if_tools = true               # the model may spend one extra call per decision on deck_after / route_projection

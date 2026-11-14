@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 
 from ..spire_mentor import SOURCE
-from .models import MAX_REASON_CHARS, ChoiceError, DecisionFrame, parse_choice
+from .models import ChoiceError, DecisionFrame, parse_choice
 from .policy import ChoiceResult, LLMDecisionPolicy
 
 
@@ -21,6 +21,7 @@ class SearchCombatPolicy:
         self.inner, self.advisor = inner, advisor
         self.name, self.version, self.prompt_version = inner.name, inner.version, inner.prompt_version
         self.model = inner.model
+        self.progress = inner.progress
 
     @property
     def scripted(self) -> bool:
@@ -34,7 +35,7 @@ class SearchCombatPolicy:
             p_win = rec.advice.get("p_win")
             reason = (f"Spire Mentor search: {rec.label or rec.action_id}"
                       + (f"; est. win {p_win:.0%}" if isinstance(p_win, (int, float)) else "")
-                      + (f"; {rec.advice['note']}" if rec.advice.get("note") else ""))[:MAX_REASON_CHARS]
+                      + (f"; {rec.advice['note']}" if rec.advice.get("note") else ""))
             text = json.dumps({"frame_id": frame.frame_id, "action_id": rec.action_id, "reason": reason,
                                "turn_intent": ""}, ensure_ascii=False)
             try:

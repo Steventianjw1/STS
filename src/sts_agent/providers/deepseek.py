@@ -23,18 +23,20 @@ class DeepSeekTextModel:
     provider = "deepseek"
     is_scripted = False
 
-    def __init__(self, model: str | None, *, max_output_tokens: int = 16384,
+    def __init__(self, model: str | None, *, max_output_tokens: int | None = None,
                  timeout_s: float = 60.0, budget: UsageBudget | None = None,
                  reasoning_effort: str | None = None,
                  client: Any = None, clock: Callable[[], float] = time.monotonic):
         if not isinstance(model, str) or not model.strip():
             raise ProviderConfigError("set DEEPSEEK_MODEL in .env, [llm] model, or --model")
         self.model = model.strip()
-        self.max_output_tokens = int(max_output_tokens)
+        self.max_output_tokens = None if max_output_tokens is None else int(max_output_tokens)
         self.timeout_s = float(timeout_s)
-        if reasoning_effort is not None and reasoning_effort not in ("low", "high", "max"):
-            raise ProviderConfigError("DeepSeek reasoning effort must be low, high, or max")
-        self.reasoning_effort = reasoning_effort
+        if reasoning_effort is not None and reasoning_effort not in ("low", "medium", "high", "max"):
+            raise ProviderConfigError("DeepSeek reasoning effort must be low, medium, high, or max")
+        self.requested_reasoning_effort = reasoning_effort
+        # DeepSeek's documented compatibility mapping has no distinct medium tier.
+        self.reasoning_effort = "high" if reasoning_effort == "medium" else reasoning_effort
         self.budget = budget or UsageBudget()
         self.clock = clock
         self.last_call: CallRecord | None = None
@@ -57,6 +59,8 @@ class DeepSeekTextModel:
         return {"provider": self.provider, "model": self.model,
                 "max_output_tokens": self.max_output_tokens, "timeout_s": self.timeout_s,
                 **self._reasoning_options(),
+                **({"requested_reasoning_effort": self.requested_reasoning_effort}
+                   if self.requested_reasoning_effort is not None else {}),
                 "sdk_retries": 0, "scripted": False}
 
     def _reasoning_options(self) -> dict:
@@ -70,7 +74,8 @@ class DeepSeekTextModel:
             response = self._client.chat.completions.create(
                 model=self.model, messages=[{"role": "system", "content": system},
                                             {"role": "user", "content": user}],
-                max_tokens=self.max_output_tokens, stream=False,
+                stream=False,
+                **({"max_tokens": self.max_output_tokens} if self.max_output_tokens is not None else {}),
                 response_format={"type": "json_object"}, **self._reasoning_options())
         except Exception as exc:
             status = getattr(exc, "status_code", None)

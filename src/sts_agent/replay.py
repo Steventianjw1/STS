@@ -115,12 +115,15 @@ def _validate_llm_decision(rec: dict, line_no: int) -> dict:
             problems.append(f"recorded action {chosen!r} was not offered in the frame")
         last = (rec.get("attempts") or [{}])[-1].get("response_text")
         try:
-            c = parse_choice(last, frame)
+            # Older traces chose travel alone; live decisions always require the merged contract.
+            c = parse_choice(last, frame, require_rest_option="rest_option" in (rec.get("choice") or {}))
             if c.action_id != chosen:
                 problems.append(f"recorded response selects {c.action_id!r}, trace says {chosen!r}")
             plan = list(c.shop_plan) if c.shop_plan is not None else None
             if plan != (rec.get("choice") or {}).get("shop_plan"):
                 problems.append("recorded response shop_plan differs from the trace")
+            if c.rest_option != (rec.get("choice") or {}).get("rest_option"):
+                problems.append("recorded response rest_option differs from the trace")
         except ChoiceError as e:
             problems.append(f"recorded response does not validate: {e}")
     if chosen is None and not rec.get("error_kind"):

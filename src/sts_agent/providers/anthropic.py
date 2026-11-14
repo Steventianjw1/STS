@@ -49,7 +49,7 @@ def sanitize(text: str, secret: str | None = None, limit: int = 300) -> str:
 class UsageBudget:
     """Per-run limits on model calls and tokens; ``None`` = unlimited."""
 
-    max_calls: int | None = 500
+    max_calls: int | None = None
     max_input_tokens: int | None = None
     max_output_tokens: int | None = None
     price_input_usd_per_mtok: float | None = None
@@ -98,14 +98,16 @@ class AnthropicTextModel:
     provider = "anthropic"
     is_scripted = False
 
-    def __init__(self, model: str | None, *, max_output_tokens: int = 1024, timeout_s: float = 60.0,
+    def __init__(self, model: str | None, *, max_output_tokens: int | None = 1024, timeout_s: float = 60.0,
                  budget: UsageBudget | None = None, client: Any = None,
                  clock: Callable[[], float] = time.monotonic):
         if not model or not isinstance(model, str):
             raise ProviderConfigError("no model configured: set [llm] model in sts_agent.toml or pass --model "
                                       "(use a current model id from the Claude API documentation)")
         self.model = model
-        self.max_output_tokens = int(max_output_tokens)
+        # Anthropic requires max_tokens; retain the existing configured default
+        # when the shared config delegates output length to the provider.
+        self.max_output_tokens = 16384 if max_output_tokens is None else int(max_output_tokens)
         self.timeout_s = float(timeout_s)
         self.budget = budget or UsageBudget()
         self.clock = clock

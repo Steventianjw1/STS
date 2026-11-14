@@ -38,8 +38,6 @@ from typing import Any
 SNAPSHOT_SCHEMA_VERSION = "sts2-strategic-snapshot-0"
 ASSESSMENT_SCHEMA_VERSION = "sts2-strategic-assessment-1"
 
-MAX_SNAPSHOT_BYTES = 64 * 1024
-MAX_MODEL_TEXT_BYTES = 16 * 1024
 MAX_DIAGNOSTIC_CHARS = 500
 
 DATA_SOURCES = ("synthetic", "manual", "observed")
@@ -57,9 +55,8 @@ DIMENSIONS = ("immediate_threats", "damage", "defense", "scaling", "draw_consist
               "potion_needs", "upcoming_opportunities")
 CONFIDENCE = ("low", "medium", "high")
 # standing_plan: the maintained deck plan every later choice is checked against.
-PLAN_LISTS = {"deck_needs": 160, "avoid": 160, "removal_targets": 80, "upgrade_targets": 80}   # key -> item chars
-PLAN_TEXTS = {"skip_rule": 240, "boss_prep": 240}
-MAX_PLAN_ITEMS = 4
+PLAN_LISTS = ("deck_needs", "avoid", "removal_targets", "upgrade_targets")
+PLAN_TEXTS = ("skip_rule", "boss_prep")
 
 _SHORT, _NAME, _TEXT = 80, 120, 1000
 MAX_GLOSSARY_TERMS = 60
@@ -105,12 +102,12 @@ def _int(v, path, *, lo=None, nullable=True, err=InputError):
         _fail(err, path, f"must be >= {lo}")
 
 
-def _str(v, path, *, maxlen, nullable=True, nonempty=False, err=InputError):
+def _str(v, path, *, maxlen=None, nullable=True, nonempty=False, err=InputError):
     if v is None and nullable:
         return
     if not isinstance(v, str):
         _fail(err, path, f"expected string{' or null' if nullable else ''}, got {type(v).__name__}")
-    if len(v) > maxlen:
+    if maxlen is not None and len(v) > maxlen:
         _fail(err, path, f"longer than {maxlen} characters")
     if nonempty and not v.strip():
         _fail(err, path, "must not be empty")
@@ -130,10 +127,10 @@ def _enum(v, path, allowed, *, nullable=True, err=InputError):
         _fail(err, path, f"must be one of {list(allowed)}")
 
 
-def _list(v, path, *, maxlen, err=InputError) -> list:
+def _list(v, path, *, maxlen=None, err=InputError) -> list:
     if not isinstance(v, list):
         _fail(err, path, f"expected array, got {type(v).__name__}")
-    if len(v) > maxlen:
+    if maxlen is not None and len(v) > maxlen:
         _fail(err, path, f"more than {maxlen} items")
     return v
 
@@ -385,9 +382,6 @@ class StrategicSnapshot:
         identity = {"schema_version": self.schema_version, "run_id": self.run_id,
                     "data_source": self.data_source, "live_validated": self.live_validated}
         full = {**identity, "revision": self.revision, "facts": self.facts, "change_reasons": list(reasons)}
-        size = len(canonical_json(full).encode("utf-8"))
-        if size > MAX_SNAPSHOT_BYTES:
-            raise InputError(f"snapshot is {size} bytes; limit is {MAX_SNAPSHOT_BYTES} (nothing was dropped)")
         set_ = object.__setattr__
         set_(self, "change_reasons", tuple(reasons))
         set_(self, "_facts_json", facts_json)
@@ -422,14 +416,8 @@ def _no_constant(name):
     raise OutputError(f"nonfinite number {name}")
 
 
-def _sentences(text: str) -> int:
-    t = text.strip()
-    n = sum(1 for i, ch in enumerate(t) if ch in ".!?" and (i + 1 == len(t) or t[i + 1].isspace()))
-    return max(n, 1 if t else 0)
-
-
 def _evidence(v, path, facts) -> list:
-    ev = _list(v, path, maxlen=3, err=OutputError)
+    ev = _list(v, path, err=OutputError)
     targets = []
     for i, p in enumerate(ev):
         if not isinstance(p, str):
@@ -450,8 +438,6 @@ def parse_assessment(text: Any, facts: dict) -> dict:
     """Validate raw model text against the output contract. Returns the content dict."""
     if not isinstance(text, str):
         raise OutputError(f"model returned {type(text).__name__}, expected text")
-    if len(text.encode("utf-8")) > MAX_MODEL_TEXT_BYTES:
-        raise OutputError(f"model text exceeds {MAX_MODEL_TEXT_BYTES} bytes")
     body = text.strip()
     if not (body.startswith("{") and body.endswith("}")):
         raise OutputError("response must be a bare JSON object (no prose or code fences)")
@@ -462,44 +448,40 @@ def parse_assessment(text: Any, facts: dict) -> dict:
 
     E = OutputError
     _obj(data, "", ("summary", "dimensions", "priorities", "standing_plan", "uncertainties", "change_note"), err=E)
-    _str(data["summary"], "/summary", maxlen=600, nullable=False, nonempty=True, err=E)
-    if len(data["summary"].split()) > 60:
-        _fail(E, "/summary", "more than 60 words")
-    if _sentences(data["summary"]) > 2:
-        _fail(E, "/summary", "more than 2 sentences")
+    _str(data["summary"], "/summary", nullable=False, nonempty=True, err=E)
 
     dims = _obj(data["dimensions"], "/dimensions", DIMENSIONS, err=E)
     for name in DIMENSIONS:
         p = f"/dimensions/{name}"
         d = _obj(dims[name], p, ("judgment", "horizon", "confidence", "evidence"), err=E)
-        _str(d["judgment"], p + "/judgment", maxlen=240, nullable=False, nonempty=True, err=E)
-        _str(d["horizon"], p + "/horizon", maxlen=80, nullable=False, nonempty=True, err=E)
+        _str(d["judgment"], p + "/judgment", nullable=False, nonempty=True, err=E)
+        _str(d["horizon"], p + "/horizon", nullable=False, nonempty=True, err=E)
         _enum(d["confidence"], p + "/confidence", CONFIDENCE, nullable=False, err=E)
         targets = _evidence(d["evidence"], p + "/evidence", facts)
         if d["confidence"] == "high" and not any(t is not None for t in targets):
             _fail(E, p + "/confidence", "high confidence requires at least one non-null evidence target")
 
-    pri = _list(data["priorities"], "/priorities", maxlen=3, err=E)
+    pri = _list(data["priorities"], "/priorities", err=E)
     for i, it in enumerate(pri):
         p = f"/priorities/{i}"
         _obj(it, p, ("need", "horizon", "tradeoff", "reconsider_when", "evidence"), err=E)
-        _str(it["need"], p + "/need", maxlen=160, nullable=False, nonempty=True, err=E)
-        _str(it["horizon"], p + "/horizon", maxlen=80, nullable=False, nonempty=True, err=E)
-        _str(it["tradeoff"], p + "/tradeoff", maxlen=160, nullable=False, err=E)
-        _str(it["reconsider_when"], p + "/reconsider_when", maxlen=160, nullable=False, err=E)
+        _str(it["need"], p + "/need", nullable=False, nonempty=True, err=E)
+        _str(it["horizon"], p + "/horizon", nullable=False, nonempty=True, err=E)
+        _str(it["tradeoff"], p + "/tradeoff", nullable=False, err=E)
+        _str(it["reconsider_when"], p + "/reconsider_when", nullable=False, err=E)
         _evidence(it["evidence"], p + "/evidence", facts)
 
     plan = _obj(data["standing_plan"], "/standing_plan", tuple(PLAN_LISTS) + tuple(PLAN_TEXTS), err=E)
-    for key, chars in PLAN_LISTS.items():
-        for i, it in enumerate(_list(plan[key], f"/standing_plan/{key}", maxlen=MAX_PLAN_ITEMS, err=E)):
-            _str(it, f"/standing_plan/{key}/{i}", maxlen=chars, nullable=False, nonempty=True, err=E)
-    for key, chars in PLAN_TEXTS.items():
-        _str(plan[key], f"/standing_plan/{key}", maxlen=chars, nullable=False, nonempty=True, err=E)
+    for key in PLAN_LISTS:
+        for i, it in enumerate(_list(plan[key], f"/standing_plan/{key}", err=E)):
+            _str(it, f"/standing_plan/{key}/{i}", nullable=False, nonempty=True, err=E)
+    for key in PLAN_TEXTS:
+        _str(plan[key], f"/standing_plan/{key}", nullable=False, nonempty=True, err=E)
 
-    unc = _list(data["uncertainties"], "/uncertainties", maxlen=5, err=E)
+    unc = _list(data["uncertainties"], "/uncertainties", err=E)
     for i, u in enumerate(unc):
-        _str(u, f"/uncertainties/{i}", maxlen=160, nullable=False, nonempty=True, err=E)
-    _str(data["change_note"], "/change_note", maxlen=240, nullable=False, nonempty=True, err=E)
+        _str(u, f"/uncertainties/{i}", nullable=False, nonempty=True, err=E)
+    _str(data["change_note"], "/change_note", nullable=False, nonempty=True, err=E)
     return data
 
 

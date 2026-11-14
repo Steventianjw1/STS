@@ -337,7 +337,9 @@ def _decide_and_print(cfg, frame: DecisionFrame, scripted_reply: str | None) -> 
             print(str(e), file=sys.stderr)
             return 2
         print(f"Calling {cfg.llm.provider}:{cfg.llm.model} (billable). Nothing will be executed.")
-    res = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes).choose(frame)
+    res = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes,
+                            provider_retries=cfg.llm.provider_retries,
+                            corrective_retries=cfg.llm.corrective_retries).choose(frame)
     out = {"frame_id": frame.frame_id, "model": model_identity(model), "executed": False,
            "ok": res.ok, "error_kind": res.error_kind, "diagnostic": res.diagnostic,
            "attempts": len(res.attempts)}
@@ -435,6 +437,8 @@ def _run_state_path(cfg, run_id: str) -> str:
 
 def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "observed", log=print) -> int:
     """LLM session over any client (live GameClient or an injected scripted client)."""
+    from .model_progress import ModelProgress
+    progress = ModelProgress(log=log)
     mod_version, run_id = _versions(client)
     session_id = new_session_id()
     run_id_source = "mod_compendium"
@@ -444,7 +448,8 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     if facts_source == "synthetic" or getattr(client, "data_source", None) == "synthetic":
         facts_source = "synthetic"
     policy = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes,
-                               provider_retries=cfg.llm.provider_retries)
+                               provider_retries=cfg.llm.provider_retries,
+                               corrective_retries=cfg.llm.corrective_retries, progress=progress)
     autobattle = None
     # Live observed combat only: synthetic or scripted sessions never consult a running advisor.
     if cfg.combat_search.enabled and facts_source != "synthetic" and not scripted:
@@ -457,7 +462,7 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
         else:
             policy = SearchCombatPolicy(policy, _advisor(cfg))
             log(f"combat search: Spire Mentor advisor at {cfg.combat_search.control_url} (LLM on any miss)")
-    planner = StrategicPlanner(model) if cfg.llm.strategic_planner else None
+    planner = StrategicPlanner(model, progress=progress) if cfg.llm.strategic_planner else None
     ident = model_identity(model)
     rec = TraceRecorder(cfg.trace_dir, command=command, policy_name=policy.name, policy_version=policy.version,
                         mod_version=mod_version, game_build=cfg.game_build, run_id=run_id,
@@ -471,6 +476,7 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
                                         "capabilities_mod_revision": MOD_REVISION})
     log(f"session {rec.session_id} -> {rec.dir}  (policy llm, model {ident.get('model')}"
         f"{', SCRIPTED' if scripted else ''})")
+    progress.record = rec.event
     scope = {"step": "step", "play-combat": "combat", "play-run": "run"}[command]
     coord = RunCoordinator(client, policy, planner=planner, recorder=rec, limits=cfg.limits, scope=scope, autobattle=autobattle,
                            offer_handoff=cfg.combat_search.offer_handoff, what_if_tools=cfg.llm.what_if_tools,

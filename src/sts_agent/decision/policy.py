@@ -1,8 +1,9 @@
 """LLM action selection: one frame in, one validated choice (or a typed failure) out.
 
-At most one corrective retry for malformed output or an invalid action id.
+Live sessions retry recoverable model failures and invalid choices until recovery
+or interruption unless the caller explicitly configures a retry cap.
 A transient provider failure (timeout, dropped connection, rate limit, server
-error) is retried a bounded number of times: the call only reads a model, so
+error) is retried according to the caller's settings: the call only reads a model, so
 nothing has been sent to the game, and the coordinator re-validates the screen
 before it sends the chosen action. Other provider failures are not retried.
 No heuristic fallback exists.
@@ -17,14 +18,16 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .models import MAX_RESPONSE_BYTES, Choice, ChoiceError, DecisionFrame, parse_choice, parse_tool_request
+from ..model_progress import ModelProgress
+from .models import Choice, ChoiceError, DecisionFrame, parse_choice, parse_tool_request
 from .prompts import DECISION_PROMPT_VERSION, DEFAULT_MAX_INPUT_BYTES, build_user_message, system_instruction
 
 POLICY_NAME = "llm"
-POLICY_VERSION = "1.0.0"
-# ProviderError.kind values worth another attempt; config, budget, refusal and truncation are not.
+POLICY_VERSION = "1.1.0"
+# Provider failures worth another attempt; configuration, explicit budgets and refusals are not.
 RETRYABLE_PROVIDER_KINDS = frozenset({"timeout", "transport", "http_408", "http_409", "http_425", "http_429",
-                                      "http_500", "http_502", "http_503", "http_504", "http_529"})
+                                      "http_500", "http_502", "http_503", "http_504", "http_529",
+                                      "non_text", "truncated", "unexpected_stop"})
 
 
 @dataclass
@@ -57,12 +60,16 @@ class LLMDecisionPolicy:
     version = POLICY_VERSION
     prompt_version = DECISION_PROMPT_VERSION
 
-    def __init__(self, model, *, max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES, provider_retries: int = 2,
-                 retry_backoff_s: float = 2.0, sleep: Callable[[float], None] = time.sleep):
+    def __init__(self, model, *, max_input_bytes: int | None = DEFAULT_MAX_INPUT_BYTES,
+                 provider_retries: int | None = 2, corrective_retries: int | None = 1,
+                 retry_backoff_s: float = 2.0, sleep: Callable[[float], None] = time.sleep,
+                 progress: ModelProgress | None = None):
         self.model = model
         self.max_input_bytes = max_input_bytes
-        self.provider_retries = max(0, int(provider_retries))
+        self.provider_retries = None if provider_retries is None else max(0, int(provider_retries))
+        self.corrective_retries = None if corrective_retries is None else max(0, int(corrective_retries))
         self.retry_backoff_s, self.sleep = retry_backoff_s, sleep
+        self.progress = progress or ModelProgress()
 
     @property
     def scripted(self) -> bool:
@@ -73,7 +80,10 @@ class LLMDecisionPolicy:
         offered = tools.available(frame) if tools is not None else []
         system, res.prompt_modules = system_instruction(frame, tools=bool(offered))
         correction, answers, tool_result = None, 0, None
+        retry_kind = None
+        context = {"screen": (frame.screen or {}).get("kind"), "frame_id": frame.frame_id}
         while True:
+            attempt = len(res.attempts) + 1
             try:
                 user, res.history_dropped, res.support_trim = build_user_message(
                     frame, correction=correction, max_bytes=self.max_input_bytes,
@@ -82,14 +92,20 @@ class LLMDecisionPolicy:
                 res.error_kind, res.diagnostic = "input_too_large", str(e)
                 return res
             try:
-                text = self.model.complete(system=system, user=user)
+                with self.progress.call("decision", attempt, retry_kind=retry_kind, **context):
+                    text = self.model.complete(system=system, user=user)
             except Exception as e:
                 kind = getattr(e, "kind", type(e).__name__)
                 res.attempts.append({"attempt": len(res.attempts) + 1, "response_text": None,
+                                     "retry_kind": retry_kind,
                                      "error": f"{type(e).__name__}: {e}"[:300], "call": _call(self.model)})
-                if kind in RETRYABLE_PROVIDER_KINDS and res.provider_retries < self.provider_retries:
+                if kind in RETRYABLE_PROVIDER_KINDS and (self.provider_retries is None or
+                                                        res.provider_retries < self.provider_retries):
                     res.provider_retries += 1
-                    self.sleep(min(self.retry_backoff_s * res.provider_retries, 10.0))
+                    delay = min(self.retry_backoff_s * res.provider_retries, 10.0)
+                    retry_kind = "provider"
+                    self.progress.wait_for_retry("decision", attempt, delay_s=delay, sleep=self.sleep,
+                                                 error=kind, retry_kind=retry_kind, **context)
                     continue   # same prompt again; the frame is revalidated against the game before any send
                 res.error_kind = "provider"
                 res.diagnostic = f"{kind}: {e}"[:300]
@@ -97,7 +113,8 @@ class LLMDecisionPolicy:
                     res.diagnostic = f"{res.diagnostic} (after {res.provider_retries} retries)"[:300]
                 return res
             rec = {"attempt": len(res.attempts) + 1,
-                   "response_text": text[:MAX_RESPONSE_BYTES] if isinstance(text, str) else None,
+                   "retry_kind": retry_kind,
+                   "response_text": text if isinstance(text, str) else None,
                    "error": None, "call": _call(self.model)}
             res.attempts.append(rec)
             request = parse_tool_request(text) if offered and tool_result is None else None
@@ -105,18 +122,25 @@ class LLMDecisionPolicy:
                 tool_result = tools.run(request["tool"], request["args"], frame)
                 rec["tool_call"] = {"request": request, "result": tool_result}
                 res.tool_calls += 1
+                retry_kind = None  # A requested what-if follow-up is not a failed-call retry.
                 continue
             answers += 1
             try:
                 res.choice = parse_choice(text, frame)
+                self.progress.emit("reply_accepted", "decision", attempt, **context)
                 return res
             except ChoiceError as e:
                 rec["error"] = str(e)[:300]
                 correction = str(e)
-            if answers == 2:
+                self.progress.emit("reply_rejected", "decision", attempt, error=str(e), **context)
+            if self.corrective_retries is not None and answers > self.corrective_retries:
                 res.error_kind = "invalid_output"
-                res.diagnostic = f"model output invalid after one corrective retry: {rec['error']}"
+                res.diagnostic = f"model output invalid after {self.corrective_retries} corrective retries: {rec['error']}"
                 return res
+            delay = min(self.retry_backoff_s * answers, 10.0)
+            retry_kind = "corrective"
+            self.progress.wait_for_retry("decision", attempt, delay_s=delay, sleep=self.sleep,
+                                         error="invalid output", retry_kind=retry_kind, **context)
 
 
 def _call(model):

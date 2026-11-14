@@ -14,7 +14,7 @@ from ..observation import PHASE_COMBAT_ENDED, PHASE_COMBAT_READY, normalize
 from ..combat_preview import action_preview
 from ..expert_stats import _deck_ids, _id
 from .. import enemy_patterns
-from .models import sha
+from .models import is_rest_destination, sha
 
 SOURCE_INSPECTED = "source_inspected"
 SYNTHETIC_ONLY = "synthetic_only"
@@ -220,6 +220,8 @@ def automatic_action(view: ScreenView) -> dict | None:
     if view.kind == "map":
         if len(details.get("next_options") or []) != 1:
             return None
+        if is_rest_destination(candidate):
+            return None  # Travel also commits to a campfire option, even on a forced path.
     elif view.kind == "combat":
         hand, potions = view.facts.get("hand"), view.facts.get("potions")
         if (hand is None or potions is None

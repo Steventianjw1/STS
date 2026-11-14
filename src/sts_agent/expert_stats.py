@@ -410,8 +410,14 @@ class ExpertDecisionStats:
         budget = min(self.config.max_fetch_s, max(0, budget_s) if budget_s is not None else self.config.max_fetch_s)
         deadline = self.clock() + budget
         if view.kind == "map":
-            return (self._route_view(view, deadline=deadline, route_state=route_state)
-                    if self.config.enabled and self.config.history_enabled else None)
+            support = (self._route_view(view, deadline=deadline, route_state=route_state)
+                       if self.config.enabled and self.config.history_enabled else None)
+            from .decision.models import is_rest_destination
+            if self.config.enabled and any(is_rest_destination(c) for c in view.candidates):
+                support = support or {"tool": "get_expert_decision_stats", "schema_version": 2,
+                                      "source": API_ROOT, "status": "unavailable", "options": []}
+                self._add_upgrade_evidence(view, support, deadline=deadline)
+            return support
         if (view.kind == "event" and (view.facts.get("screen_details") or {}).get("is_ancient") is True
                 and self.config.ancient_advisor_enabled):
             if not self.config.enabled:

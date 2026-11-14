@@ -12,8 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
+from ..model_progress import ModelProgress
 from .models import (
-    FAILED, INVALID_INPUT, MAX_MODEL_TEXT_BYTES, UNCHANGED, UPDATED, InputError, OutputError,
+    FAILED, INVALID_INPUT, UNCHANGED, UPDATED, InputError, OutputError,
     PlannerResult, StrategicAssessment, StrategicSnapshot, parse_assessment,
 )
 from .prompts import PROMPT_VERSION, SYSTEM_INSTRUCTION, build_user_message
@@ -24,11 +25,13 @@ class TextModel(Protocol):
 
 
 class StrategicPlanner:
-    def __init__(self, model: TextModel, *, transcript_path: str | Path | None = None):
+    def __init__(self, model: TextModel, *, transcript_path: str | Path | None = None,
+                 progress: ModelProgress | None = None):
         """``transcript_path``: optional local JSONL log of model calls. Keep it
         under the Git-ignored ``traces/`` directory."""
         self._model = model
         self._transcript = Path(transcript_path) if transcript_path else None
+        self.progress = progress or ModelProgress()
         self.reset()
 
     # -- state -----------------------------------------------------------------
@@ -98,10 +101,13 @@ class StrategicPlanner:
         correction = None
         for attempt in (1, 2):
             user = build_user_message(snap, self._assessment, correction=correction)
-            record = {"attempt": attempt, "response_text": None, "error": None, "call": None}
+            retry_kind = "corrective" if correction is not None else None
+            record = {"attempt": attempt, "response_text": None, "error": None, "call": None,
+                      "retry_kind": retry_kind}
             self.last_attempts.append(record)
             try:
-                text = self._model.complete(system=SYSTEM_INSTRUCTION, user=user)
+                with self.progress.call("strategy", attempt, revision=snap.revision, retry_kind=retry_kind):
+                    text = self._model.complete(system=SYSTEM_INSTRUCTION, user=user)
             except Exception as e:  # provider failures are never retried
                 diag = f"model call failed ({reason}): {type(e).__name__}: {e}"
                 record["error"] = diag
@@ -112,11 +118,13 @@ class StrategicPlanner:
             call = getattr(self._model, "last_call", None)
             record["call"] = call.to_dict() if hasattr(call, "to_dict") else None
             if isinstance(text, str):
-                record["response_text"] = text.encode("utf-8")[:MAX_MODEL_TEXT_BYTES].decode("utf-8", errors="ignore")
+                record["response_text"] = text
             try:
                 content = parse_assessment(text, snap.facts)
+                self.progress.emit("reply_accepted", "strategy", attempt, revision=snap.revision)
                 break
             except OutputError as e:
+                self.progress.emit("reply_rejected", "strategy", attempt, error=str(e), revision=snap.revision)
                 record["error"] = str(e)
                 diag = f"model output rejected ({reason}): {e}"
                 self._log(snap, user, text, FAILED, diag)
@@ -124,6 +132,8 @@ class StrategicPlanner:
                     return self._result(FAILED, snap, model_called=True,
                                         diagnostic=f"invalid after one corrective retry: {diag}")
                 correction = {"validation_error": str(e), "rejected_output": record["response_text"]}
+                self.progress.emit("retry_scheduled", "strategy", attempt, delay_s=0,
+                                   error="invalid assessment", revision=snap.revision)
 
         self._assessment = StrategicAssessment(
             run_id=snap.run_id, input_revision=snap.revision, snapshot_id=snap.snapshot_id,
@@ -165,7 +175,7 @@ class StrategicPlanner:
             "snapshot_id": snap.snapshot_id, "data_source": snap.data_source,
             "live_validated": snap.live_validated, "status": status, "diagnostic": diagnostic,
             "user_message": user,
-            "model_text": text[:MAX_MODEL_TEXT_BYTES] if isinstance(text, str) else None,
+            "model_text": text if isinstance(text, str) else None,
         }
         self._transcript.parent.mkdir(parents=True, exist_ok=True)
         with open(self._transcript, "a", encoding="utf-8") as fh:

@@ -10,8 +10,8 @@ DEFAULT_CONFIG_FILE = "sts_agent.toml"
 
 @dataclass
 class Limits:
-    max_actions: int = 300                 # per play-combat session (card plays + end turns)
-    max_run_actions: int = 3000            # per play-run session (every gameplay action)
+    max_actions: int | None = None         # optional explicit per-combat action cap
+    max_run_actions: int | None = None     # optional explicit per-run action cap
     max_no_progress_s: float = 90.0        # stop if the observed state does not change this long
     poll_interval_s: float = 0.25          # between state polls while waiting
     ready_timeout_s: float = 60.0          # waiting for the player's play phase (covers enemy turns)
@@ -26,16 +26,17 @@ class Limits:
 class LLMConfig:
     provider: str = "deepseek"
     model: str | None = None               # REQUIRED for policy="llm"; no default model is assumed
-    max_output_tokens: int = 16384
+    max_output_tokens: int | None = None   # omit DeepSeek max_tokens; use the provider's output limit
     timeout_s: float = 60.0                # SDK timeout: per connect and per wait for data, not a whole-call cap
-    provider_retries: int = 2              # extra decision calls after a timeout/transport/429/5xx failure; 0 = none
-    deepseek_reasoning_effort: str | None = None  # None uses the provider default
-    max_calls_per_run: int | None = 2000
+    provider_retries: int | None = None    # None retries recoverable model failures until recovery or interruption
+    corrective_retries: int | None = None # None keeps requesting a valid action without ending the run
+    deepseek_reasoning_effort: str | None = "medium"  # DeepSeek maps medium to high; None uses its default
+    max_calls_per_run: int | None = None
     max_input_tokens_per_run: int | None = None
     max_output_tokens_per_run: int | None = None
     price_input_usd_per_mtok: float | None = None   # only for an optional cost estimate
     price_output_usd_per_mtok: float | None = None
-    max_input_bytes: int = 96 * 1024       # decision prompt size; oldest history is trimmed first
+    max_input_bytes: int | None = None    # no local prompt-size cap; provider context limits still apply
     objective: str | None = None           # None = ordinary victory at current character/difficulty
     strategic_planner: bool = True
     what_if_tools: bool = True             # the model may spend one extra call per decision on a what-if calculation

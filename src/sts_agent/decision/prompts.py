@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import json
 
-from .models import MAX_INTENT_CHARS, MAX_REASON_CHARS, MAX_ROUTE_PLAN_CHARS, DecisionFrame
+from .models import DecisionFrame
 
-DECISION_PROMPT_VERSION = "decision-prompt-18"
-DEFAULT_MAX_INPUT_BYTES = 96 * 1024
+DECISION_PROMPT_VERSION = "decision-prompt-20"
+DEFAULT_MAX_INPUT_BYTES = None
 DEFAULT_OBJECTIVE = ("Win the run (ordinary victory) with the current character at the current difficulty. "
                      "No extra challenge objectives.")
 
@@ -175,11 +175,14 @@ _E_ANCIENT = ("On ancient screens, decision_support is get_ancient_offer_evidenc
 
 _C_BASE = f"""\
 RESPONSE CONTRACT. Reply with exactly one bare JSON object (no prose, no markdown, no code fences) with these three base keys and only the screen-specific additions described below:
-{{"action_id": "<one action_id from candidates>", "reason": "<1-{MAX_REASON_CHARS} characters, grounded in the current position>", "turn_intent": "<0-{MAX_INTENT_CHARS} characters: short conditional plan for your next decisions; may be empty outside combat>"}}
+{{"action_id": "<one action_id from candidates>", "reason": "<explanation grounded in the current position>", "turn_intent": "<conditional plan for your next decisions; may be empty outside combat>"}}
+Prefer concise explanations, but there is no character limit on explanatory text.
 You choose one candidate per response; after it resolves you will see the new state and choose again. Never write payloads, card indices or targets yourself: the action_id selects a fully specified action."""
 
 _C_MAP = f"""\
-On this map screen you may add a key "route_plan": {{"path_id": "<a decision_support.paths.candidates path_id whose first_action_id is your action_id, or empty>", "plan": "<1-{MAX_ROUTE_PLAN_CHARS} characters: the route you intend for the rest of this act and why>", "change_course_if": "<0-{MAX_ROUTE_PLAN_CHARS} characters: observable conditions that would make you change route>"}}. Include it when route_plan_status shows no plan or any trigger; omit it to keep the previous plan."""
+On this map screen you may add a key "route_plan": {{"path_id": "<a decision_support.paths.candidates path_id whose first_action_id is your action_id, or empty>", "plan": "<the route you intend for the rest of this act and why>", "change_course_if": "<observable conditions that would make you change route>"}}. Include it when route_plan_status shows no plan or any trigger; omit it to keep the previous plan.
+
+If your chosen immediate destination is a RestSite/campfire, you MUST also include "rest_option": "HEAL" to rest or "rest_option": "SMITH" to upgrade. For another campfire activity, use its stable uppercase game option ID only when supported by observed relic/game text. Omit rest_option for other destinations and for fires farther along your route. Travel and this option execute as ONE decision, even when the fire is the only path: there is no second call to reconsider an unchanged rest-versus-smith choice on arrival. Compare healing against the best upgrade using current HP, deck, standing_plan.upgrade_targets and the rooms AFTER this fire on the chosen path. Do not claim this fire still lies ahead of those rooms. Full option availability is checked on arrival; an unavailable option or changed player facts causes reconsideration there. Smith opens a card picker, where you choose among the actual legal targets."""
 
 _C_SHOP = """\
 On this shop screen, include a fourth key "shop_plan": ["<first action_id>", "<next action_id>", "proceed"]. This is the complete ordered list of intended actions, with action_id as its first entry and no repeats. Use only offered shop_purchase/proceed ids. Include proceed last to finish shopping, or end with card removal to choose its target in the picker. If saving all gold, use action_id="proceed" and shop_plan=["proceed"]. Purchases execute sequentially with state checks between them, without another model call unless the plan stops. Omission retains single-action behavior for compatibility."""
@@ -206,7 +209,7 @@ _BY_KIND = {
     "card_reward": ("noncombat", "card_reward", "evidence_profile", "evidence_duplicate", "evidence_upgrade_pick",
                     "evidence_elite_pick"),
     "shop": ("noncombat", "shop", "evidence_profile", "evidence_upgrade_pick", "evidence_elite_pick"),
-    "map": ("noncombat", "map", "evidence_map"),
+    "map": ("noncombat", "map", "evidence_map", "evidence_upgrade_choice"),
     "rest_site": ("noncombat", "rest", "evidence_upgrade_choice"),
     "card_select": ("noncombat", "grid", "evidence_upgrade_choice"),
     "event": ("noncombat", "evidence_profile", "evidence_upgrade_choice"),
@@ -257,7 +260,7 @@ def _without_detail(support: dict) -> None:
 
 
 def build_user_message(frame: DecisionFrame, *, correction: str | None = None,
-                       max_bytes: int = DEFAULT_MAX_INPUT_BYTES, tools: list | None = None,
+                       max_bytes: int | None = DEFAULT_MAX_INPUT_BYTES, tools: list | None = None,
                        tool_result: dict | None = None) -> tuple[str, int, str | None]:
     """Return (message, history_items_dropped, support_trim).
 
@@ -290,7 +293,7 @@ def build_user_message(frame: DecisionFrame, *, correction: str | None = None,
 
     while True:
         text, n = size()
-        if n <= max_bytes:
+        if max_bytes is None or n <= max_bytes:
             return text, dropped, trim
         if isinstance(support, dict) and trim is None:
             _without_detail(support)

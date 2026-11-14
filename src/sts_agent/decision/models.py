@@ -11,14 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 FRAME_SCHEMA_VERSION = "sts2-decision-frame-1"
-MAX_RESPONSE_BYTES = 8 * 1024
-MAX_REASON_CHARS = 500
-MAX_INTENT_CHARS = 300
-MAX_ROUTE_PLAN_CHARS = 300
 MAX_HISTORY = 8
 
 FACT_SOURCES = ("observed", "manual", "synthetic")
@@ -134,6 +131,15 @@ class Choice:
     turn_intent: str
     route_plan: dict | None = None   # map screens only: {"path_id", "plan", "change_course_if"}
     shop_plan: tuple[str, ...] | None = None  # ordered offered actions, including action_id first
+    rest_option: str | None = None  # stable campfire option ID, chosen with immediate map travel
+
+
+def is_rest_destination(candidate: dict | None) -> bool:
+    if not candidate or candidate.get("kind") != "choose_map_node":
+        return False
+    kind = (candidate.get("details") or {}).get("type")
+    return isinstance(kind, str) and kind.lower().replace("_", "").replace(" ", "") in (
+        "restsite", "rest", "campfire")
 
 
 def _no_dupes(pairs):
@@ -149,11 +155,9 @@ def _no_const(name):
     raise ChoiceError(f"nonfinite number {name}")
 
 
-def parse_choice(text: Any, frame: DecisionFrame) -> Choice:
+def parse_choice(text: Any, frame: DecisionFrame, *, require_rest_option: bool = True) -> Choice:
     if not isinstance(text, str):
         raise ChoiceError(f"expected text, got {type(text).__name__}")
-    if len(text.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        raise ChoiceError(f"response exceeds {MAX_RESPONSE_BYTES} bytes")
     body = text.strip()
     if not (body.startswith("{") and body.endswith("}")):
         raise ChoiceError("response must be one bare JSON object, without prose or code fences")
@@ -168,6 +172,9 @@ def parse_choice(text: Any, frame: DecisionFrame) -> Choice:
     # long opaque id only produced avoidable rejections).
     data.pop("frame_id", None)
     is_map = (frame.screen or {}).get("kind") == "map"
+    at_fire = is_map and is_rest_destination(frame.candidate(data.get("action_id")))
+    if at_fire and (require_rest_option or "rest_option" in data):
+        want = want | {"rest_option"}
     if is_map and "route_plan" in data:
         want = want | {"route_plan"}
     if (frame.screen or {}).get("kind") == "shop" and "shop_plan" in data:
@@ -185,19 +192,19 @@ def parse_choice(text: Any, frame: DecisionFrame) -> Choice:
     reason = data["reason"].strip()
     if not reason:
         raise ChoiceError("reason must not be empty")
-    if len(reason) > MAX_REASON_CHARS:
-        raise ChoiceError(f"reason longer than {MAX_REASON_CHARS} characters")
     intent = data["turn_intent"].strip()
-    if len(intent) > MAX_INTENT_CHARS:
-        raise ChoiceError(f"turn_intent longer than {MAX_INTENT_CHARS} characters")
+    rest_option = data["rest_option"].strip() if "rest_option" in want else None
+    if rest_option is not None and not re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", rest_option):
+        raise ChoiceError("rest_option must be a stable uppercase campfire option ID, such as HEAL or SMITH")
     return Choice(frame.frame_id, data["action_id"], reason, intent,
                   _route_plan(data["route_plan"], frame, data["action_id"]) if "route_plan" in want else None,
-                  _shop_plan(data["shop_plan"], frame, data["action_id"]) if "shop_plan" in want else None)
+                  _shop_plan(data["shop_plan"], frame, data["action_id"]) if "shop_plan" in want else None,
+                  rest_option)
 
 
 def parse_tool_request(text: Any) -> dict | None:
     """``{"tool": name, "args": {...}}`` -> the request; anything else (including a choice) -> None."""
-    if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_RESPONSE_BYTES:
+    if not isinstance(text, str):
         return None
     body = text.strip()
     if not (body.startswith("{") and body.endswith("}")):
@@ -249,9 +256,6 @@ def _route_plan(plan, frame, action_id):
     if not isinstance(plan, dict) or set(plan) != keys or not all(isinstance(plan[k], str) for k in keys):
         raise ChoiceError(f"route_plan must be an object with exactly string keys {sorted(keys)}")
     plan = {k: plan[k].strip() for k in keys}
-    for k in ("plan", "change_course_if"):
-        if len(plan[k]) > MAX_ROUTE_PLAN_CHARS:
-            raise ChoiceError(f"route_plan.{k} longer than {MAX_ROUTE_PLAN_CHARS} characters")
     if not plan["plan"]:
         raise ChoiceError("route_plan.plan must not be empty")
     if plan["path_id"]:

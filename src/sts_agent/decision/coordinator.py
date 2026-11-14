@@ -31,7 +31,7 @@ from ..config import Limits
 from ..route_paths import enumerate_routes, map_type
 from ..route_risk import agent_loss_scale, node_class
 from ..strategic import StrategicSnapshot
-from .models import Choice, DecisionFrame
+from .models import Choice, DecisionFrame, is_rest_destination
 from .policy import LLMDecisionPolicy, model_identity
 from .screens import CAPABILITIES, MOD_REVISION, ScreenView, automatic_action, build_view
 from .whatif import WhatIfTools
@@ -618,6 +618,13 @@ class RunCoordinator:
             return
         if (v.in_combat or self._fight_overlay(v) or self._handoff) and self.strat_revision > 0:
             return  # ordinary card plays never trigger a refresh; refresh after the combat ends
+        if (self.planner.assessment is not None and self.strat_facts is not None
+                and v.kind in ("rewards", "card_reward", "card_select")
+                and (v.facts.get("run") or {}).get("act") == self.strat_facts["run"]["act"]):
+            # Fold the fight outcome, reward claims and drafted/changed cards into
+            # one refresh at the next strategic choice. Preserve the old facts and
+            # pending outcome so the refresh still sees every accumulated change.
+            return
         facts = self._strategic_facts(v)
         route_key = ((facts["run"]["act"], facts["run"]["floor"],
                       tuple((c["details"].get("col"), c["details"].get("row"))
@@ -684,8 +691,9 @@ class RunCoordinator:
                 status = "current"
             else:
                 status = "reused_between_refreshes"
-                base["note"] = ("Reused through routine resource/screen changes. Current facts and candidates override "
-                                "old HP, gold, potions and opportunities; assess newly revealed offers directly.")
+                base["note"] = ("Full refresh deferred through reward collection and card pickers. Current facts, "
+                                "recent fight outcomes and candidates override old deck, relics, HP, gold, potions "
+                                "and opportunities; assess newly revealed offers directly and revise the plan if needed.")
         else:
             status = "historical"
             base["note"] = ("The latest strategic update failed or facts changed; this assessment is from an older "
@@ -710,6 +718,10 @@ class RunCoordinator:
             self.last_progress += self.clock() - started  # evidence latency is not a game stall
             self._note_support(v, support)
         facts = v.facts
+        if self.pending_combat_finished:
+            facts = {**facts, "recent_combat_outcomes": {
+                "label": "Observed fight results since the plan may have last been refreshed.",
+                "items": list(self.recent_outcomes)}}
         if self.energy_observation is not None:
             facts = {**facts, "energy_observation": {**self.energy_observation,
                      "note": "Last observed maximum, not current energy or guaranteed future capacity. "
@@ -844,7 +856,8 @@ class RunCoordinator:
                                                                "reason": result.choice.reason,
                                                                "turn_intent": result.choice.turn_intent,
                                                                "route_plan": result.choice.route_plan,
-                                                               "shop_plan": result.choice.shop_plan},
+                                                               "shop_plan": result.choice.shop_plan,
+                                                               "rest_option": result.choice.rest_option},
                             attempts=result.attempts, error_kind=result.error_kind, diagnostic=result.diagnostic,
                             history_dropped=result.history_dropped, support_trim=result.support_trim,
                             provider_retries=result.provider_retries, tool_calls=result.tool_calls,
@@ -864,12 +877,50 @@ class RunCoordinator:
             self.route_plan = _stored_route_plan(ch.route_plan, frame, v, len(self.route_outcomes))
         self.log(f"[{seq}] {v.kind}: {cand['description']} - {ch.reason}")
 
-        if v.kind == "shop" and ch.shop_plan is not None:
+        if v.kind == "map" and is_rest_destination(cand) and ch.rest_option is not None:
+            return self._execute_rest_plan(seq, cand, ch, binding, v)
+        elif v.kind == "shop" and ch.shop_plan is not None:
             self._execute_shop_plan(seq, ch, frame, v)
         elif cand["kind"] == "reward_batch":
             self._execute_reward_batch(seq, ch, binding, v)
         else:
             return self._execute_action(seq, cand, ch, binding, v)
+
+    def _execute_rest_plan(self, seq, cand, ch, binding, view):
+        """Travel and select the already-decided campfire option with fresh bindings."""
+        if not self._execute_action(seq, cand, ch, binding, view):
+            return
+        current = self.last_view
+        before, after = view.facts.get("run") or {}, current.facts.get("run") or {}
+        # Room-entry hooks can change resources; never apply the old decision to those facts.
+        def resources(v):
+            player = v.facts.get("player") or {}
+            return ({k: player.get(k) for k in ("hp", "max_hp", "gold")},
+                    *(v.facts.get(k) for k in ("deck", "relics", "potions", "max_potion_slots")))
+
+        if (current.kind != "rest_site" or not current.ready
+                or before.get("act") != after.get("act")
+                or type(before.get("floor")) is not int
+                or after.get("floor") != before["floor"] + 1
+                or resources(current) != resources(view)):
+            self._outcome(seq, "rest_plan_stopped_state_changed", None, current,
+                          "campfire arrival or player facts changed unexpectedly; reconsider at the current screen")
+            return
+        matches = [c for c in current.candidates if c["kind"] == "choose_rest_option"
+                   and c["details"].get("id") == ch.rest_option]
+        if len(matches) != 1 or (current.fingerprint, matches[0]["action_id"]) in self.stats.blocked:
+            self._outcome(seq, "rest_plan_stopped_unavailable", None, current,
+                          f"planned campfire option {ch.rest_option} is unavailable; reconsider at the campfire")
+            return
+        step = matches[0]
+        self._track_encounter(current)
+        if self.rec:
+            self.rec.event("rest_plan_step", {"seq": seq, "option_id": ch.rest_option,
+                                              "action_id": step["action_id"],
+                                              "binding": current.bindings[step["action_id"]]})
+        self.log(f"[{seq}] rest_site: {step['description']} - Already chosen on the map. Skipping LLM.")
+        return self._execute_action(seq, step, replace(ch, action_id=step["action_id"]),
+                                    current.bindings[step["action_id"]], current)
 
     def _execute_shop_plan(self, seq, ch, frame, view):
         """Execute one model's ordered basket, observing and validating every purchase."""
@@ -971,7 +1022,7 @@ class RunCoordinator:
             self._save_state()
             return
         max_actions = self.lim.max_run_actions if self.scope == "run" else self.lim.max_actions
-        if self.stats.actions_sent >= max_actions:
+        if max_actions is not None and self.stats.actions_sent >= max_actions:
             self._outcome(seq, "not_sent_action_limit", None, fresh, "action limit reached before sending")
             raise _Stop(STOP_MAX_ACTIONS, f"reached {max_actions} actions", fresh)
 
@@ -1214,7 +1265,7 @@ class RunCoordinator:
                 if not first.in_combat:
                     raise _Stop(STOP_NOT_IN_COMBAT, f"screen {first.kind}", first)
             while True:
-                if self.stats.actions_sent >= max_actions:
+                if max_actions is not None and self.stats.actions_sent >= max_actions:
                     raise _Stop(STOP_MAX_ACTIONS, f"reached {max_actions} actions", self.last_view)
                 self._check_global()
                 self._step()
@@ -1278,6 +1329,12 @@ class RunCoordinator:
     def summary(self, stop, detail, final) -> dict:
         s = self.stats
         budget = getattr(self.policy.model, "budget", None)
+        timing = self.policy.progress.summary()
+        if self.planner is not None and self.planner.progress is not self.policy.progress:
+            # The CLI shares one progress tracker; injected callers may use two.
+            strategy_timing = self.planner.progress.summary()
+            timing["by_purpose"].update(strategy_timing["by_purpose"])
+            timing["retry_backoff_s"] = round(timing["retry_backoff_s"] + strategy_timing["retry_backoff_s"], 3)
         return {
             "stop_reason": stop, "detail": detail[:500],
             "final_screen": final.kind if final else None,
@@ -1295,6 +1352,7 @@ class RunCoordinator:
             "autobattle_offer_handoffs": s.offer_handoffs, "autobattle_offer_ai_picks": s.offer_ai_picks,
             "recent_outcomes": list(self.recent_outcomes),
             "model_usage": budget.summary() if budget is not None else None,
+            "model_timing": timing,
             "elapsed_s": round(self.clock() - self.session_start, 2),
             "run_id": self.run_id, "run_id_source": self.run_id_source,
         }

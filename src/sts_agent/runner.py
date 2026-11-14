@@ -337,7 +337,7 @@ class Runner:
             if first["phase"] not in (PHASE_COMBAT_READY, PHASE_COMBAT_BUSY):
                 raise _Stop(STOP_NOT_IN_COMBAT, f"phase={first['phase']} state_type={first['state_type']}", first)
             while True:
-                if self.stats.actions_sent >= self.lim.max_actions:
+                if self.lim.max_actions is not None and self.stats.actions_sent >= self.lim.max_actions:
                     raise _Stop(STOP_MAX_ACTIONS, f"reached {self.lim.max_actions} actions", self.last_obs)
                 self._check_global()
                 r = self.step()
