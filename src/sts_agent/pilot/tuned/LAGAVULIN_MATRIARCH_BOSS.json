@@ -1,0 +1,89 @@
+{
+ "evidence": {
+  "chosen": "default",
+  "kind": "simulator, candidates at Mentor's search budget",
+  "last_round": {
+   "fights": 96,
+   "ranked": [
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 31.48,
+     "hp_lost": 29.35,
+     "name": "mentor",
+     "potions_used": 0.65,
+     "race_changed_per_fight": 0.0,
+     "seconds_per_decision": 0.238,
+     "value": 0.7921,
+     "win_rate": 0.8958
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 31.72,
+     "hp_lost": 29.11,
+     "name": "deep-race",
+     "potions_used": 0.66,
+     "race_changed_per_fight": 3.71,
+     "seconds_per_decision": 0.42,
+     "value": 0.7918,
+     "win_rate": 0.8958
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 31.14,
+     "hp_lost": 29.7,
+     "name": "default",
+     "potions_used": 0.67,
+     "race_changed_per_fight": 3.6,
+     "seconds_per_decision": 0.317,
+     "value": 0.7911,
+     "win_rate": 0.8958
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 29.09,
+     "hp_lost": 31.74,
+     "name": "wide-turns",
+     "potions_used": 0.67,
+     "race_changed_per_fight": 3.9,
+     "seconds_per_decision": 0.331,
+     "value": 0.7897,
+     "win_rate": 0.8958
+    }
+   ],
+   "round": 3
+  },
+  "snapshots": 12,
+  "versus_default": {},
+  "versus_mentor": {
+   "fights": 96,
+   "hp_end": -0.3438,
+   "hp_end_se": 1.0467,
+   "value": -0.0009,
+   "value_se": 0.0335,
+   "won": 0.0,
+   "won_se": 0.0148
+  }
+ },
+ "profile": {
+  "c_puct": null,
+  "dominance_pruning": false,
+  "draw_widening_c": null,
+  "endturn_widening_alpha": null,
+  "endturn_widening_c": null,
+  "leaf_playouts": null,
+  "pick": "race",
+  "race_band": 0.03,
+  "race_reps": 2,
+  "race_sims": 4000,
+  "race_width": 4,
+  "rollout_policy": null,
+  "sims": 32000,
+  "threads": 8,
+  "win_hp_carry": null,
+  "win_potion_carry": null
+ }
+}
