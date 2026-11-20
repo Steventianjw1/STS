@@ -1,0 +1,113 @@
+{
+ "evidence": {
+  "chosen": "default",
+  "kind": "simulator, candidates at Mentor's search budget",
+  "last_round": {
+   "fights": 96,
+   "ranked": [
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 30.42,
+     "hp_lost": 30.42,
+     "name": "default",
+     "potions_used": 0.68,
+     "race_changed_per_fight": 3.86,
+     "seconds_per_decision": 0.341,
+     "value": 0.8136,
+     "win_rate": 0.9062
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 30.76,
+     "hp_lost": 30.07,
+     "name": "wide-draws",
+     "potions_used": 0.66,
+     "race_changed_per_fight": 3.78,
+     "seconds_per_decision": 0.323,
+     "value": 0.7911,
+     "win_rate": 0.8958
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 30.44,
+     "hp_lost": 30.4,
+     "name": "wide-turns",
+     "potions_used": 0.68,
+     "race_changed_per_fight": 3.57,
+     "seconds_per_decision": 0.341,
+     "value": 0.7901,
+     "win_rate": 0.8958
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 29.9,
+     "hp_lost": 30.94,
+     "name": "leaf-playouts-3",
+     "potions_used": 0.67,
+     "race_changed_per_fight": 3.8,
+     "seconds_per_decision": 0.681,
+     "value": 0.79,
+     "win_rate": 0.8958
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 30.15,
+     "hp_lost": 30.69,
+     "name": "dominance",
+     "potions_used": 0.68,
+     "race_changed_per_fight": 3.94,
+     "seconds_per_decision": 0.34,
+     "value": 0.7665,
+     "win_rate": 0.8854
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 30.71,
+     "hp_lost": 30.12,
+     "name": "mentor",
+     "potions_used": 0.69,
+     "race_changed_per_fight": 0.0,
+     "seconds_per_decision": 0.253,
+     "value": 0.7432,
+     "win_rate": 0.875
+    }
+   ],
+   "round": 3
+  },
+  "snapshots": 12,
+  "versus_default": {},
+  "versus_mentor": {
+   "fights": 96,
+   "hp_end": -0.2917,
+   "hp_end_se": 0.8313,
+   "value": 0.0704,
+   "value_se": 0.0524,
+   "won": 0.0312,
+   "won_se": 0.0232
+  }
+ },
+ "profile": {
+  "c_puct": null,
+  "dominance_pruning": false,
+  "draw_widening_c": null,
+  "endturn_widening_alpha": null,
+  "endturn_widening_c": null,
+  "leaf_playouts": null,
+  "pick": "race",
+  "race_band": 0.03,
+  "race_reps": 2,
+  "race_sims": 4000,
+  "race_width": 4,
+  "rollout_policy": null,
+  "sims": 32000,
+  "threads": 8,
+  "win_hp_carry": null,
+  "win_potion_carry": null
+ }
+}
