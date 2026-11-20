@@ -11,7 +11,6 @@ reads that folder at the start of every fight.
 
 ```
 git clone https://github.com/Steventianjw1/STS.git && cd STS
-git switch claude/pilot-tuning        # skip once this branch is merged into main
 python -m pip install -e .
 ```
 
@@ -46,12 +45,14 @@ fingerprint you got when you hand results back, and do not present them as equiv
 ## 2. Tune
 
 ```
-python -m sts_agent.pilot tune --tier Boss,Elite --skip-tuned --reverse --fights 24 --rounds 3
+python -m sts_agent.pilot tune --tier Boss,Elite --skip-tuned --fights 24 --rounds 3
 ```
 
+- The main PC tuned Kaiser Crab and then stopped (2026-11-20): this machine does the other 11 bosses
+  and 12 elites. Pull first, so Kaiser Crab's file is there and is skipped.
 - `--skip-tuned` leaves out encounters that already have a file, so the command resumes after any stop.
-- `--reverse` starts from the last encounter (act 3 bosses). The main PC's batch runs first to last,
-  so the two meet in the middle. Pull first to see what is already done.
+- The order is act 1 first (the fights every run meets), elites before bosses within each area.
+  `--reverse` takes them last first, for when two machines share the work and meet in the middle.
 - `--low-priority` (Windows) keeps a machine usable while it runs. `--encounter A,B` picks by id.
 - Time on a 16-thread desktop: about 2 hours per boss, 25 minutes per elite. It scales with cores;
   a 4-core machine is roughly four times slower. On a small machine start with `--tier Elite`.
@@ -72,8 +73,8 @@ git push -u origin HEAD
 ```
 
 On the main PC: `git fetch origin` then `git merge origin/<your branch>`. Files for different encounters
-never conflict. If both machines tuned the same encounter, keep either file. The main PC's running batch
-and the live pilot pick the merged files up by themselves.
+never conflict. If both machines tuned the same encounter, keep either file. The live pilot picks the
+merged files up by itself at its next fight.
 
 Report results as simulator evidence, with the `chosen`, `versus_default` and `versus_mentor` numbers
 each file holds.
