@@ -12,86 +12,12 @@
 from __future__ import annotations
 
 import os
-import re
 import time
-from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .base import CallRecord, ProviderConfigError, ProviderError, UsageBudget, sanitize
+
 API_KEY_ENV = "ANTHROPIC_API_KEY"
-
-
-class ProviderError(Exception):
-    """A provider call failed. ``kind`` is a short machine-readable category."""
-
-    def __init__(self, kind: str, message: str):
-        super().__init__(message)
-        self.kind = kind
-
-
-class ProviderConfigError(ProviderError):
-    def __init__(self, message: str):
-        super().__init__("config", message)
-
-
-_SECRET_PATTERNS = [re.compile(r"sk-[A-Za-z0-9_\-]+"), re.compile(r"(?i)(x-api-key|authorization)\s*[:=]\s*\S+")]
-
-
-def sanitize(text: str, secret: str | None = None, limit: int = 300) -> str:
-    out = text or ""
-    if secret:
-        out = out.replace(secret, "[REDACTED]")
-    for p in _SECRET_PATTERNS:
-        out = p.sub("[REDACTED]", out)
-    return out[:limit]
-
-
-@dataclass
-class UsageBudget:
-    """Per-run limits on model calls and tokens; ``None`` = unlimited."""
-
-    max_calls: int | None = None
-    max_input_tokens: int | None = None
-    max_output_tokens: int | None = None
-    price_input_usd_per_mtok: float | None = None
-    price_output_usd_per_mtok: float | None = None
-    calls: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-
-    def check_before_call(self) -> None:
-        if self.max_calls is not None and self.calls >= self.max_calls:
-            raise ProviderError("budget_exhausted", f"model call budget exhausted ({self.calls}/{self.max_calls})")
-        if self.max_input_tokens is not None and self.input_tokens >= self.max_input_tokens:
-            raise ProviderError("budget_exhausted", f"input token budget exhausted ({self.input_tokens})")
-        if self.max_output_tokens is not None and self.output_tokens >= self.max_output_tokens:
-            raise ProviderError("budget_exhausted", f"output token budget exhausted ({self.output_tokens})")
-
-    def record(self, input_tokens: int | None, output_tokens: int | None) -> None:
-        self.input_tokens += input_tokens or 0
-        self.output_tokens += output_tokens or 0
-
-    def summary(self) -> dict:
-        d = {"calls": self.calls, "input_tokens": self.input_tokens, "output_tokens": self.output_tokens,
-             "limits": {"max_calls": self.max_calls, "max_input_tokens": self.max_input_tokens,
-                        "max_output_tokens": self.max_output_tokens}}
-        if self.price_input_usd_per_mtok is not None and self.price_output_usd_per_mtok is not None:
-            d["estimated_cost_usd"] = round(self.input_tokens / 1e6 * self.price_input_usd_per_mtok
-                                            + self.output_tokens / 1e6 * self.price_output_usd_per_mtok, 6)
-            d["cost_basis"] = "configured prices"
-        return d
-
-
-@dataclass
-class CallRecord:
-    elapsed_s: float
-    input_tokens: int | None
-    output_tokens: int | None
-    stop_reason: str | None
-    request_id: str | None
-    error: str | None = None
-
-    def to_dict(self) -> dict:
-        return dict(self.__dict__)
 
 
 class AnthropicTextModel:

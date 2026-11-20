@@ -1,4 +1,4 @@
-"""Day-1 Slay the Spire 2 combat agent built on the STS2MCP HTTP API."""
+"""LLM-driven Slay the Spire 2 agent built on the STS2MCP HTTP API."""
 
 AGENT_VERSION = "0.1.0"
 

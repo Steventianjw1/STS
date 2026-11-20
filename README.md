@@ -2,9 +2,16 @@
 
 An LLM-driven agent for **Slay the Spire 2**, using the
 [STS2MCP](https://github.com/Gennadiyev/STS2MCP) mod's localhost HTTP API.
-Development has focused on single-player Ironclad at Ascension 0. The agent
-continues an already-started run across supported screens; it does not start
-runs or manage profiles or difficulty.
+Development runs have used single-player Ironclad, most recently at Ascension
+10. `start-run` accepts any of the five characters and Ascension 0–10; `doctor`
+warns that a character other than Ironclad is untried. The agent continues an
+already-started run across supported screens;
+`start-run` and the interface's **New run** can also set up a new run through
+Neow. It does not manage profiles.
+
+`start.cmd` (or `./start`) opens the [interface](docs/INTERFACE.md): one window
+holding the game, a control bar, a combat log, the map plan, the current step
+with an availability bar, and the model's thinking.
 
 The configured model chooses each gameplay action. Python supplies allowlisted
 facts and supported candidates, validates the choice against a fresh state,
@@ -27,8 +34,13 @@ fallback for an LLM failure.
   keyword tooltips, and two optional what-if calculations.
 - Spire Codex expert rates, floor/deck-conditioned history, route HP-risk and path
   projections, elite-readiness analysis, and ancient-offer evidence using the act map.
-- Bounded prompts, model-call/token budgets, JSONL traces, and offline validation
-  of recorded decisions.
+- Optional prompt-size, model-call, and token limits (none by default), JSONL
+  traces, and offline validation of recorded decisions.
+- Same-run memory saved between sessions, so a restarted session picks up the
+  route plan and fight outcomes of the run it left.
+- Optional native Autobattle: the Spire Mentor mod plays whole fights while the
+  model makes every non-combat choice. Nothing else of Mentor is read.
+- A local interface to watch, pause, step, stop, and start runs.
 
 `bundle_select`, `crystal_sphere`, `fake_merchant`, menus, and unrecognized
 popups remain unsupported. A regular merchant is supported; the fake merchant
@@ -83,14 +95,15 @@ API root without embedded credentials, query, or fragment. There is no assumed
 model ID. The OpenAI-compatible SDK is only the DeepSeek transport; it does not
 use an OpenAI account or key.
 
-The example TOML selects a 4096-token output cap; the code default when omitted
-is 1024. Optional DeepSeek effort is set in TOML:
+By default no output cap is sent to DeepSeek, so the provider's own limit
+applies. Anthropic requires a cap and uses 16384 when none is set. DeepSeek
+reasoning effort defaults to `medium`, which is sent as `high`:
 
 ```toml
 [llm]
 provider = "deepseek"
-max_output_tokens = 4096
-# deepseek_reasoning_effort = "high"  # low, high, or max; omit for provider default
+# max_output_tokens = 16384             # optional cap
+deepseek_reasoning_effort = "medium"    # low, medium (sent as high), high, or max
 ```
 
 Supported effort depends on the selected model/API. This option is sent only to
@@ -107,9 +120,11 @@ without shell expansion. Credentials belong outside TOML; key-like fields are re
 
 `sts-agent doctor` checks local provider setup and game connectivity without a
 model call. Missing model, key, or SDK stops gameplay commands without a baseline
-fallback. Configure call/token budgets and optional token prices under `[llm]`.
-Decision calls, strategic calls, corrective and provider retries, and what-if
-tool calls share one provider budget.
+fallback. No call or token budget applies unless one is set under `[llm]`
+(`max_calls_per_run`, `max_input_tokens_per_run`, `max_output_tokens_per_run`);
+token prices there only add a cost estimate. Decision calls, strategic calls,
+corrective and provider retries, and what-if tool calls are counted together
+against any such budget.
 
 ## Install the mod and optional data
 
@@ -154,6 +169,39 @@ belongs in `.env`. The cache and SQLite history are under ignored
 `traces/spire_codex_cache`; use `sync-history` to fill a bounded corpus before
 play if desired. See [expert evidence](docs/EXPERT_STATS.md) for scopes and limits.
 
+## Autobattle (optional)
+
+```toml
+[autobattle]
+enabled = true          # Spire Mentor's Autobattle plays whole fights
+offer_handoff = true    # the model decides in-fight offers an enemy opens
+```
+
+This needs the [Spire Mentor](https://github.com/tfriedel/spire-mentor) mod
+installed beside `STS2_MCP` and the rebuilt agent mod extension
+(`mod/McpMod.AgentStartup.cs`, installed by `tools/patch_mod_preview.py`), which
+exposes Mentor's Autobattle to the agent on the game thread. With it enabled the
+model never plays combat and there is no LLM combat fallback: a fight Mentor
+stops playing ends the session with `autobattle_failed`. With it disabled the
+model plays the fights. The agent sends Autobattle commands only; it does not
+read Mentor's advice, logs, or card and path suggestions. The earlier per-action
+combat search through Mentor's advisor (`[combat_search]`) has been removed, and
+a configuration that still has that table is rejected as an unknown key.
+
+## Interface
+
+`start.cmd`, `./start`, or `sts-agent ui` opens one window with the game inside
+it and the panels around it. When no game is running, the pinned game copy is
+launched inside that window; a game that is already open is adopted into it.
+Closing the window ends the interface, and closes a game it started. The window
+is the frame host that ships with the Spire Mentor mod; without it, or with
+`[ui].single_window = false`, the game window is moved to the top-left and
+separate panel windows are tiled around it. Runs are started from the control
+bar. Options live under `[ui]`; see
+[the interface guide](docs/INTERFACE.md). `start run ...` (`sts-agent start-run`)
+opens the same window and begins a new run in it; add `--console` to play
+without the interface.
+
 ## Commands
 
 Global options (`--config`, `--base-url`, `--policy`, `--model`) precede the command.
@@ -169,15 +217,21 @@ The mod normally listens at `http://127.0.0.1:15526`.
 | `sts-agent step` | Make and execute one LLM gameplay decision. A strategic refresh may add model calls. |
 | `sts-agent play-combat` | Continue until the current combat ends or a stop condition occurs. |
 | `sts-agent play-run` | Continue an already-started run across supported screens. |
+| `sts-agent start-run [--character C] [--ascension N] [--console]` | Replace the current run: open the interface, launch the pinned game copy inside it if needed, set up a new run through Neow, then play it. Prompts for missing values. `--console` plays without the interface. |
+| `sts-agent ui [--no-launch] [--no-browser] [--port N] [--game-fraction F]` | Open the interface. Sends nothing to the game until a run is started from its control bar. |
 | `sts-agent sync-history --character IRONCLAD --ascension 0 --max-new-runs 100 --max-seconds 120` | Fetch bounded public run history; no game or model calls. Match the scope to your configured evidence filters. |
 | `sts-agent replay traces/SESSION_ID [-v]` | Validate recorded LLM decisions or rerun baseline choices offline. |
 | `sts-agent capabilities` | Print supported actions, assumptions, and unsupported screens. |
 
-`play-combat` and `play-run` accept `--max-actions`, `--max-elapsed-s`, and
-`--max-no-progress-s`. The action limit uses `max_run_actions` for `play-run`.
-Gameplay commands also accept `--trace-dir` and `--no-raw`.
+`play-combat`, `play-run`, and `start-run` accept `--max-actions` and
+`--max-no-progress-s`. For `play-run` and `start-run` the action limit sets
+`max_run_actions`. No action limit applies unless one is given, and there is no
+elapsed-time limit. Gameplay commands also accept `--trace-dir` and `--no-raw`.
 
-Only `step`, `play-combat`, and `play-run` send gameplay POSTs. State reads can
+Only `step`, `play-combat`, `play-run`, `start-run`, and a run started from the
+interface send gameplay POSTs. With Autobattle enabled, sessions and the
+interface's status check also send Autobattle control commands, which play no
+card by themselves. State reads can
 open shop inventory or treasure chests inside the mod. Advisory evidence may
 make external requests (including a read-only draft-advice POST); saving a frame
 therefore need not be network-free. `decide-frame` and replay use stored evidence.
@@ -191,16 +245,30 @@ This documentation update does not itself establish live compatibility.
 ```text
 observe and settle -> refresh strategy when needed -> attach advisory evidence
  -> build frame -> model selects one action ID -> validate JSON
- -> re-read and check fingerprint + binding + deadline -> POST once
+ -> re-read and check fingerprint + binding -> POST once
  -> observe screen-specific resolution -> record outcome -> repeat
 ```
 
 The model chooses confirmations, rewards, end turn, and leaving as well as card
-plays. At most one corrective retry is allowed for invalid decision output;
-transient provider failures are retried up to `[llm].provider_retries` times and
-other provider failures stop. The model may spend one extra call per decision on
+plays. One case needs no model call: when a ready screen has exactly one way
+forward (a single map destination that is not a campfire, a lone proceed or
+confirm, end turn with nothing playable), the coordinator sends it and records
+an `automatic_decision`. Travelling to a campfire also names the campfire option
+(`rest_option`), which is carried out on arrival without a second call.
+
+Invalid decision output is corrected and transient provider failures are
+retried, both without limit unless `[llm].corrective_retries` or
+`[llm].provider_retries` is set; other provider failures stop. The strategic
+assessor keeps its single corrective retry. The model may spend one extra call per decision on
 a what-if tool (`[llm].what_if_tools`). An ambiguous gameplay request is inspected and never resent.
 Rejected candidates are withheld for that exact state.
+
+With `[autobattle].enabled`, a fight is handed to Spire Mentor's Autobattle as a
+whole and the loop above resumes on the first screen after it; with
+`offer_handoff`, an in-fight offer that an enemy opens comes back to the model
+for that one choice. A session started from the interface can be paused or
+stopped at safe points of this loop, never between sending an action and
+observing its resolution.
 
 The seven-dimension strategic assessment and its standing plan (deck needs, what
 to avoid, removal and upgrade targets, a skip rule, boss preparation) persist for
@@ -209,18 +277,25 @@ memory keeps up to eight decisions/outcomes and a conditional turn intent.
 Recent combat summaries supplied to the assessor are capped at ten.
 An optional map-only `route_plan` persists across encounters and is revisited
 when resources, route position, fights, or elite preparation warrant it. Python
-provides projections and triggers; the model still chooses the route. There is
-no cross-session memory or cross-run learning. Run identity uses the mod's
-compendium ID when available, otherwise a session-scoped identifier.
+provides projections and triggers; the model still chooses the route.
 
-Decision prompts shrink advisory detail, community deck advice, oldest history,
-and finally all advisory support, in that order. Facts and legal candidates are
-never removed to fit; if those still exceed the byte cap, the session stops.
+Run identity uses the mod's compendium ID when available, otherwise a
+session-scoped identifier. With a compendium ID, the route plan, fight outcomes,
+map memory, and the open encounter's history are saved under
+`traces/run_state/` and restored by a later session of the same run. The
+strategic assessment is not saved; it is rebuilt. Session-scoped runs save
+nothing, and there is no cross-run learning.
+
+No local prompt-size cap applies by default; the provider's context limit still
+does. With `[llm].max_input_bytes` set, decision prompts shrink advisory detail,
+community deck advice, oldest history, and finally all advisory support, in that
+order. Facts and legal candidates are never removed to fit; if those still
+exceed the cap, the session stops.
 
 ## Stops and exit codes
 
-Unsupported screens, missing actions, invalid output, exhausted budgets, stale
-states, unresolved actions, and time/action limits are explicit outcomes. A
+Unsupported screens, missing actions, configured budgets and action limits,
+stale states, unresolved actions, and stalls are explicit outcomes. A
 regular shop offers leave once its inventory is ready even if its room-level
 `can_proceed` is false; full potion slots suppress potion purchases. A rest site
 with no enabled options and no proceed action is treated as not ready.
@@ -231,16 +306,21 @@ with no enabled options and no proceed action is treated as not ready.
 | `player_defeated` | Game-over state with no remaining HP (or unknown HP). |
 | `run_over_unconfirmed` | Game-over state with positive HP; the API does not certify victory. |
 | `unsupported_decision_screen` | No supported adapter; nothing is chosen for that screen. |
-| `model_failed`, `model_budget_exhausted`, `invalid_model_output` | No valid model choice; no gameplay action sent for it. |
-| `decision_input_too_large` | Essential facts/candidates exceed the prompt cap. |
+| `model_failed`, `model_budget_exhausted`, `invalid_model_output` | No valid model choice; no gameplay action sent for it. The last two need a configured budget or `corrective_retries` limit. |
+| `decision_input_too_large` | Essential facts/candidates exceed a configured `max_input_bytes`. |
 | `no_actions_on_actionable_screen` | A ready screen has no supported candidates. |
 | `adapter_index_mismatch` | A purchase changed a different shop entry than expected. |
 | `unresolved_action`, `ambiguous_outcome_unresolved` | Outcome not confirmed; request is never resent. |
-| `repeated_rejections`, `ready_timeout`, `no_progress`, `max_actions`, `max_elapsed`, `game_unavailable`, `interrupted` | Execution or configured bounds stopped the session. |
+| `repeated_rejections`, `ready_timeout`, `no_progress`, `max_actions`, `game_unavailable`, `interrupted` | Execution or configured bounds stopped the session. `interrupted` is also the interface's **Stop**. |
+| `not_in_combat` | `play-combat` was started outside a fight. |
+| `autobattle_failed` | The Autobattle bridge was unavailable, Mentor stopped playing a delegated fight, or a held offer could not be answered. No LLM combat fallback. |
 
 Exit `0` means expected completion for the command (`step_done`/`combat_ended`
-for step, `combat_ended` for play-combat, `run_over_unconfirmed` for play-run).
-Other session stops return `1`; setup/connectivity errors generally return `2`.
+for step, `combat_ended` for play-combat, `run_over_unconfirmed` for play-run
+and start-run). Other session stops return `1`; setup/connectivity errors
+generally return `2`; a cancelled `start-run` prompt returns `130`. `ui`, and
+`start-run` without `--console`, return `0` when the window is closed, whatever
+the session's stop reason; that is shown in the window and in the trace.
 
 ## Project map and references
 
@@ -255,8 +335,12 @@ Other session stops return `1`; setup/connectivity errors generally return `2`.
 | `src/sts_agent/enemy_patterns.py`, `combat_preview.py` | Static forecasts and native-preview summaries. |
 | `src/sts_agent/trace.py`, `replay.py` | Recording and offline validation. |
 | `src/sts_agent/actions.py`, `cards.py`, `policy.py`, `runner.py` | Explicit combat-only baseline comparison. |
-| `mod/`, `tools/` | Additive mod extension, patcher, and reference downloader. |
+| `src/sts_agent/autobattle.py` | Commands to Spire Mentor's native Autobattle through the mod bridge. |
+| `src/sts_agent/startup.py`, `game_pin.py` | Deterministic new-run setup; the pinned game build and its frozen copy. |
+| `src/sts_agent/hooks.py`, `src/sts_agent/ui/` | Session observer interface; the single window and its panels, their server, and the combat log. |
+| `mod/`, `tools/` | Additive mod extension (previews, deck, run setup, Autobattle bridge), patcher, and reference downloader. |
 
+- [Interface](docs/INTERFACE.md)
 - [Decision engine](docs/LLM_DECISION_ENGINE.md)
 - [Strategic planner contracts](docs/STRATEGIC_PLANNER.md)
 - [Expert statistics and route advice](docs/EXPERT_STATS.md)

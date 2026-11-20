@@ -18,7 +18,7 @@ class TextModel(Protocol):
     def complete(self, *, system: str, user: str) -> str: ...
 
 class StrategicPlanner:
-    def __init__(self, model: TextModel, *, transcript_path=None): ...
+    def __init__(self, model: TextModel, *, transcript_path=None, progress=None): ...
     def update(self, snapshot: StrategicSnapshot, *, force: bool = False) -> PlannerResult: ...
     def reset(self) -> None: ...
 ```
@@ -41,7 +41,9 @@ are no-ops unless forced. New revisions with unchanged facts reuse the previous
 assessment, except a new `combat_finished` revision or `force=True` requests a
 refresh. Reusing a revision with different content or supplying a revision older
 than the latest checked revision is invalid. A failed call can be attempted again
-with the identical snapshot. All memory remains session-local in the CLI.
+with the identical snapshot. The planner's memory is session-local: the same-run
+resume file under `traces/run_state/` does not store the assessment, so a
+restarted session builds a new one.
 
 ## Snapshot contract
 
@@ -162,7 +164,8 @@ schema/prompt versions, and provenance; the model does not supply those bindings
 Invalid assessment output permits **at most one corrective retry**, with the
 validation error and bounded rejected response. Provider exceptions are not
 retried. This differs from the original handoff's single-attempt design.
-Decision calls, assessment calls, and retries share the provider's budget.
+Decision calls, assessment calls, and retries share the provider's usage
+accounting and any configured budget.
 
 `PlannerResult.status` is `updated`, `unchanged`, `failed`, or `invalid_input`.
 It includes `assessment` (possibly historical), `snapshot_id`,

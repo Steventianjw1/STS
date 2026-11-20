@@ -11,6 +11,8 @@
 | Historical v0.107.1 evidence | Successful builds and mod startup/API reads were recorded; this is not full gameplay validation. |
 | Historical v0.111.0 evidence | Pinned upstream source failed compilation on changed lobby APIs. No compatible port is established by this repository. |
 | Enemy reference | Static v0.107.1 data from `tfriedel/spire-mentor` commit `d3115ef`; build mismatches are warned about, not automatically blocked. |
+| Autobattle (optional) | The [Spire Mentor](https://github.com/tfriedel/spire-mentor) mod installed beside `STS2_MCP`, reached through `mod/McpMod.AgentStartup.cs` by reflection on Mentor's own types. A Mentor build with different names reports an incompatible API instead of playing. Only Autobattle is used; the per-action advisor search was removed. |
+| Interface (optional) | Single window: Windows, the frame host from the Spire Mentor mod (`mods/SpireMentor/SpireMentorFrame`), and the Edge WebView2 runtime; opening, adopting, and closing were run against the pinned game, a played run was not. Tiled fallback: Windows for window placement, Edge or Chrome for chromeless panel windows, the game in Windowed mode; not verified against a live game. Elsewhere one browser tab shows every panel. See [INTERFACE.md](INTERFACE.md). |
 
 Primary game endpoints are `GET /`, `GET /api/v1/singleplayer`,
 `POST /api/v1/singleplayer`, and optional `GET /api/v1/compendium` for run ID.
@@ -33,8 +35,8 @@ or successful Python import establishes game compatibility.
 
 `sts-agent capabilities` prints the current code table. Every screen still has
 `live_validated=false`; no screen currently uses `synthetic_only` status. The
-latest commit's merchant/rest fixes are implemented behavior, not a blanket
-claim that a complete autonomous run has been verified.
+merchant/rest fixes are implemented behavior, not a blanket claim that a
+complete autonomous run has been verified.
 
 ## Screen capability table
 
@@ -42,9 +44,9 @@ claim that a complete autonomous run has been verified.
 | --- | --- | --- | --- |
 | Combat (`monster`, `elite`, `boss`) | source-inspected | `play_card`, `end_turn`, `use_potion`, `discard_potion` | Cards require observed playability and verified targeting. Targets use stable numeric `combat_id`. Accepted play is queued, then observed. |
 | `hand_select` | source-inspected | `combat_select_card`, `combat_confirm_selection` | State/action use the same holder list; selected cards are visible. |
-| `rewards` | source-inspected | `claim_reward`, `proceed`, `discard_potion` | State/action use the same enabled-button filter. |
+| `rewards` | source-inspected | `claim_reward`, `proceed`, `discard_potion` | State/action use the same enabled-button filter. A combined `reward_batch` choice collects gold and then takes one more of these actions, each sent and observed separately. |
 | `card_reward` | source-inspected | `select_card_reward`, `skip_card_reward` | Card holders are sorted by position in both paths. |
-| `map` | source-inspected | `choose_map_node` | Travelable nodes are ordered by column. Visible graph and bosses inform advice. |
+| `map` | source-inspected | `choose_map_node` | Travelable nodes are ordered by column. Visible graph and bosses inform advice. Travel to a campfire carries the campfire option, which is selected on arrival if nothing changed. |
 | `event`, including ancients | source-inspected | `choose_event_option`, `advance_dialogue` | Locked buttons are excluded. Ancient evidence is advisory; patched map data has no travel action from this screen. |
 | `rest_site` | source-inspected | `choose_rest_option`, `proceed` | Room-option order matching UI-button order remains an assumption. No enabled option and no proceed means not ready. |
 | Regular `shop` | source-inspected | `shop_purchase`, `proceed`, potion discard where exposed | State's concatenated entries are assumed to align with `inventory.AllEntries`; a different changed stock entry stops with `adapter_index_mismatch`. |
@@ -54,7 +56,7 @@ claim that a complete autonomous run has been verified.
 | `bundle_select` | unsupported | None | Upstream actions exist; adapter absent. |
 | `crystal_sphere` | unsupported | None | Minigame adapter absent. |
 | `fake_merchant` | unsupported | None | Separate from the supported regular shop. |
-| `overlay`, menus, unknown | unsupported | None | Unrecognized popups, run start, profile/difficulty management remain out of scope. |
+| `overlay`, menus, unknown | unsupported | None | Unrecognized popups and profile management remain out of scope. The decision engine chooses nothing on menus; `start-run` and the interface's New run set up a run with fixed, model-free steps (`startup.py`) before it starts. |
 
 Common room adapters may also offer potion discard. Potion use outside combat
 is not offered: the mod's combat-use flag does not establish any-time use.
@@ -74,7 +76,10 @@ The mod enqueues `play_card` and immediately returns `status: ok`; it does not
 prove resolution or exclude another card already resolving. Readiness uses the
 player play phase plus consecutive identical reads (two by default). This is a
 settling assumption, not a game-provided action-complete flag. The coordinator
-also requires fresh fingerprint/binding validation before a single POST.
+also requires fresh fingerprint/binding validation before a single POST. A ready
+screen with exactly one way forward is clicked without a model call and goes
+through the same validation; that relies on the adapter having found every
+alternative on the screen.
 
 Game rejection can be HTTP 200 with `status: error`. HTTP 500 and delivery
 uncertainty are treated as ambiguous: observe, never resend automatically.
@@ -110,14 +115,24 @@ choice from current facts. See [EXPERT_STATS.md](EXPERT_STATS.md).
 
 DeepSeek (`.[deepseek]`, OpenAI-compatible SDK transport) is the default.
 Anthropic (`.[llm]`, official SDK) is optional. Both require an explicit model
-and the corresponding environment key, disable SDK retries, share decision/
-assessment budgets, report usage, and reject truncation, refusal, or unexpected
-non-text/tool output. DeepSeek requests JSON and excludes `reasoning_content`.
-Optional `deepseek_reasoning_effort` accepts `low`, `high`, or `max`; actual API
-support depends on the selected model. Omission uses the provider default.
+and the corresponding environment key, disable SDK retries, share usage
+accounting and any configured decision/assessment budget (none by default),
+report usage, and reject truncation, refusal, or unexpected
+non-text/tool output. No output cap is sent to DeepSeek unless
+`max_output_tokens` is set; Anthropic uses 16384 when it is not. DeepSeek requests JSON and excludes `reasoning_content`
+from decisions and traces. In a session started from the interface the same
+request is streamed so that reasoning can be displayed; a streamed request the
+endpoint rejects falls back to plain calls for the rest of the session. Streaming
+against the real API has not been verified.
+`deepseek_reasoning_effort` accepts `low`, `medium`, `high`, or `max` and
+defaults to `medium`, which is sent as `high`; actual API support depends on the
+selected model.
 
-Provider failures stop without a gameplay fallback. Invalid decision or
-assessment output allows at most one corrective retry per operation. Synthetic
+There is no gameplay fallback for a provider failure. For decisions, transient
+failures and invalid output are retried without limit unless
+`[llm].provider_retries` or `[llm].corrective_retries` is set; other provider
+failures stop. Assessment output allows at most one corrective retry and
+assessment provider failures are not retried. Synthetic
 provider checks are historical evidence, not proof of current account/model
 availability. The documentation review makes no billable provider calls.
 

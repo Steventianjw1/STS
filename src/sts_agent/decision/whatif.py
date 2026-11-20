@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import random
 
-from ..route_paths import SIMULATIONS, simulate
-from ..route_risk import agent_loss_scale, loss_draws
+from ..evidence.route_paths import SIMULATIONS, simulate
+from ..evidence.route_risk import agent_loss_scale, loss_draws
 
 MAX_TOOL_ARG_ITEMS = 6
 _DECK_SCREENS = ("card_reward", "shop", "card_select", "event", "rest_site", "relic_select", "treasure")

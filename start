@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
-# start-run only plays the pinned game build (src/sts_agent/game_pin.py): it launches the
-# frozen copy when no game is running and refuses a game that Steam has updated.
+# Opens the interface (src/sts_agent/ui): it launches the frozen copy of the pinned game build
+# (src/sts_agent/game/game_pin.py) when no game is running, inside one window with the panels around it.
+# Runs are started from its control bar. `./start run ...` (sts-agent start-run) opens the same
+# window and begins a new run in it; `./start run --console ...` plays without the interface.
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 
+command=ui
+if [[ "${1:-}" == "run" ]]; then
+    command=start-run
+    shift
+fi
 for python in .venv/bin/python .venv/Scripts/python.exe .venv/python.exe; do
     if [[ -x "$python" ]]; then
-        exec "$python" -m sts_agent start-run "$@"
+        exec "$python" -m sts_agent "$command" "$@"
     fi
 done
 if command -v python3 >/dev/null 2>&1; then
-    exec python3 -m sts_agent start-run "$@"
+    exec python3 -m sts_agent "$command" "$@"
 fi
-exec python -m sts_agent start-run "$@"
+exec python -m sts_agent "$command" "$@"

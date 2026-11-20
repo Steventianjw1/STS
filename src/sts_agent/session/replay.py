@@ -8,8 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .actions import build_candidates
-from .observation import fingerprint
+from ..baseline.actions import build_candidates
+from ..game.observation import fingerprint
 
 
 def iter_records(path: Path):
@@ -103,7 +103,7 @@ def _replay_one(rec: dict, policy, blocked: set, line_no: int) -> dict:
 def _validate_llm_decision(rec: dict, line_no: int) -> dict:
     """Check a recorded LLM decision without calling any model:
     frame_id integrity, recorded choice offered, recorded response text parses to that choice."""
-    from .decision.models import ChoiceError, DecisionFrame, parse_choice
+    from ..decision.models import ChoiceError, DecisionFrame, parse_choice
     problems, chosen = [], (rec.get("choice") or {}).get("action_id")
     try:
         frame = DecisionFrame.from_record(rec["frame"])

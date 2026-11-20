@@ -5,7 +5,7 @@ import math
 import time
 
 from .client import AmbiguousActionError
-from .decision.screens import build_view
+from ..decision.screens import build_view
 
 CHARACTERS = ("IRONCLAD", "SILENT", "REGENT", "NECROBINDER", "DEFECT")
 PATCH_HINT = ("Install the startup mod extension: run python tools/patch_mod_preview.py "

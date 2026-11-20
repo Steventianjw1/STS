@@ -22,7 +22,7 @@ record_raw = true         # also write debug_raw.jsonl (raw API responses; not t
 # Optional: lets `doctor` read <game_dir>/mods/STS2_MCP.json. This path is never written to traces.
 # game_dir = 'D:\SteamLibrary\steamapps\common\Slay the Spire 2'
 
-# The agent only plays the game build its mod and simulator support (v0.107.1; see game_pin.py).
+# The agent only plays the game build its mod and simulator support (v0.107.1; see game/game_pin.py).
 # `./start` saves a frozen copy of that build under <pinned_game_dir>/<build>, outside Steam's
 # reach, and launches it when no game is running. `./start --pin-only` just saves the copy.
 pinned_game_dir = "data/game"
@@ -55,7 +55,11 @@ timeout_s = 60.0                   # SDK timeout per connect and per wait for da
                                    # receiving bytes can run longer. SDK retries are disabled.
 # provider_retries = 2             # optional cap; omitted = retry recoverable model failures
 # corrective_retries = 1           # optional cap; omitted = keep requesting a valid action
-deepseek_reasoning_effort = "medium" # low, medium (mapped to high), high, or max
+deepseek_reasoning_effort = "medium" # none, low, medium (served as high), high, or max
+# The strategic planner's own effort; "same" follows the line above. The planner is roughly half
+# of all model time, most of it reasoning tokens (about 5 s per 1000). "low" measured about a third
+# faster per planner call on one recorded state; its effect on play strength is not measured.
+deepseek_strategy_reasoning_effort = "same"
 # max_calls_per_run = 2000         # optional explicit shared model-call budget; omitted = unlimited
 # max_input_tokens_per_run = 5000000
 # max_output_tokens_per_run = 500000
@@ -76,7 +80,7 @@ lang = "eng"                      # event catalog language for exact title match
 cache_dir = "traces/spire_codex_cache"
 cache_ttl_s = 86400.0              # memory + disk; expired data is not used
 request_timeout_s = 3.0
-max_fetch_s = 12.0                 # overall fetch budget per decision; remaining run budget also applies
+max_fetch_s = 12.0                 # overall fetch budget per decision
 history_enabled = true            # indexed floor/deck contexts and map evidence; also requires enabled=true
 history_runs_per_player = 100      # bounded SQLite corpus under cache_dir; standard solo runs only
 history_new_runs_per_decision = 3  # incremental sync; at most one run per player per decision
@@ -93,25 +97,34 @@ replan_gold_tolerance = 100       # re-plan trigger: gold this far from the proj
 elite_readiness_enabled = true    # elite threats (Spire Codex catalogs) vs. the patched mod's permanent deck
 elite_block_attack_pct = 20.0     # block gap rule: elite attack turn >= this % of max HP, or it gains Strength
 elite_trigger_steps = 3           # re-plan trigger: planned elite within this many steps while gaps remain
+boss_readiness_enabled = true     # card/shop screens: what the act boss asks of the deck, its fight stats and builds
 ancient_advisor_enabled = true    # relic effects vs. deck/state, offer stats, community lift, patched act-map outlook
 # Optional SPIRE_CODEX_API_KEY belongs in .env, never in this file.
 
-# Combat search (optional). Combat actions come from the Spire Mentor mod's advisor
-# (https://github.com/tfriedel/spire-mentor, MIT): MCTS over a simulator of the game. Requires the
-# Spire Mentor mod installed beside STS2_MCP with its coach (Advisor mode) on, on a game build it
-# supports. With autobattle=false, this agent reads combat advice and executes through STS2_MCP,
-# using the LLM on a search miss. With autobattle=true, Mentor executes whole fights, including
-# in-fight selections (except as offer_handoff says below), and stops on failure. Mentor is off between fights; the LLM makes all
-# non-combat choices without reading Mentor's card or path suggestions.
-[combat_search]
+# Autobattle (optional). The Spire Mentor mod (https://github.com/tfriedel/spire-mentor, MIT) can play a
+# whole fight by itself; this is the only part of Mentor the agent uses. It needs the Spire Mentor mod
+# installed beside STS2_MCP on a game build it supports. With enabled=true Mentor executes whole fights,
+# including in-fight selections (except as offer_handoff says below), and the session stops on failure;
+# the LLM makes every non-combat choice and never reads Mentor's advice. With enabled=false the LLM plays
+# the fights itself.
+[autobattle]
 enabled = false
-autobattle = false                # true: Mentor plays whole fights; LLM only outside combat, no combat fallback
-offer_handoff = true              # with autobattle: Mentor holds in-fight "choose a card" offers. One an enemy opens
-                                  # (a boss's debuff choice) is decided by the LLM, because Mentor would score it as a
+offer_handoff = true              # Mentor holds in-fight "choose a card" offers. One an enemy opens (a boss's
+                                  # debuff choice) is decided by the LLM, because Mentor would score it as a
                                   # deck pick; any other goes back to Mentor's own pick. false: Mentor answers them all.
-control_url = "http://127.0.0.1:8079"   # the advisor's control port (8079 for the mod's default port 9002)
-# advisor_log_dir = 'C:\Users\<you>\AppData\Local\SpireMentor\logs\realgame_advisor'  # default: auto-detected
-advice_timeout_s = 30.0            # per decision: wait for the advisor's board to match ours and for its advice
-poll_interval_s = 0.2
-request_timeout_s = 2.0
-cooldown_s = 120.0                 # after 3 consecutive timeouts, skip the search this long
+pilot = false                     # true: the agent's own combat search (src/sts_agent/pilot) picks every combat
+                                  # move, tailored per encounter; Mentor's Autobattle still plays it. Needs
+                                  # `python tools/fetch_mentor_source.py` once; applies from the next fight.
+# pilot_source = "data/mentor_source"
+
+# Interface (`./start` or `sts-agent ui`). One window holds the game and the panels around it: control bar
+# above, combat log below, map plan / status / thinking on the right. It uses the frame host that ships with
+# the Spire Mentor mod (mods/SpireMentor/SpireMentorFrame); without it, or with single_window = false, the
+# game window is moved to the top-left of the screen and separate panel windows are tiled around it.
+[ui]
+single_window = true              # game and panels in one window; false: separate tiled windows
+game_fraction = 0.70              # share of the window's width given to the game (0.4-0.9); tiled: of the screen
+port = 0                          # localhost port of the interface; 0 picks a free one
+# browser = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'  # default: Edge, then Chrome
+live_thinking = true              # stream the model's reasoning into the Thinking panel (DeepSeek only; shown, never stored)
+place_game_window = true          # tiled layout only. false: leave the game window where it is

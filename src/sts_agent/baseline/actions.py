@@ -9,7 +9,7 @@ shift when other enemies die.
 """
 from __future__ import annotations
 
-from .cards import SUPPORTED_TARGET_TYPES
+from ..game.cards import SUPPORTED_TARGET_TYPES
 
 ACTION_PLAY_CARD = "play_card"
 ACTION_END_TURN = "end_turn"

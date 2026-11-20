@@ -14,6 +14,9 @@ import re
 DATA_VERSION = "v0.107.1"
 DATA_SOURCE = "tfriedel/spire-mentor sts2-wiki/data/v0.107.1/monsters.json"
 DEFAULT_PATH = "data/monster_reference/monsters.json"
+ENCOUNTERS_FILE = "encounters.json"   # read from the folder of the monsters file when present
+POWERS_FILE = "powers.json"           # likewise: the game's own description of each power
+_MARKUP = re.compile(r"\[/?[A-Za-z_]+(?:=[^\]]*)?\]")   # [blue]..[/blue], [gold]..[/gold] in game text
 FORECAST_TURNS = 3
 _MIN_PROB = 1e-9
 
@@ -28,9 +31,26 @@ def _kind(itype) -> str:
 
 
 class MonsterReference:
-    def __init__(self, records: list, *, path: str, game_build: str | None = None):
+    def __init__(self, records: list, *, path: str, game_build: str | None = None, encounters: list | None = None,
+                 powers: list | None = None):
         self.path, self.game_build = path, game_build
         self.by_id, self.by_title = {}, {}
+        # Power class name, with and without its "Power" suffix -> record with the game's own description.
+        self.powers = {}
+        for power in powers or []:
+            if isinstance(power, dict) and power.get("class_name") and power.get("description"):
+                self.powers.setdefault(_norm(power["class_name"]), power)
+                self.powers.setdefault(_norm(re.sub(r"Power$", "", power["class_name"])), power)
+        # Encounter id (the map's boss id, e.g. KAISER_CRAB_BOSS) -> its record; a boss can be several monsters.
+        self.encounters, self.boss_by_title = {}, {}
+        for enc in encounters or []:
+            if not isinstance(enc, dict) or not isinstance(enc.get("monsters"), list):
+                continue
+            for key in (enc.get("loc_key"), enc.get("class_name")):
+                if key:
+                    self.encounters.setdefault(_norm(key), enc)
+            if enc.get("title") and _norm(enc.get("room_type")) == "boss":
+                self.boss_by_title.setdefault(_norm(enc["title"]), enc)
         for rec in records:
             if not isinstance(rec, dict) or not isinstance(rec.get("moves"), list):
                 continue
@@ -48,7 +68,17 @@ class MonsterReference:
             records = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        return cls(records, path=path, game_build=game_build) if isinstance(records, list) else None
+        if not isinstance(records, list):
+            return None
+        def sibling(name):   # optional files from the same source, read from the monsters file's folder
+            try:
+                data = json.loads(Path(path).with_name(name).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+            return data if isinstance(data, list) else None
+        # Without encounters only single-monster bosses resolve; without powers they stay unexplained names.
+        return cls(records, path=path, game_build=game_build, encounters=sibling(ENCOUNTERS_FILE),
+                   powers=sibling(POWERS_FILE))
 
     # -- lookup ---------------------------------------------------------------
     def _record(self, enemy: dict):
@@ -60,6 +90,85 @@ class MonsterReference:
         if enemy.get("name") and _norm(enemy["name"]) in self.by_title:
             return self.by_title[_norm(enemy["name"])], "display_name"
         return None, None
+
+    def _power_text(self, name: str) -> str | None:
+        """The game's description of a power named as the monster data names it; None when unknown."""
+        power = self.powers.get(_norm(name)) or self.powers.get(_norm(name) + "power")
+        if power is None:
+            return None
+        text = " ".join(_MARKUP.sub("", str(power["description"])).split())
+        shown = str(power.get("title") or "")
+        return f"{shown}: {text}" if shown and _norm(shown) != _norm(name) else text
+
+    def profile(self, *, monster_id: str | None = None, name: str | None = None,
+                ascension: int | None = None) -> dict | None:
+        """Static summary of one monster for planning outside combat; None when it is not in the data.
+
+        ``monster_id`` may be a map boss id such as ``QUEEN_BOSS``. Numbers are the data's values
+        for ``ascension`` (both tiers when it is unknown), never observations of a fight.
+        """
+        key = re.sub(r"_BOSS$", "", str(monster_id or ""), flags=re.I)
+        rec = (self.by_id.get(_norm(key)) if key else None) or (self.by_title.get(_norm(name)) if name else None)
+        if rec is None:
+            return None
+        tier = rec.get("hp_ascension")
+
+        def hp(prefix):
+            high, base = rec.get(f"{prefix}_hp"), rec.get(f"{prefix}_hp_base")
+            if base is None and rec.get("min_hp") == rec.get("max_hp"):
+                base = rec.get("min_hp_base")   # a fixed-HP record carries only one base value
+            if tier is None or base is None or base == high:
+                return high
+            if ascension is None:
+                return {"below_ascension": base, f"ascension_{tier}_plus": high}
+            return high if ascension >= tier else base
+        pattern = rec.get("move_pattern") if isinstance(rec.get("move_pattern"), dict) else {}
+        moves = [m for m in rec["moves"] if isinstance(m, dict) and m.get("id")]
+        title = {m["id"]: m.get("title") or m["id"] for m in moves}
+        spawn = [str(p) for p in rec.get("powers_on_spawn") or []]
+        applied = [found.group(1) for m in moves for effect in m.get("effects") or []
+                   for found in [re.match(r"Apply (\w+)$", str(effect))] if found]
+        glossary = {}   # keyed by the name exactly as powers_on_spawn and the move effects spell it
+        for power in [*spawn, *applied]:
+            text = self._power_text(power)
+            if text and power not in glossary:
+                glossary[power] = text
+        return {
+            "name": rec.get("title") or rec.get("class_name"), "data_version": DATA_VERSION,
+            "hp": {"min": hp("min"), "max": hp("max")},
+            "powers_on_spawn": spawn,
+            **({"power_glossary": glossary} if glossary else {}),
+            "starts_with": title.get(pattern.get("starts_with"), pattern.get("starts_with")),
+            "pattern": rec.get("move_pattern_desc"),
+            "moves": [{"title": title[m["id"]], "intents": self._intents(m, ascension),
+                       "effects": list(m.get("effects") or []) or "not described in the reference data"}
+                      for m in moves],
+        }
+
+    def encounter_profiles(self, *, encounter_id: str | None = None, name: str | None = None,
+                           ascension: int | None = None) -> list | None:
+        """Profiles of every monster in a boss fight, the one the fight is named after first.
+
+        A boss on the map is an encounter: usually one monster, sometimes several fought together
+        (Kaiser Crab is Crusher and Rocket). ``count`` is set on a monster that appears more than
+        once. Without encounter data this falls back to a monster with the boss's own id or name.
+        None when nothing in the data matches; a listed member that has no monster record is
+        returned as ``{"name": ..., "missing": True}`` so the gap stays visible.
+        """
+        enc = self.encounters.get(_norm(encounter_id)) if encounter_id else None
+        enc = enc or (self.boss_by_title.get(_norm(name)) if name else None)
+        if enc is None:
+            single = self.profile(monster_id=encounter_id, name=name, ascension=ascension)
+            return [single] if single else None
+        counts: dict[str, int] = {}
+        for member in enc["monsters"]:
+            counts[str(member)] = counts.get(str(member), 0) + 1
+        out = []
+        for member, count in counts.items():
+            item = self.profile(monster_id=member, name=member, ascension=ascension) or {"name": member, "missing": True}
+            out.append({**item, "count": count} if count > 1 else item)
+        own = _norm(enc.get("title") or name or "")
+        return sorted(out, key=lambda p: _norm(p.get("name")) != own)   # stable: the namesake leads
 
     # -- pattern model --------------------------------------------------------
     @staticmethod
@@ -217,6 +326,40 @@ class MonsterReference:
                         "current_index": loop.index(current) if current in loop else None,
                         "opening_moves_before_cycle": [title(m) for m in path[:path.index(nxt)]]}
             path.append(nxt)
+
+
+_TEXT_BUDGET = 930                                             # the strategic snapshot's text fields hold 1000
+_COMMON_POWERS = {"strength", "dexterity", "vulnerable", "weak", "frail"}   # explained by the game's keyword glossary
+
+
+def profile_text(profile: dict) -> str:
+    """One compact line per ``MonsterReference.profile``, for bounded text fields."""
+    if profile.get("missing"):
+        return "No reference data for this monster: its HP and moves are unknown."
+
+    def intent(it):
+        if it.get("damage") is None:
+            return str(it.get("type"))
+        hits = it.get("hits")
+        return f"attack {it['damage']}" + (f" x{hits}" if hits not in (None, 1) else "")
+
+    hp = profile["hp"]
+    span = hp["min"] if hp["min"] == hp["max"] else f"{hp['min']}-{hp['max']}"
+    moves = "; ".join(f"{m['title']} [{', '.join(intent(i) for i in m['intents']) or 'no intent listed'}]: "
+                      + (", ".join(m["effects"]) if isinstance(m["effects"], list) else m["effects"])
+                      for m in profile["moves"])
+    spawn = f" Starts with powers: {', '.join(profile['powers_on_spawn'])}." if profile["powers_on_spawn"] else ""
+    text = f"HP {span}.{spawn} {profile.get('pattern') or 'Move order not described.'} Moves: {moves}"
+    # Power descriptions go last and only while they fit, so they never push the moves out of a bounded field.
+    glossary = profile.get("power_glossary") or {}
+    notes = [f"{name} = {glossary[name]}" for name in glossary
+             if name in profile["powers_on_spawn"] or _norm(name) not in _COMMON_POWERS]
+    for i, note in enumerate(notes):
+        piece = (". Powers: " if i == 0 else "; ") + note
+        if len(text) + len(piece) > _TEXT_BUDGET:
+            break
+        text += piece
+    return text
 
 
 _ACTIVE: MonsterReference | None = None

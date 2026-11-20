@@ -1,6 +1,92 @@
 # Validation records and current verification limits
 
-## Current documentation review — 2026-11-12
+## Single-window interface — 2026-11-20
+
+The interface was changed to one window holding the game and the panels, using
+the frame host from the installed Spire Mentor bundle (0.10.6). It was run
+against the pinned game copy (v0.107.1, STS2MCP 0.4.0 answering) on a 1920×1200
+display at 150% scaling. Except for the continued run noted below, no provider
+call was made and no gameplay action was sent; the interface's health checks
+sent `GET /` and the Autobattle status command. Results were read from screen
+captures, the host's `frame.log`, and
+process and window listings.
+
+- **Live, game already open** (`sts-agent ui --no-launch`, game on a game-over
+  screen): the host adopted the game window about 1.5 s after it started; the
+  page drew the control bar across the window, the game at 16:9, the combat log
+  below and the three panels on the right; the Game window check read "inside
+  the STS Agent window". Closing the window returned the game window with its
+  original style and bounds, and the interface process exited with code 0.
+- **Live, no game running** (`sts-agent ui`): the game was started with
+  `--wid`, appeared as a window owned by the host, was adopted about 2 s later,
+  and reached the main menu inside the window; the mod answered within about
+  8 s of the launch and the game window, mod, build, model and Autobattle checks
+  were ok. Closing the window made the game quit and the interface exit with
+  code 0; no game, host, or interface process was left.
+- **Live, Full screen button** (two synthetic mouse clicks): the window became
+  borderless and filled the screen, the game resized with the layout, and the
+  second click restored the window.
+- **Source inspection** (decompiled host and Mentor mod): the page-to-host
+  messages, the host's F-key capture, and Mentor's own option that starts a
+  second host. None of these were exercised beyond the messages listed above.
+
+- **Live, Continue run on an adopted game:** a run that a console `start-run`
+  session had begun was continued from the window (session
+  `20261119T173643Z-34842f`). The open fight was delegated to Autobattle and
+  appeared in the combat log, the stored route plan was drawn, and reasoning
+  streamed into the Thinking panel. The console session could not be stopped
+  with Ctrl+C from another process and was killed during a model call.
+- **Synthetic, stubbed window, game launch and session:** `start-run` now opens
+  the interface and then starts the new run with the given character and
+  ascension, in that order, in both the single window and the tiled fallback;
+  `ui` starts no run. `start`, `start.cmd`, `start run` and `start.cmd run`
+  were checked with `--help` to reach `ui` and `start-run`. `start-run` was not
+  run against the game, because a run was in progress.
+
+Not verified: `start-run` opening the window and setting a run up live; New run
+setup, Pause, Step and Stop from the window; adoption of a game
+that opens its own window after the interface is up, a game set to Fullscreen,
+the console minimising itself, a second monitor, and the tiled fallback after
+this change.
+
+## Interface and Autobattle-only change — 2026-11-14
+
+The interface (`src/sts_agent/ui/`, `hooks.py`) was added and the Spire Mentor
+integration was reduced to the native Autobattle bridge on top of `d73c7f3`. The
+interface was **not launched**, the game was not started, moved, or sent any
+action, and no provider call was made. Everything below is offline.
+
+- **Regression, local ignored tests:** 166 passed and 12 failed. A clean export
+  of `d73c7f3` with the same tests fails the same 12 (strategic planner, expert
+  statistics, one observation and one decision-engine case), so they predate
+  this change. `test_connection_refused_is_not_delivered` was left out: a
+  refused local connection times out in the sandbox it ran in.
+- **Synthetic, scripted model and scripted game client fed with recorded
+  states:** an unpaused step sends one action and reports through the hooks; a
+  paused session sends nothing; Step lets exactly one action through and leaves
+  the pause set; Stop while paused ends as `interrupted` with nothing sent.
+- **Synthetic, fake SDK client:** a streamed DeepSeek call assembles the answer,
+  delivers reasoning and answer deltas, and records usage once; a rejected
+  stream falls back to a plain call and stays plain; without a listener the
+  request is unchanged.
+- **Synthetic, local server:** requests without the token get 403; the state
+  feed, the page, a command, and the long poll answer as designed.
+- **Recorded live observations replayed offline:** the combat log rebuilt the
+  three fights of session `20261114T024056Z-511e34` from its raw states.
+- **Page:** rendered with replayed data in a browser with no script errors. The
+  combined page was seen once; the three separate panel pages were checked
+  through the DOM at their intended sizes, not by eye.
+- **Read-only on the running machine:** the layout was computed from the real
+  work area (1920×1128: game 1344×790 at 0,96) and the running game's window
+  handle was found. The window was not moved.
+
+Not verified: placing the game window, opening and placing the Edge panel
+windows, launching the game from the interface, New run setup from the
+interface, streaming against the real DeepSeek API, and pausing or resuming a
+real delegated fight. Mentor's own in-game overlay may still appear during
+delegated fights, because the bridge switches Mentor to its Coach style.
+
+## Documentation review — 2026-11-12
 
 The current implementation was reviewed through `35d636c` ("Fix live merchant
 and rest handling and configure DeepSeek effort"), following the two merges of

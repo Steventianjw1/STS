@@ -25,8 +25,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import AGENT_VERSION, STS2MCP_SOURCE_COMMIT
-from .observation import OBS_SCHEMA_VERSION
+from .. import AGENT_VERSION, STS2MCP_SOURCE_COMMIT
+from ..game.observation import OBS_SCHEMA_VERSION
 
 TRACE_FORMAT_VERSION = "sts2-trace-1"        # baseline (legacy) traces
 LLM_TRACE_FORMAT_VERSION = "sts2-trace-2"    # LLM decision traces

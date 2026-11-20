@@ -3,8 +3,8 @@
 This is the current architecture reference, replacing the original implementation
 handoff. The code in `src/sts_agent/decision/` is authoritative for field shapes,
 capabilities, and execution behavior. The current decision prompt is
-`decision-prompt-18`, frame schema `sts2-decision-frame-1`, and LLM policy version
-`1.0.0`. See [compatibility](COMPATIBILITY.md) for validation limits.
+`decision-prompt-20`, frame schema `sts2-decision-frame-1`, and LLM policy version
+`1.1.0`. See [compatibility](COMPATIBILITY.md) for validation limits.
 
 ## Responsibilities
 
@@ -17,7 +17,7 @@ STS2MCP -> normalized observation -> supported screen + candidates
                                           |
                      configured model -> validated action ID
                                           |
-                  fresh state + binding + deadline validation
+                       fresh state + binding validation
                                           |
                      send once -> observe resolution -> trace
 ```
@@ -25,20 +25,26 @@ STS2MCP -> normalized observation -> supported screen + candidates
 One configured provider instance is shared by the strategic assessor and action
 policy. DeepSeek is the default; Anthropic is supported. Both implement
 `TextModel.complete(system=..., user=...)`, use optional SDKs, and share call/token
-budgets across decisions, strategic updates, corrective retries, provider retries,
-and what-if tool calls. SDK retries are disabled; the policy itself retries a
+accounting, and any configured budget, across decisions, strategic updates,
+corrective retries, provider retries, and what-if tool calls. No budget applies
+by default. SDK retries are disabled; the policy itself retries a
 transient provider failure. Core/offline execution is standard-library-only.
+A session started from the [interface](INTERFACE.md) streams its DeepSeek calls
+so the reasoning can be displayed; the answer is assembled and validated as a
+plain response is, and the reasoning is never part of the decision or the trace.
 
 | Module | Responsibility |
 | --- | --- |
 | `decision/screens.py` | Raw screen state to allowlisted facts, candidates, private payload bindings, readiness, and limitations. |
 | `decision/models.py` | Frame hash, serialization, choice parsing, and map-plan validation. |
 | `decision/prompts.py` | Versioned instruction modules assembled per screen, advisory labels, and prompt-size reduction. |
-| `decision/policy.py` | Model call, validation, one corrective retry, bounded provider retries, and the optional what-if tool round. |
+| `decision/policy.py` | Model call, validation, corrective and provider retries (unlimited unless configured), and the optional what-if tool round. |
 | `decision/whatif.py` | The two read-only what-if calculations the model may request. |
 | `decision/coordinator.py` | Session bounds, memory, strategic refresh, fresh validation, execution, and resolution. |
 | `decision/offline.py` | Explicitly synthetic clients and scripted model replies. |
 | `providers/` | DeepSeek/Anthropic transport, sanitized diagnostics, usage, and budget accounting. |
+| `autobattle.py` | Commands to Spire Mentor's native Autobattle through the mod bridge. |
+| `hooks.py` | No-op observer and pause gate the coordinator reports to; the interface overrides it. |
 
 ## Facts and frames
 
@@ -153,13 +159,27 @@ On shop screens an optional `shop_plan` lists the whole visit: offered
 must be last, and so must card removal. The coordinator executes the steps one by
 one with state checks and abandons the rest when prices, stock, or gold change.
 
-Invalid output permits one corrective retry against the same frame. A transient
-provider failure (timeout, dropped connection, 408/409/425/429, 5xx) is retried
-up to `[llm].provider_retries` times (default 2) with the same prompt; nothing is
-sent to the game in between, and the screen is revalidated before any action.
-Other provider failures stop. No fallback chooses an action. The
-[strategic planner](STRATEGIC_PLANNER.md) separately allows one corrective retry
-for invalid assessment output using the same budget.
+On map screens, choosing a campfire as the immediate destination requires a
+`rest_option` key: the stable uppercase option ID (`HEAL`, `SMITH`, or another
+observed option). Travel and that option are one decision. On arrival the
+coordinator selects the option with fresh bindings and no model call; if the
+arrival, the player's resources, or the option's availability differ from what
+was expected, the plan is dropped and the campfire is decided as a normal
+screen. A response for any other destination must not include the key.
+
+On rewards screens a `reward_batch` candidate collects all gold and then claims
+one other reward or proceeds, as one choice. Each step is still sent, observed,
+and validated on its own, and an unexpected change abandons the rest.
+
+Invalid output is answered with a corrective retry against the same frame, and a
+transient provider failure (timeout, dropped connection, 408/409/425/429, 5xx)
+is retried with the same prompt after a short backoff. Both repeat until a valid
+choice arrives unless `[llm].corrective_retries` or `[llm].provider_retries`
+sets a limit; a requested stop also ends the loop. Nothing is sent to the game
+in between, and the screen is revalidated before any action. Other provider
+failures stop. No fallback chooses an action. The
+[strategic planner](STRATEGIC_PLANNER.md) is different: it allows one corrective
+retry for invalid assessment output and does not retry provider failures.
 
 ## What-if tools
 
@@ -189,8 +209,8 @@ Tool lists and results travel only in the message; the recorded frame and
 - Ancient events: offer-conditioned expert evidence and relic effects compared
   with the deck, resources, and readable act map.
 
-Evidence is advisory. Fetches have a shared per-decision deadline and remaining
-session-time allowance. Expected data/network failures return availability
+Evidence is advisory. Fetches have a shared per-decision deadline. Expected
+data/network failures return availability
 labels; unexpected external-data errors become unavailable support rather than
 stopping gameplay. Python does not select a route, reward, or purchase.
 
@@ -208,13 +228,25 @@ new potions/relics, unusually costly fights, or an imminent elite with deck gaps
 The model decides whether and how to revise its plan.
 
 Run identity comes from the mod compendium when available, otherwise
-`session:<session_id>`. Memory is in-process/session-local; an exposed run ID does
-not restore an earlier session's plans. There is no cross-run learning.
+`session:<session_id>`. With a compendium ID, observed facts, and a real model,
+the coordinator saves same-run state to `traces/run_state/<run id>.json` after
+each resolved action. A later session restores it when the file is for the same
+run and character and the game is at or past the saved act and floor:
+
+- Always: the route plan, fight outcomes and route calibration, map memory, the
+  energy observation, and the shop entry.
+- Only when the session resumes in the same room: the open encounter's history,
+  turn intent, and combat tally.
+- A fight that ended while no session was watching is recorded as `unobserved`.
+
+The strategic assessment is not saved and is rebuilt. Session-scoped runs and
+scripted models save nothing. There is no cross-run learning.
 
 ## Input-size handling
 
-The default user-message cap is 98,304 UTF-8 bytes (`[llm].max_input_bytes`). If
-the message exceeds it, `build_user_message` reduces context in this order:
+No local user-message cap applies by default; only the provider's context limit
+does. When `[llm].max_input_bytes` is set and the message exceeds it,
+`build_user_message` reduces context in this order:
 
 1. Remove per-option contributor and history-widening detail.
 2. Remove `supplementary_deck_advice`, when present.
@@ -232,8 +264,19 @@ record `history_dropped` and `support_trim` (`detail_dropped`,
 The coordinator waits for a supported ready screen and consecutive identical
 observations (two by default). It refreshes strategy when needed, obtains one
 validated model choice, and records it before sending. It then re-reads the game
-and requires the same screen fingerprint and action binding, with time remaining
-before the session deadline. A stale choice is recorded without being sent.
+and requires the same screen fingerprint and action binding. A stale choice is
+recorded without being sent, and so is one that meets a configured action limit
+(`not_sent_action_limit`). There is no session time limit.
+
+A ready screen with exactly one way forward skips the strategy refresh, the
+evidence, and the model. `automatic_action` (`screens.py`) recognizes a single
+map destination that is not a campfire, a lone proceed, confirm, or option, an
+end turn when no card or potion can be used, a shop where nothing is affordable,
+and the confirmation of an already-previewed card selection. Potion discards are
+ignored when counting alternatives. A `reward_batch`, a potion use, a card play,
+or a grid toggle whose result cannot be observed is never automatic. The click
+is recorded as an `automatic_decision` and goes through the same fresh
+validation and resolution.
 
 The action is posted once. Accepted means queued, so the coordinator polls for
 screen-specific resolution. Rejected actions are withheld for that exact state.
@@ -247,20 +290,39 @@ purchases; supported discard choices allow the model to free a slot. Rest sites
 with neither enabled options nor proceed are not ready, so transitional states
 are polled rather than immediately reported as actionable with no candidates.
 
-With `[combat_search].autobattle`, Spire Mentor plays whole fights. With
-`offer_handoff` (default on) the bridge asks Mentor to hold in-fight
+With `[autobattle].enabled`, Spire Mentor's native Autobattle plays whole fights
+through the mod bridge (`autobattle.py`, `mod/McpMod.AgentStartup.cs`). This is
+the only part of Mentor the agent uses: it sends `status`, `on`, `off`,
+`hold_offers`, and `ai_pick` and reads nothing else. There is no LLM combat
+fallback; a fight Mentor stops playing ends the session with `autobattle_failed`.
+With `offer_handoff` (default on) the bridge asks Mentor to hold in-fight
 choose-a-card offers through its own `pause_on` list and reports the held screen.
 A held offer is answered exactly once: one that opened during the enemy's turn (a
 boss's forced debuff choice) is decided by the model with the fight in view; any
 other is handed back to Mentor's own pick. An older mod or Mentor build that
-cannot hold leaves fights entirely with Mentor.
+cannot hold leaves fights entirely with Mentor. The earlier per-action combat
+search, which read Mentor's advisor and mapped its recommendation onto a
+candidate, has been removed along with `[combat_search]`.
 
-Outside delegated fights the model chooses every gameplay action, including
-confirmations, end turn, rewards, and leaving. Polling is automatic; gameplay decisions are not. The mod
-can open inventory/chests as a side effect of state reads. Limits include model
-latency; progress accounting avoids treating normal model/evidence latency as a
-game stall. Budget exhaustion, unsupported screens, unresolved actions, and
-session bounds stop explicitly. Positive-HP game over is `run_over_unconfirmed`,
+The coordinator reports to `SessionHooks` (`hooks.py`), which does nothing unless
+the [interface](INTERFACE.md) is attached. Hooks observe and gate; they never
+choose an action. A pause or stop is honored only at safe points: before a step,
+while waiting for a ready screen, after a strategy refresh, before the fresh
+validation that precedes a send, and in the delegated-fight loop, where Autobattle
+is switched off for the pause and on again after it. No such point lies between
+sending an action and observing its resolution. A pause after the strategy call
+discards that step so the screen is observed again; a pause before a send goes
+through the usual fresh validation on resume. Time spent paused restarts the
+no-progress clock. A requested stop ends the session with `interrupted` and ends
+the policy's retry loop before its next retry.
+
+Outside delegated fights and the forced clicks above, the model chooses every
+gameplay action, including confirmations, end turn, rewards, and leaving.
+Polling is automatic; choices between alternatives are not. The mod
+can open inventory/chests as a side effect of state reads. Progress accounting
+avoids treating normal model/evidence latency as a game stall. Exhaustion of a
+configured budget, unsupported screens, unresolved actions, and session bounds
+stop explicitly. Positive-HP game over is `run_over_unconfirmed`,
 not certified victory.
 
 ## Recording and verification
@@ -268,7 +330,7 @@ not certified victory.
 LLM sessions use `sts2-trace-2`; explicit baseline sessions use `sts2-trace-1`.
 Frames, choices, optional map and shop plans, retries, tool calls, prompt modules,
 provider usage, strategy updates, trimming, and outcomes are recorded separately. No private reasoning transcript
-is requested or stored. Replay validates saved LLM frames and offered action IDs
+is stored: reasoning streamed for the interface is displayed and discarded. Replay validates saved LLM frames and offered action IDs
 without resampling a model or contacting the game/evidence service. See
 [trace format](TRACE_FORMAT.md) for exact replay limits.
 

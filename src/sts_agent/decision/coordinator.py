@@ -1,4 +1,4 @@
-"""Run coordinator: LLM choices, with optional native Mentor ownership of whole fights.
+"""Run coordinator: LLM choices, with optional native Autobattle ownership of whole fights.
 
 Loop per decision:
 
@@ -26,10 +26,12 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
-from ..client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
+from ..evidence import boss_demands, enemy_patterns
+from ..game.client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
 from ..config import Limits
-from ..route_paths import enumerate_routes, map_type
-from ..route_risk import agent_loss_scale, node_class
+from ..session.hooks import SessionHooks
+from ..evidence.route_paths import enumerate_routes, map_type
+from ..evidence.route_risk import agent_loss_scale, node_class
 from ..strategic import StrategicSnapshot
 from .models import Choice, DecisionFrame, is_rest_destination
 from .policy import LLMDecisionPolicy, model_identity
@@ -69,6 +71,8 @@ LLM_PROVENANCE_SCRIPTED = {"data_source": "synthetic", "behavior": "scripted_mod
 # Non-combat screens that can open on top of a fight (potion or card-effect pickers). While a
 # combat is open on the same floor they belong to that fight; they are not a room exit.
 COMBAT_OVERLAY_KINDS = ("card_select",)
+# The game's refusal while a room is still opening, e.g. "Rest site room is not open" (observed live).
+_ROOM_NOT_OPEN = re.compile(r"\bnot open\b", re.I)
 STATE_VERSION = 1
 
 
@@ -92,6 +96,7 @@ class _Combat:
     damage: int = 0            # sum of HP decreases: what run files call damage_taken
     healed: int = 0            # sum of HP increases, including end-of-combat healing
     hp_tracked: bool = True    # False when part of the fight was not observed with this tracking
+    potions_held: list | None = None   # potion names held when the fight was first seen; None = not observed
 
     def note_hp(self, hp):
         if type(hp) is not int:
@@ -108,6 +113,7 @@ class CoordStats:
     actions_sent: int = 0
     actions_resolved: int = 0
     rejections: int = 0
+    room_not_open_retries: int = 0   # refusals answered by waiting for the room and sending again
     consecutive_rejections: int = 0
     stale: int = 0
     ambiguous: int = 0
@@ -117,8 +123,6 @@ class CoordStats:
     strategic_failures: int = 0
     combats_finished: int = 0
     combats_started: int = 0
-    search_decisions: int = 0
-    search_misses: int = 0
     autobattle_combats: int = 0
     offer_handoffs: int = 0       # in-fight offers Mentor held that this agent's model decided
     offer_ai_picks: int = 0       # held in-fight offers handed back to Mentor's own recommendation
@@ -137,15 +141,18 @@ class RunCoordinator:
                  offer_handoff: bool = False, limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
                  facts_source: str = "observed", objective: str, what_if_tools: bool = True,
                  state_path=None, clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
-                 log: Callable[[str], None] = print):
+                 log: Callable[[str], None] = print, hooks: SessionHooks | None = None):
         if scope not in ("run", "combat", "step"):
             raise ValueError("scope must be run, combat or step")
+        self.hooks = hooks or SessionHooks()         # the interface watches and pauses through these; no-ops otherwise
         self.client, self.policy, self.planner, self.rec = client, policy, planner, recorder
         self.expert_stats = expert_stats
         self.autobattle = autobattle
         self.offer_handoff = offer_handoff and autobattle is not None
         self._offer_hold: bool | None = None         # Mentor's answer to the last hold request (None: not asked)
         self._offers_answered: dict = {}             # held offer id -> clock time one answer was sent
+        # Fingerprint of a card grid on which this agent's own toggle just made Confirm available.
+        self._selection_complete: str | None = None
         self._handoff = False                        # True only while deciding a held offer
         self.whatif = WhatIfTools(self) if what_if_tools else None
         self.lim = limits or Limits()
@@ -182,6 +189,7 @@ class RunCoordinator:
         self.coverage: dict = {}                     # screen kind -> summed evidence_coverage counters
         self._coverage_seen: set = set()
         self.map_memory: dict | None = None          # the act map as last seen, and the node travelled to
+        self.act_bosses: dict | None = None          # {"act", "bosses"} from the last screen that showed the act map
         self.state_path = state_path                 # same-run resume file; None disables persistence
         self._restore_pending = state_path is not None
         self.resumed_from: dict | None = None
@@ -202,7 +210,24 @@ class RunCoordinator:
             self._last_fp = view.fingerprint
             self.last_progress = self.clock()
         self.last_view = view
+        self.hooks.observed(view)
         return view
+
+    def _gate(self, point: str, view: ScreenView | None = None) -> float:
+        """A safe point to honor the interface's pause or stop. Returns the seconds spent paused.
+
+        Never called between sending an action and observing its resolution. Time spent
+        paused is not a game stall, so the no-progress clock restarts on resume.
+        """
+        waited = self.hooks.gate(point)
+        if self.hooks.stop_requested():
+            raise _Stop(STOP_INTERRUPTED, "stopped from the interface", view or self.last_view)
+        if waited:
+            self.last_progress = self.clock()
+        return waited
+
+    def _publish_route(self):
+        self.hooks.route(self.route_plan, self.map_memory)
 
     def _observe_tolerant(self, label, deadline) -> ScreenView | None:
         try:
@@ -220,15 +245,21 @@ class RunCoordinator:
     def _wait_ready(self) -> ScreenView:
         deadline = self.clock() + self.lim.ready_timeout_s
         stable, prev = 0, None
+        self.hooks.step("waiting", "Waiting for a screen that is ready for a decision")
         while True:
+            if self._gate("wait"):
+                deadline = self.clock() + self.lim.ready_timeout_s
+                stable, prev = 0, None
             self._check_global()
             v = self._observe_tolerant("wait_ready", deadline)
             if v is not None and self.autobattle is not None:
                 status = self._autobattle_control("status", v)
+                self.hooks.autobattle(status)
                 if status.get("combat_in_progress"):
                     self._delegate_autobattle(v)
                     deadline = self.clock() + self.lim.ready_timeout_s
                     stable, prev = 0, None
+                    self.hooks.step("waiting", "Waiting for a screen that is ready for a decision")
                     continue
                 if status.get("mode") != "Off" or status.get("autoplay"):
                     self._autobattle_control("off", v)
@@ -264,15 +295,29 @@ class RunCoordinator:
                  + ("; offers an enemy opens come back to DeepSeek)" if hold else ")"))
         if self.rec:
             self.rec.event("autobattle_started", {"source": "spire_mentor_autobattle", "encounter": view.encounter_key})
+        self.hooks.step("autobattle", "Autobattle is playing this fight")
         while True:
+            if self.hooks.pause_requested() or self.hooks.stop_requested():
+                # Mentor must stop playing before the session waits; it is switched back on after resume.
+                self._autobattle_control("off", view)
+                if self.rec:
+                    self.rec.event("autobattle_paused", {"encounter": view.encounter_key})
+                self._gate("autobattle", view)
+                if self._autobattle_control("status", view).get("combat_in_progress"):
+                    hold = self._request_offer_hold()
+                    self._autobattle_control("on", view)
+                    if self.rec:
+                        self.rec.event("autobattle_resumed", {"encounter": view.encounter_key})
+                self.hooks.step("autobattle", "Autobattle is playing this fight")
             self._check_global()
             status = self._autobattle_control("status", view)
+            self.hooks.autobattle(status)
             if not status.get("combat_in_progress"):
                 self._autobattle_control("off", view)
                 after = self._observe("autobattle_finished")
                 if after.terminal:
                     self._raise_if_stop(after)
-                self._finish_combat(after, "victory")
+                self._finish_combat(after, *self._delegated_result(after))
                 self.stats.autobattle_combats += 1
                 self._save_state()
                 if self.rec:
@@ -293,6 +338,34 @@ class RunCoordinator:
                     self._track_encounter(view)
                 if view.terminal:
                     self._raise_if_stop(view)
+
+    def _delegated_result(self, after: ScreenView) -> tuple[str, str | None]:
+        """(result, note) for a delegated fight that just ended without a game-over screen.
+
+        Enemies that were dead at the last poll mean a win. Enemies still alive then are settled by
+        the screen that follows: a kill between two polls leads to the rewards screen, while a fight
+        that ends another way (a turn limit running out, an enemy leaving) does not. That second case
+        is recorded as ``unknown`` with what was seen, never as a victory.
+        """
+        alive = [e for e in (self.last_combat_facts or {}).get("enemies") or []
+                 if type(e.get("hp")) is int and e["hp"] > 0]
+        if not alive:
+            return "victory", None
+        deadline, v = self.clock() + self.lim.ready_timeout_s, after
+        while v.kind == "combat_ended" and self.clock() < deadline:   # the short gap before the next screen
+            self.sleep(self.lim.poll_interval_s)
+            v = self._observe_tolerant("autobattle_finished", deadline) or v
+            if v.terminal:
+                self._raise_if_stop(v)
+        if v.kind in ("rewards", "card_reward"):
+            return "victory", None
+        seen = "; ".join(
+            f"{e.get('name') or '?'} {e['hp']}/{e.get('max_hp')} HP"
+            + (" [" + ", ".join(f"{s.get('name')} {s.get('amount')}" for s in (e.get("statuses") or [])[:3]) + "]"
+               if e.get("statuses") else "")
+            for e in alive[:2])
+        return "unknown", (f"NOT CONFIRMED AS A WIN: last seen {seen}; no rewards screen followed (next: {v.kind}). "
+                           "Assume any reward for winning was not received.")
 
     def _request_offer_hold(self) -> bool:
         """Ask Mentor to hold in-fight choose-a-card offers instead of answering them.
@@ -319,6 +392,8 @@ class RunCoordinator:
         An offer an enemy opened during its turn has no fight search in Mentor (it would score the
         options as deck picks), so the model decides it with the fight in view. Any other held
         offer goes back to Mentor's own recommendation, which is what it would have played.
+        Whose turn it is comes from the picker screen when it says so, otherwise from the last
+        polled combat state; an unskippable offer of only Status/Curse cards counts as enemy-opened.
         """
         sent = self._offers_answered.get(offer)
         if sent is not None:
@@ -344,11 +419,24 @@ class RunCoordinator:
                 raise _Stop(STOP_AUTOBATTLE_FAILED, "Mentor is holding an in-fight offer this agent cannot read "
                                                     f"(screen {v.kind if v else 'unreadable'})", v)
             self.sleep(self.lim.poll_interval_s)
+        details = v.facts["screen_details"]
         side = ((v.facts.get("combat_context") or {}).get("combat") or {}).get("turn_side")
-        by = "llm" if side == "enemy" else "mentor"
-        cards = [c.get("name") for c in v.facts["screen_details"].get("cards") or []]
+        side_source = "picker_screen"
+        if side is None:
+            # The mod's picker state has no battle block, so the side comes from the fight as it was
+            # last polled, a fraction of a second before the offer was reported as held.
+            side = ((self.last_combat_facts or {}).get("combat") or {}).get("turn_side") if self.combat else None
+            side_source = "last_combat_observation" if side is not None else "unknown"
+        offered = details.get("cards") or []
+        # A poll can miss the turn change. An offer of nothing but Status/Curse cards that cannot be
+        # skipped is one an enemy forces, whichever side the last poll showed.
+        forced = (bool(offered) and details.get("can_skip") is False
+                  and all(str(c.get("type") or "").lower() in ("status", "curse") for c in offered))
+        by = "llm" if side == "enemy" or forced else "mentor"
+        cards = [c.get("name") for c in offered]
         if self.rec:
-            self.rec.event("autobattle_offer", {"offer": offer, "turn_side": side, "decided_by": by, "cards": cards,
+            self.rec.event("autobattle_offer", {"offer": offer, "turn_side": side, "turn_side_source": side_source,
+                                                "forced_harmful_offer": forced, "decided_by": by, "cards": cards,
                                                 "observation_fingerprint": v.fingerprint})
         if by == "mentor":
             self._offers_answered[offer] = self.clock()   # one request only; its effect is seen by polling
@@ -401,7 +489,7 @@ class RunCoordinator:
                 run = v.facts.get("run") or {}
                 self.combat = _Combat(v.encounter_key, v.state_type, v.facts["player"]["hp"],
                                       act=run.get("act"), floor=run.get("floor"),
-                                      last_hp=v.facts["player"]["hp"])
+                                      last_hp=v.facts["player"]["hp"], potions_held=_potion_names(v.facts))
                 self.stats.combats_started += 1
             if v.combat_round is not None:
                 self.combat.rounds = max(self.combat.rounds or 0, v.combat_round)
@@ -410,7 +498,8 @@ class RunCoordinator:
         elif v.kind == "rest_site":
             self._rest_checkpoint(v)
 
-    def _finish_combat(self, after: ScreenView, result: str):
+    def _finish_combat(self, after: ScreenView, result: str, note: str | None = None):
+        """``note`` leads the recorded notes, ahead of the HP and potion accounting, so the length cap keeps it."""
         c, self.combat = self.combat, None
         if c is None:
             return
@@ -433,13 +522,25 @@ class RunCoordinator:
                    "hp_damage_pct": round(damage / max_hp * 100, 1) if damage is not None and max_hp else None,
                    "node_class": cls, "expected_pct": (ref["classes"].get(cls) or {}).get("mean_pct") if cls else None,
                    "expected_p90_pct": (ref["classes"].get(cls) or {}).get("p90_pct") if cls else None}
+        # What the pilot did with the potions is visible only as slots that emptied during the fight.
+        left = _potion_names(after.facts) if after.facts else None
+        if c.potions_held is None or left is None:
+            potions = "potions held before and after the fight were not both observed"
+        else:
+            gone = list(c.potions_held)
+            for name in left:
+                if name in gone:
+                    gone.remove(name)
+            potions = (f"potions held at the start {c.potions_held or 'none'}, no longer held after it "
+                       f"{gone or 'none'}")
         item = {"id": f"combat-{c.key}", "encounter_type": c.encounter_type, "result": result,
                 "hp_lost": lost, "turns": c.rounds,
-                "notes": (f"OBSERVED: net HP change {change if change is not None else 'unknown'} measured on the "
+                "notes": ((note + " " if note else "") +
+                          f"OBSERVED: net HP change {change if change is not None else 'unknown'} measured on the "
                           f"first post-combat screen (includes end-of-combat effects); HP removed during the fight "
                           f"{damage if damage is not None else 'unknown'}, HP regained "
                           f"{healed if healed is not None else 'unknown'} (between observations, so lower bounds); "
-                          f"potions sent by this agent: {c.potions_used} (a delegated fight's potions are not counted).")}
+                          f"{potions}; potions sent by this agent: {c.potions_used}.")[:500]}
         self.recent_outcomes.append(item)
         self.route_outcomes.append(outcome)
         self.pending_combat_finished = True
@@ -447,6 +548,7 @@ class RunCoordinator:
         if self.rec:
             self.rec.event("combat_finished", item)
             self.rec.event("route_calibration", outcome)
+        self.hooks.combat_finished(item, outcome)
 
     def _rest_checkpoint(self, v: ScreenView):
         """Projected vs. actual HP on arrival at a rest site the stored route plan expected here."""
@@ -477,7 +579,47 @@ class RunCoordinator:
         self.map_memory = {"act": run.get("act"), "floor": run.get("floor"),
                            "nodes": [{"col": n["col"], "row": n["row"], "type": n["type"], "children": n["children"]}
                                      for n in d["nodes"]],
-                           "bosses": list(d.get("bosses") or []), "chosen": None}
+                           "bosses": list(d.get("bosses") or []), "chosen": None,
+                           # For the interface's map drawing only; route logic does not read these.
+                           "visited": [p for p in d.get("visited") or [] if p],
+                           "current": d.get("current_position")}
+        self._publish_route()
+
+    def _act_boss(self, v: ScreenView) -> dict | None:
+        """This act's boss as the act map shows it, with its static reference data.
+
+        Unlike ``_route_context`` this holds on every screen of the act, the map included: the
+        boss does not depend on the room. The name is an observed fact; the reference entry is
+        static data for one game build and is None when the monster is not in it.
+        """
+        run, d = v.facts.get("run") or {}, v.facts.get("screen_details") or {}
+        shown = d.get("bosses") or (d["map"].get("bosses") if isinstance(d.get("map"), dict) else None)
+        if shown and run.get("act") is not None:
+            self.act_bosses = {"act": run["act"], "bosses": [{"id": b.get("id"), "name": b.get("name")}
+                                                             for b in shown if isinstance(b, dict)]}
+        known = self.act_bosses
+        if not known or known["act"] != run.get("act"):
+            m = self.map_memory   # restored from the run state after a restart
+            if not m or m.get("act") != run.get("act") or not m.get("bosses"):
+                return None
+            known = {"act": m["act"], "bosses": [{"id": b.get("id"), "name": b.get("name")} for b in m["bosses"]]}
+        ref = enemy_patterns.active()
+        bosses = []
+        for b in known["bosses"]:
+            monsters = (ref.encounter_profiles(encounter_id=b["id"], name=b["name"], ascension=run.get("ascension"))
+                        if ref else None)
+            bosses.append({**b, "monsters": monsters, "deck_demands": boss_demands.fight_demands(monsters, b["id"])})
+        return {
+            "label": "ACT BOSS, as named on this act's map (observed). monsters lists every monster of that boss "
+                     "fight (a boss can be several monsters fought together; count marks repeats) as static data "
+                     "for one game build with base values at this ascension, not an observation of the fight. "
+                     "monsters null means the boss is not in the reference data; missing true means that one "
+                     "monster is not. deck_demands say what this fight asks of the deck: the capability (need), "
+                     "the kind of card that supplies it (take) and why, which is either the data a rule read or, "
+                     "where it starts with \"Owner's guidance\", what the person running this agent knows about "
+                     "the fight and the reference data omits. They ignore relics and potions; null means unknown, "
+                     "an empty list that nothing known asks for a special deck.",
+            "bosses": bosses}
 
     def _route_context(self, v: ScreenView) -> dict | None:
         """What the map leads to after the current room, from the last observed map.
@@ -597,6 +739,31 @@ class RunCoordinator:
                                          f"act boss {bosses}."),
                     "details": _clip(json.dumps({k: ahead[k] for k in ("next_is_boss", "ahead_over_all_continuations")},
                                                 ensure_ascii=False, sort_keys=True))}]
+            boss = self._act_boss(v)   # not a choice either: who ends the act, on every screen including the map
+            extra = []   # one entry per monster of each boss fight, so each fits the bounded details field
+            for i, b in enumerate((boss or {}).get("bosses") or []):
+                key, name = f"act_boss:{b['id'] or b['name'] or i}", b["name"] or b["id"]
+                members = b["monsters"] or [None]
+                for j, m in enumerate(members):
+                    several = len(members) > 1
+                    who = ("" if m is None or not several else
+                           f" Monster {j + 1} of {len(members)} in that fight, fought together: "
+                           f"{m.get('name')}" + (f" x{m['count']}" if m.get("count") else "") + ".")
+                    extra.append({
+                        "id": (f"{key}:{j + 1}" if several else key)[:80], "kind": "encounter",
+                        "description": _clip(f"Act boss {name} (not a choice on this screen), as named on this "
+                                             f"act's map.{who}"),
+                        "details": _clip("No reference data for it: its monsters and moves are unknown." if m is None
+                                         else "Static reference data, base values at this ascension: "
+                                         + enemy_patterns.profile_text(m))})
+                if b.get("deck_demands") is not None:   # first, so the cap below never drops it
+                    extra.insert(i, {
+                        "id": f"{key}:deck"[:80], "kind": "encounter",
+                        "description": _clip(f"What act boss {name} asks of the deck built during this act "
+                                             "(not a choice on this screen)."),
+                        "details": _clip(boss_demands.demand_text(b.get("deck_demands")))})
+            extra = extra[:8]
+            items = items[:40 - len(extra)] + extra
             opps = {"items": items[:40]}
         glossary = f.get("keyword_glossary")
         return {
@@ -655,8 +822,11 @@ class RunCoordinator:
             self.last_planner_result = None
             self.strat_facts, self.pending_combat_finished = facts, False
             return
+        self.hooks.step("strategy", f"Refreshing the strategic assessment (revision {snap.revision})",
+                        reasons=list(reasons))
         result = self.planner.update(snap)
         self.last_progress = self.clock()   # model latency is not a game stall
+        self.hooks.strategy(result, list(reasons))
         self.last_planner_result = result
         self.strat_facts, self.pending_combat_finished = facts, False
         if route_key is not None:
@@ -710,13 +880,17 @@ class RunCoordinator:
         if blocked:
             lims.append(f"Not offered because the game rejected them in this exact state: {blocked}")
         cap = CAPABILITIES.get(v.kind, {})
+        overlay = self._fight_overlay(v) or self._handoff
+        boss = None if v.in_combat or overlay else self._act_boss(v)
         support = None
         if self.expert_stats is not None:
             started = self.clock()
+            self.hooks.step("evidence", f"Collecting expert evidence for the {v.kind} screen")
             support = self.expert_stats.for_view(
-                v, route_state={"plan": self.route_plan, "outcomes": self.route_outcomes})
+                v, route_state={"plan": self.route_plan, "outcomes": self.route_outcomes}, act_boss=boss)
             self.last_progress += self.clock() - started  # evidence latency is not a game stall
             self._note_support(v, support)
+            self.hooks.evidence(v.kind, support)
         facts = v.facts
         if self.pending_combat_finished:
             facts = {**facts, "recent_combat_outcomes": {
@@ -737,7 +911,8 @@ class RunCoordinator:
                 self.shop_entry = {"encounter_key": v.encounter_key,
                                    "gold": (v.facts.get("player") or {}).get("gold")}
             support = {**(support or {}), "shop_budget": _shop_packages(v, self.shop_entry["gold"])}
-        overlay = self._fight_overlay(v) or self._handoff
+        if boss:   # every screen between fights, the map included
+            facts = {**facts, "act_boss": boss}
         if self._handoff:
             lims.append("AUTOBATTLE HANDOFF: an enemy's action opened this offer during its turn. Spire Mentor is "
                         "playing this fight and is holding it for this one choice, because it has no fight search for "
@@ -762,6 +937,9 @@ class RunCoordinator:
                     "encounter_key": self.encounter_key if overlay else v.encounter_key,
                     **({"during_combat": True} if overlay else {}),
                     **({"autobattle_handoff": True} if self._handoff else {}),
+                    # Who plays the fights: the prompt prices potions and per-play costs for that pilot.
+                    **({"combat_pilot": "spire_mentor_autobattle"} if self.autobattle is not None and not overlay
+                       else {}),
                     "capability": {"status": cap.get("status"), "live_validated": False, "mod_revision": MOD_REVISION}},
             observation_fingerprint=v.fingerprint, facts_source=self.facts_source, facts=facts,
             candidates=cands, bindings={c["action_id"]: v.bindings[c["action_id"]] for c in cands},
@@ -807,6 +985,13 @@ class RunCoordinator:
         # Classify before rejection filtering so a rejected alternative cannot
         # turn a real choice into an automatic click.
         cand = automatic_action(v)
+        # The grid needed more cards until the toggle this agent just sent; that toggle completed the
+        # selection the model chose. Asking again can only undo it or select one card too many, which
+        # leaves a grid whose Confirm does nothing (observed live on a single-card enchant grid).
+        completed = cand is None and self._selection_complete == v.fingerprint
+        self._selection_complete = None
+        if completed:
+            cand = next((c for c in v.candidates if c["kind"] == "confirm_selection"), None)
         if cand is not None:
             aid = cand["action_id"]
             if (v.fingerprint, aid) in self.stats.blocked:
@@ -815,6 +1000,7 @@ class RunCoordinator:
             reason = ("Only one map destination is available." if v.kind == "map"
                       else "Confirm the selected cards." if v.kind == "card_select" and
                       v.facts["screen_details"].get("preview_showing")
+                      else "The card just selected completed the selection; confirm it." if completed
                       else "Only one progress action is available.")
             ch = Choice(frame_id="", action_id=aid, reason=reason, turn_intent="")
             binding = v.bindings[aid]
@@ -825,8 +1011,11 @@ class RunCoordinator:
                                 facts_source=self.facts_source, observation_fingerprint=v.fingerprint,
                                 candidate=cand, binding=binding, reason=ch.reason)
             self.log(f"[{self.seq}] {v.kind}: {cand['description']} - {ch.reason} Skipping LLM.")
+            self.hooks.decision(self.seq, v.kind, cand["description"], ch.reason, "", source)
             return self._execute_action(self.seq, cand, ch, binding, v)
         self._maybe_refresh_strategy(v)
+        if self._gate("pre_decide", v):
+            return None   # paused after the strategy call: the screen may have changed, so observe again
         frame = self._frame(v)
         if not frame.candidates:
             raise _Stop(STOP_NO_ACTIONS if not v.candidates else STOP_REPEATED_REJECTIONS,
@@ -834,21 +1023,17 @@ class RunCoordinator:
 
         self.seq += 1
         seq = self.seq
+        self.hooks.step("deciding", f"The model is choosing on the {v.kind} screen", seq=seq,
+                        options=len(frame.candidates))
         result = self.policy.choose(frame, tools=self.whatif) if self.whatif else self.policy.choose(frame)
         self.last_progress = self.clock()
         self.stats.decisions += 1
         self.stats.provider_retries += result.provider_retries
         self.stats.tool_calls += result.tool_calls
         self.stats.model_retries += max(0, len(result.attempts) - 1 - result.provider_retries - result.tool_calls)
-        if result.search is not None:
-            if result.source == "llm":
-                self.stats.search_misses += 1
-                self.log(f"[{seq}] combat search miss -> LLM: {result.search.get('miss')}")
-            else:
-                self.stats.search_decisions += 1
         if self.rec:
-            self.rec.record("llm_decision", seq=seq, provenance=self._provenance_label(result.source),
-                            decision_source=result.source, search=result.search,
+            self.rec.record("llm_decision", seq=seq, provenance=self._provenance_label(),
+                            decision_source=result.source,
                             policy={"name": self.policy.name, "version": self.policy.version},
                             prompt_version=self.policy.prompt_version, model=model_identity(self.policy.model),
                             frame=frame.to_record(),
@@ -862,6 +1047,8 @@ class RunCoordinator:
                             history_dropped=result.history_dropped, support_trim=result.support_trim,
                             provider_retries=result.provider_retries, tool_calls=result.tool_calls,
                             prompt_modules=result.prompt_modules)
+        if not result.ok and self.hooks.stop_requested():
+            raise _Stop(STOP_INTERRUPTED, "stopped from the interface", v)
         if not result.ok:
             reason = {"input_too_large": STOP_INPUT_TOO_LARGE, "invalid_output": STOP_INVALID_MODEL_OUTPUT}.get(
                 result.error_kind, STOP_MODEL_FAILED)
@@ -875,7 +1062,9 @@ class RunCoordinator:
         self.turn_intent = ch.turn_intent or None
         if v.kind == "map" and ch.route_plan is not None:
             self.route_plan = _stored_route_plan(ch.route_plan, frame, v, len(self.route_outcomes))
+            self._publish_route()
         self.log(f"[{seq}] {v.kind}: {cand['description']} - {ch.reason}")
+        self.hooks.decision(seq, v.kind, cand["description"], ch.reason, ch.turn_intent or "", result.source)
 
         if v.kind == "map" and is_rest_destination(cand) and ch.rest_option is not None:
             return self._execute_rest_plan(seq, cand, ch, binding, v)
@@ -1009,6 +1198,8 @@ class RunCoordinator:
             current = self.last_view
 
     def _execute_action(self, seq, cand, ch, binding, v) -> bool | None:
+        self._gate("pre_send", v)   # paused before sending: the validation below catches a changed screen
+        self.hooks.step("sending", cand["description"], seq=seq)
         # Fresh validation: same screen state and the same binding must still exist.
         try:
             fresh = self._observe("validate")
@@ -1027,17 +1218,42 @@ class RunCoordinator:
             raise _Stop(STOP_MAX_ACTIONS, f"reached {max_actions} actions", fresh)
 
         t0 = self.clock()
-        self.stats.actions_sent += 1
-        try:
-            resp = self.client.post_action(binding["payload"])
-        except GameUnavailable as e:
-            self._outcome(seq, "not_delivered", None, None, str(e))
-            raise _Stop(STOP_GAME_UNAVAILABLE, str(e), fresh)
-        except AmbiguousActionError as e:
-            return self._ambiguous(seq, cand, ch, binding, fresh, e, t0)
-        except KeyboardInterrupt:
-            self._outcome(seq, "interrupted_during_send", None, None, "Ctrl+C while the request was in flight")
-            raise
+        while True:
+            self.stats.actions_sent += 1
+            try:
+                resp = self.client.post_action(binding["payload"])
+            except GameUnavailable as e:
+                self._outcome(seq, "not_delivered", None, None, str(e))
+                raise _Stop(STOP_GAME_UNAVAILABLE, str(e), fresh)
+            except AmbiguousActionError as e:
+                return self._ambiguous(seq, cand, ch, binding, fresh, e, t0)
+            except KeyboardInterrupt:
+                self._outcome(seq, "interrupted_during_send", None, None, "Ctrl+C while the request was in flight")
+                raise
+            if (resp.accepted or not _ROOM_NOT_OPEN.search(resp.error or "")
+                    or self.clock() - t0 >= self.lim.play_resolution_timeout_s):
+                break
+            # The game refused because the room is still opening although its state already lists the
+            # option. A refusal executes nothing, so the same action is sent again once the unchanged
+            # screen is confirmed; this is not the ambiguous case, which is never resent.
+            self.stats.room_not_open_retries += 1
+            if self.rec:
+                self.rec.event("action_retry_room_not_open", {"seq": seq, "action_id": ch.action_id,
+                                                               "error": (resp.error or "")[:200],
+                                                               "waited_s": round(self.clock() - t0, 3)})
+            self.sleep(self.lim.poll_interval_s)
+            try:
+                again = self._observe("validate")
+            except GameClientError as e:
+                self._outcome(seq, "rejected", resp.to_record(), None, resp.error or "", t0=t0)
+                raise _Stop(STOP_GAME_UNAVAILABLE, str(e), fresh)
+            if again.fingerprint != fresh.fingerprint or again.bindings.get(ch.action_id) != binding:
+                self.stats.stale += 1
+                self._outcome(seq, "stale_not_sent", resp.to_record(), again,
+                              "screen changed while waiting for the room to open")
+                self._remember(seq, cand, ch, "stale_not_sent", again)
+                self._save_state()
+                return
 
         if not resp.accepted:
             self.stats.rejections += 1
@@ -1060,11 +1276,17 @@ class RunCoordinator:
 
     def _after_resolved(self, seq, cand, ch, binding, pre, post, verdict):
         self.stats.actions_resolved += 1
+        if cand["kind"] == "select_card" and pre.kind == post.kind == "card_select":
+            before, after = pre.facts["screen_details"], post.facts["screen_details"]
+            if (before.get("can_confirm") is False and after.get("can_confirm") is True
+                    and not after.get("preview_showing")):
+                self._selection_complete = post.fingerprint   # the next decision on this exact grid is Confirm
         if cand["kind"] == "use_potion" and self.combat:
             self.combat.potions_used += 1
         if cand["kind"] == "choose_map_node" and self.map_memory is not None:
             d = cand["details"]
             self.map_memory["chosen"] = {"col": d.get("col"), "row": d.get("row"), "type": map_type(d.get("type"))}
+            self._publish_route()
         self._remember(seq, cand, ch, verdict, post, pre=pre)
         res = binding["resolution"]
         if res.startswith("shop:") and post.kind == "shop" and pre.shop_stock and post.shop_stock:
@@ -1164,7 +1386,7 @@ class RunCoordinator:
                                                   "start_hp": c.start_hp, "rounds": c.rounds,
                                                   "potions_used": c.potions_used, "act": c.act, "floor": c.floor,
                                                   "last_hp": c.last_hp, "damage": c.damage, "healed": c.healed,
-                                                  "hp_tracked": c.hp_tracked}}
+                                                  "hp_tracked": c.hp_tracked, "potions_held": c.potions_held}}
 
     def _save_state(self):
         if self.state_path is None or self.run_id_source == "session_scoped":
@@ -1229,7 +1451,8 @@ class RunCoordinator:
                                       c.get("potions_used") or 0, c.get("act"), c.get("floor"),
                                       last_hp=c.get("last_hp"), damage=c.get("damage") or 0,
                                       healed=c.get("healed") or 0,
-                                      hp_tracked=c.get("hp_tracked") is True and c.get("last_hp") is not None)
+                                      hp_tracked=c.get("hp_tracked") is True and c.get("last_hp") is not None,
+                                      potions_held=c.get("potions_held"))
                 self.combat.note_hp((v.facts.get("player") or {}).get("hp"))   # what happened while unobserved
                 self.seen_combat = True
         elif c:  # the fight that was open when the session stopped ended while nobody was watching
@@ -1247,10 +1470,9 @@ class RunCoordinator:
             self.rec.event("run_state_restored", self.resumed_from)
         self.log(f"resumed run state saved at act {saved[0]} floor {saved[1]}"
                  f"{' (route plan restored)' if self.route_plan else ''}")
+        self._publish_route()
 
-    def _provenance_label(self, source: str = "llm") -> str:
-        if source != "llm":
-            return "search_generated_synthetic_input" if self.facts_source == "synthetic" else "search_generated"
+    def _provenance_label(self) -> str:
         if self.policy.scripted:
             return "synthetic_scripted_model"
         return "llm_generated_synthetic_input" if self.facts_source == "synthetic" else "llm_generated"
@@ -1267,6 +1489,7 @@ class RunCoordinator:
             while True:
                 if max_actions is not None and self.stats.actions_sent >= max_actions:
                     raise _Stop(STOP_MAX_ACTIONS, f"reached {max_actions} actions", self.last_view)
+                self._gate("step_start")
                 self._check_global()
                 self._step()
                 if self.scope == "step":
@@ -1340,13 +1563,13 @@ class RunCoordinator:
             "final_screen": final.kind if final else None,
             "final_player_hp": (final.facts.get("player") or {}).get("hp") if final and final.facts else None,
             "decisions": s.decisions, "actions_sent": s.actions_sent, "actions_resolved": s.actions_resolved,
-            "rejections": s.rejections, "stale_decisions": s.stale, "ambiguous_responses": s.ambiguous,
+            "rejections": s.rejections, "room_not_open_retries": s.room_not_open_retries,
+            "stale_decisions": s.stale, "ambiguous_responses": s.ambiguous,
             "model_corrective_retries": s.model_retries, "model_provider_retries": s.provider_retries,
             "what_if_tool_calls": s.tool_calls,
             "strategic_model_updates": s.strategic_updates,
             "strategic_failures": s.strategic_failures, "combats_finished": s.combats_finished,
             "evaluation": self._evaluation(),
-            "combat_search_decisions": s.search_decisions, "combat_search_misses": s.search_misses,
             "autobattle_combats": s.autobattle_combats,
             "autobattle_offer_hold": self._offer_hold,
             "autobattle_offer_handoffs": s.offer_handoffs, "autobattle_offer_ai_picks": s.offer_ai_picks,
@@ -1360,6 +1583,14 @@ class RunCoordinator:
 
 def _per_100(n, base):
     return round(n / base * 100, 2) if base else None
+
+
+def _potion_names(facts) -> list | None:
+    """Names of the potions held, or None when the facts do not list potions."""
+    potions = (facts or {}).get("potions")
+    if not isinstance(potions, list):
+        return None
+    return [str(p.get("name") or p.get("id") or "?") for p in potions if isinstance(p, dict)]
 
 
 def _clip(s, n=1000):

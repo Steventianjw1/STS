@@ -198,14 +198,16 @@ def _game_exe(copy: Path) -> Path:
     return exe
 
 
-def launch(copy: Path, log=print) -> None:
-    """Start the frozen copy directly, so Steam neither updates nor substitutes it."""
+def launch(copy: Path, log=print, args=()) -> None:
+    """Start the frozen copy directly, so Steam neither updates nor substitutes it.
+
+    ``args`` are extra game arguments, e.g. ``--wid <handle>`` to open inside another window."""
     exe = _game_exe(copy)
     (exe.parent / "steam_appid.txt").write_text(STEAM_APP_ID, encoding="ascii")
     log(f"pin: launching {PINNED_GAME_BUILD} from {exe}")
     detach = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
               if sys.platform == "win32" else {"start_new_session": True})
-    subprocess.Popen([str(exe)], cwd=str(exe.parent), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+    subprocess.Popen([str(exe), *args], cwd=str(exe.parent), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, env={**os.environ, "SteamAppId": STEAM_APP_ID,
                                                      "SteamGameId": STEAM_APP_ID}, **detach)
 
@@ -218,8 +220,10 @@ def _reachable(client) -> bool:
         return False
 
 
-def start_pinned(client, *, game_dir=None, copy_root="data/game", wait_s=180.0, log=print) -> Path:
-    """Start-script gate: save the pinned build, launch it when no game runs, and verify what is running."""
+def start_pinned(client, *, game_dir=None, copy_root="data/game", wait_s=180.0, log=print, launcher=launch) -> Path:
+    """Start-script gate: save the pinned build, launch it when no game runs, and verify what is running.
+
+    ``launcher(copy, log)`` starts the game; the interface passes one that opens it inside its window."""
     copy = frozen_copy(copy_root)
     games = verify_running()
     try:
@@ -232,7 +236,7 @@ def start_pinned(client, *, game_dir=None, copy_root="data/game", wait_s=180.0, 
         if games:
             log(f"pin: {PINNED_GAME_BUILD} is running; waiting for the mod")
         else:
-            launch(copy, log)
+            launcher(copy, log)
         deadline = time.monotonic() + wait_s
         while not _reachable(client):
             if time.monotonic() >= deadline:

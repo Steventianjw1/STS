@@ -10,7 +10,7 @@ import copy
 import json
 from typing import Callable
 
-from ..client import ActionResponse
+from ..game.client import ActionResponse
 
 
 class ScriptedTextModel:

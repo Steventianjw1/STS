@@ -5,12 +5,13 @@ import threading
 import time
 from contextlib import contextmanager
 
-from .providers.anthropic import sanitize
+from .base import sanitize
 
 
 class ModelProgress:
-    def __init__(self, *, log=None, record=None, heartbeat_s=15.0, clock=time.monotonic):
+    def __init__(self, *, log=None, record=None, heartbeat_s=15.0, clock=time.monotonic, listener=None):
         self.log, self.record = log, record
+        self.listener = listener               # callable(phase, data): the interface's live view of model calls
         self.heartbeat_s, self.clock = heartbeat_s, clock
         self._lock = threading.Lock()
         self._calls = {}
@@ -39,11 +40,16 @@ class ModelProgress:
             self.emit("retry_wait_finished", purpose, attempt, elapsed_s=round(elapsed, 3), **context)
 
     def emit(self, phase, purpose, attempt, **fields):
-        if self.log is None and self.record is None:
+        if self.log is None and self.record is None and self.listener is None:
             return
         data = {"purpose": purpose, "attempt": attempt, **fields}
         if "error" in data:
             data["error"] = sanitize(str(data["error"]))
+        if self.listener is not None:
+            try:
+                self.listener(phase, dict(data))
+            except Exception:
+                pass   # a display problem must never fail a model call
         label = purpose
         if fields.get("screen"):
             label += " " + fields["screen"]
@@ -88,7 +94,7 @@ class ModelProgress:
                           elapsed_s=round(self.clock() - start, 1), **context)
 
         worker = None
-        if self.log is not None or self.record is not None:
+        if self.log is not None or self.record is not None or self.listener is not None:
             worker = threading.Thread(target=heartbeat, name="model-progress", daemon=True)
             worker.start()
         status, error = "response received", None

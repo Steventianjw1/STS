@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from .config import ExpertStatsConfig
+from ..config import ExpertStatsConfig
 
 API_ROOT = "https://spire-codex.com"
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -398,21 +398,27 @@ class ExpertDecisionStats:
         self._act_ids: dict = {}   # (character, act number) -> act ID resolved on a map screen
         self.last_route_model: dict | None = None   # act, risk model and route profile of the latest map screen
 
-    def for_view(self, view, *, budget_s: float | None = None, route_state: dict | None = None) -> dict | None:
-        """Advisory evidence only: unexpected external data never stops a run."""
+    def for_view(self, view, *, budget_s: float | None = None, route_state: dict | None = None,
+                 act_boss: dict | None = None) -> dict | None:
+        """Advisory evidence only: unexpected external data never stops a run.
+
+        ``act_boss`` is the coordinator's act-boss fact (boss names, reference monsters and
+        rule-based deck demands); card and shop screens compare it with the deck and the offers.
+        """
         try:
-            return self._for_view(view, budget_s=budget_s, route_state=route_state)
+            return self._for_view(view, budget_s=budget_s, route_state=route_state, act_boss=act_boss)
         except Exception as exc:
             return {"tool": "get_expert_decision_stats", "schema_version": 2, "source": API_ROOT,
                     "status": "unavailable", "reason": "internal_error:" + type(exc).__name__}
 
-    def _for_view(self, view, *, budget_s: float | None = None, route_state: dict | None = None) -> dict | None:
+    def _for_view(self, view, *, budget_s: float | None = None, route_state: dict | None = None,
+                  act_boss: dict | None = None) -> dict | None:
         budget = min(self.config.max_fetch_s, max(0, budget_s) if budget_s is not None else self.config.max_fetch_s)
         deadline = self.clock() + budget
         if view.kind == "map":
             support = (self._route_view(view, deadline=deadline, route_state=route_state)
                        if self.config.enabled and self.config.history_enabled else None)
-            from .decision.models import is_rest_destination
+            from ..decision.models import is_rest_destination
             if self.config.enabled and any(is_rest_destination(c) for c in view.candidates):
                 support = support or {"tool": "get_expert_decision_stats", "schema_version": 2,
                                       "source": API_ROOT, "status": "unavailable", "options": []}
@@ -457,6 +463,10 @@ class ExpertDecisionStats:
         if self.config.elite_readiness_enabled and view.kind in ("card_reward", "shop"):
             offered = [_id(c["details"].get("id") if c["kind"] == "select_card_reward" else c["details"].get("card_id"))
                        for c in view.candidates if c["kind"] in ("select_card_reward", "shop_purchase")]
+            if self.config.boss_readiness_enabled and (act_boss or {}).get("bosses"):
+                # Before the elite pools: two requests per boss, so a cold cache cannot starve it of budget.
+                support["boss_readiness"] = self._boss_readiness(view, act_boss, deadline=deadline,
+                                                                 offered=[o for o in offered if o])
             support["elite_readiness"] = self._readiness_for_view(view, None, deadline=deadline,
                                                                   offered=[o for o in offered if o])
         if support["status"] == "unavailable" and (any(
@@ -721,6 +731,85 @@ class ExpertDecisionStats:
                        "deck_coverage": coverage, "pools": pools})
         if offered:
             result["offered_cards"] = offered_fit(offered, cards, pools)
+        return result
+
+    def _boss_fight_stats(self, encounter_id, character, version, *, deadline):
+        """How community runs fared in one boss fight (/api/runs/encounter-stats), for this character and all."""
+        params = {"encounter": encounter_id, "room_type": "boss", "bracket": self.config.encounter_stats_bracket,
+                  "build_id": version, "limit": 200}
+        try:
+            try:
+                response = self.client.get("/api/runs/encounter-stats", params, deadline=deadline)
+            except StatsUnavailable:
+                if version is None:
+                    raise
+                version = None   # the site no longer serves that build: fall back to all builds, and say so
+                response = self.client.get("/api/runs/encounter-stats", {**params, "build_id": None}, deadline=deadline)
+        except StatsUnavailable as exc:
+            return {"status": "unavailable", "reason": str(exc)}
+        row = next((r for r in response.data.get("encounters") or []
+                    if isinstance(r, dict) and _id(r.get("encounter_id")) == encounter_id), None)
+
+        def summary(r):
+            total = _count(r.get("total")) if isinstance(r, dict) else None
+            if not total:
+                return None
+            fatal = _count(r.get("fatal")) or 0
+            return {"fights": total, "death_rate_pct": round(fatal / total * 100, 1),
+                    "avg_hp_lost": r.get("avg_damage"), "avg_turns": r.get("avg_turns")}
+        if row is None or summary(row) is None:
+            return {"status": "unavailable", "reason": "no_stats_for_encounter"}
+        mine = next((c for c in row.get("characters") or [] if isinstance(c, dict)
+                     and _character(c.get("character")) == character), None)
+        return {"status": "available", "your_character": summary(mine), "all_characters": summary(row),
+                "scope": {"character": character, "bracket": self.config.encounter_stats_bracket, "build_id": version,
+                          "note": "community runs that reached this fight; every ascension and deck pooled"},
+                **response.provenance()}
+
+    def _boss_readiness(self, view, act_boss, *, deadline, offered=None):
+        """This act's boss vs. the observed deck: rule-based demands, Spire Codex fight statistics and builds."""
+        from .boss_demands import coverage, offered_answers
+        from .elite_readiness import builds_summary
+        character, _, version = self._run_scope(view.facts.get("run") or {})
+        result = {"tool": "get_boss_readiness", "source": API_ROOT, "status": "unavailable",
+                  "label": "THIS ACT'S BOSS VS. YOUR OBSERVED DECK; rule-based demands and community statistics, "
+                           "not instructions",
+                  "limitations": ["demands repeat current_facts.act_boss deck_demands by need; deck_cards come from "
+                                  "catalog fields (target, hit count, the card's own Exhaust wording), so relics, "
+                                  "potions, enchantments and card synergies are not counted.",
+                                  "fight_stats and builds pool community runs of every ascension and deck: they say "
+                                  "how long and costly the fight usually is, not how this deck will fare.",
+                                  "Build death rates are correlations: strong builds die less everywhere."]}
+        try:
+            cards = self._combat_catalogs(deadline)[0]
+        except StatsUnavailable as exc:
+            cards, result["card_catalog"] = None, {"status": "unavailable", "reason": str(exc)}
+        deck = view.facts.get("deck") if isinstance(view.facts.get("deck"), list) else None
+        deck_ids = {c for c in (_id(x.get("id")) for x in deck) if c} if deck is not None else None
+        bosses = []
+        for b in act_boss["bosses"]:
+            eid = _id(b.get("id"))
+            row = {"id": b.get("id"), "name": b.get("name"),
+                   "demands": coverage(b.get("deck_demands"), deck, cards) if cards is not None else None}
+            if eid:
+                row["fight_stats"] = self._boss_fight_stats(eid, character, version, deadline=deadline)
+                try:
+                    payload = self.client.get("/api/runs/encounter-builds", {"encounter": eid, "lang": self.config.lang},
+                                              deadline=deadline).data
+                    row["builds"] = builds_summary(payload, character, deck_ids)
+                except StatsUnavailable as exc:
+                    row["builds"] = {"status": "unavailable", "reason": str(exc)}
+            bosses.append(row)
+        result["bosses"] = bosses
+        usable = [b for b in bosses if b["demands"] is not None
+                  or (b.get("fight_stats") or {}).get("status") == "available"
+                  or (b.get("builds") or {}).get("status") == "available"]
+        result["status"] = "available" if usable and len(usable) == len(bosses) and deck is not None else (
+            "partial" if usable else "unavailable")
+        if deck is None:
+            result["deck_status"] = "unknown: demands are not compared with the deck"
+        if offered and cards is not None:
+            result["offered_cards"] = offered_answers(offered, cards, bosses)
         return result
 
     def _ancient_view(self, view, *, deadline):
@@ -1077,7 +1166,8 @@ class ExpertDecisionStats:
                                       risk=risk, profile=support.get("profile"),
                                       candidates=self.config.route_candidates, max_routes=self.config.route_max_routes,
                                       previous_nodes=previous, elite_pool=pool,
-                                      outcomes=(route_state or {}).get("outcomes"))
+                                      outcomes=(route_state or {}).get("outcomes"),
+                                      act=view.facts["run"].get("act"))
         support["paths"]["limitations"] = [
             "Projections assume current max HP, pooled class damage and independent fights; deck, relics, potions "
             "and event effects beyond recorded HP loss are not modeled.",

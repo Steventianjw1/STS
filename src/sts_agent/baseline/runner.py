@@ -21,9 +21,9 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .actions import ACTION_END_TURN, build_candidates, validate_against
-from .client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
-from .config import Limits
-from .observation import (
+from ..game.client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
+from ..config import Limits
+from ..game.observation import (
     PHASE_COMBAT_BUSY, PHASE_COMBAT_ENDED, PHASE_COMBAT_READY, PHASE_COMBAT_SELECTION, PHASE_GAME_OVER,
     PHASE_MENU, PHASE_OVERLAY, PHASE_POST_COMBAT, PHASE_UNKNOWN, normalize,
 )

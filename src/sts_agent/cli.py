@@ -7,14 +7,17 @@
     sts-agent step            execute exactly ONE decision on the current screen and record it
     sts-agent play-combat     act until the current fight ends or a stop condition triggers
     sts-agent play-run        continue an already-started run across supported screens (LLM only)
-    sts-agent start-run       prompt for character/ascension, replace the old run, then play from Neow
+    sts-agent start-run       prompt for character/ascension, replace the old run, then play from Neow;
+                              opens the interface and plays in it (--console: no interface)
+    sts-agent ui              open the interface: the game and the panels in one window, runs started from it
     sts-agent decide-frame F  choose from a saved decision frame offline (never executes)
     sts-agent replay PATH     baseline: re-run the policy; LLM: validate recorded decisions (no model call)
     sts-agent capabilities    print the screen capability table
 
 The gameplay policy defaults to "llm". "baseline" is an explicit comparison mode
 (--policy baseline or policy = "baseline"); it is never used as a fallback.
-Nothing is sent to the game unless you run step, play-combat, play-run or start-run.
+Nothing is sent to the game unless you run step, play-combat, play-run or start-run, or start a
+run from the interface.
 """
 from __future__ import annotations
 
@@ -26,28 +29,29 @@ import sys
 from pathlib import Path
 
 from . import AGENT_VERSION, STS2MCP_SOURCE_DESCRIBE
-from .client import GameClient, GameClientError, parse_mod_version
+from .game.client import GameClient, GameClientError, parse_mod_version
 from .config import load_config
-from . import enemy_patterns, game_pin
+from .evidence import enemy_patterns
+from .game import game_pin
 from .decision.coordinator import LLM_PROVENANCE_LIVE, LLM_PROVENANCE_SCRIPTED, RunCoordinator
 from .decision.models import DecisionFrame
 from .decision.offline import ScriptedTextModel
 from .decision.policy import LLMDecisionPolicy, model_identity
-from .decision.search_policy import SearchCombatPolicy
-from .spire_mentor import MentorAutobattle, SpireMentorAdvisor
+from .game.autobattle import MentorAutobattle
+from .pilot import install as pilot_install
 from .decision.prompts import DECISION_PROMPT_VERSION, DEFAULT_OBJECTIVE
 from .decision.screens import CAPABILITIES, MOD_REVISION, build_view, capability_table
-from .observation import normalize, summarize
-from .policy import BaselinePolicy
-from .providers import API_KEY_ENV, AnthropicTextModel, ProviderConfigError, UsageBudget
-from .providers.deepseek import DeepSeekTextModel
+from .game.observation import normalize, summarize
+from .baseline.policy import BaselinePolicy
+from .llm import API_KEY_ENV, AnthropicTextModel, ProviderConfigError, UsageBudget
+from .llm.deepseek import DeepSeekTextModel, normalize_effort
 from .env import load_env
-from .expert_stats import ExpertDecisionStats, StatsUnavailable
-from .replay import decide_from_observation_file, replay_trace
-from .runner import Runner
+from .evidence.expert_stats import ExpertDecisionStats, StatsUnavailable
+from .session.replay import decide_from_observation_file, replay_trace
+from .baseline.runner import Runner
 from .strategic import StrategicPlanner
-from .startup import RunStartup, StartupError, ascension_level, character_id, prompt_settings
-from .trace import LLM_TRACE_FORMAT_VERSION, TraceRecorder, new_session_id
+from .game.startup import RunStartup, StartupError, ascension_level, character_id, prompt_settings
+from .session.trace import LLM_TRACE_FORMAT_VERSION, TraceRecorder, new_session_id
 
 # What this adapter has actually been checked against.
 SOURCE_VERIFIED_MOD = "0.4.0 + commits through 55e0648 (STS2 v0.107 compatibility fix)"
@@ -95,6 +99,7 @@ def _build_model(cfg):
         options = {}
         if cfg.llm.provider == "deepseek" and cfg.llm.deepseek_reasoning_effort is not None:
             options["reasoning_effort"] = cfg.llm.deepseek_reasoning_effort
+        _strategy_effort(cfg)   # a mistyped planner effort fails here, before the game is touched
         return providers[cfg.llm.provider](cfg.llm.model, max_output_tokens=cfg.llm.max_output_tokens,
                                   timeout_s=cfg.llm.timeout_s, budget=budget, **options)
     except ProviderConfigError as e:
@@ -102,40 +107,30 @@ def _build_model(cfg):
                          "(Use --policy baseline only if you explicitly want the heuristic comparison mode.)") from None
 
 
-def _advisor(cfg) -> SpireMentorAdvisor:
-    cs = cfg.combat_search
-    return SpireMentorAdvisor(cs.control_url, advisor_log_dir=cs.advisor_log_dir,
-                              advice_timeout_s=cs.advice_timeout_s, poll_interval_s=cs.poll_interval_s,
-                              request_timeout_s=cs.request_timeout_s, cooldown_s=cs.cooldown_s)
+def _strategy_effort(cfg) -> str | None:
+    """The planner's own DeepSeek reasoning effort; None when it follows deepseek_reasoning_effort."""
+    value = cfg.llm.deepseek_strategy_reasoning_effort
+    if cfg.llm.provider != "deepseek" or value in (None, "same"):
+        return None
+    return normalize_effort(value)
 
 
-def _doctor_combat_search(cfg, line, client) -> bool:
-    if cfg.combat_search.autobattle:
-        try:
-            status = MentorAutobattle(client).control("status")
-        except GameClientError as exc:
-            line("FAIL", str(exc))
-            return False
-        line("ok", f"combat: native Spire Mentor Autobattle ready (mode {status.get('mode')}); "
-                   "no LLM combat fallback; Mentor advice ignored outside combat")
-        if cfg.combat_search.offer_handoff:
-            if "fight_offer_hold" in status:
-                line("ok", "combat: the mod can have Mentor hold in-fight offers; offers an enemy opens go to the LLM")
-            else:
-                line("WARN", "combat: this mod build cannot hold in-fight offers, so Mentor answers them itself. "
-                             "Rebuild the agent mod extension to enable [combat_search] offer_handoff.")
-        return True
-    adv = _advisor(cfg)
-    status = adv.status()
-    if status is None:
-        line("WARN", f"combat search: no Spire Mentor advisor at {cfg.combat_search.control_url}. Combat will "
-                     "fall back to the LLM. Is the Spire Mentor mod installed with its coach turned on?")
-        return True
-    line("ok" if status.get("connected") else "WARN",
-         f"combat search: advisor reachable; connected to the mod: {bool(status.get('connected'))}")
-    log = adv.find_log()
-    line("ok" if log else "WARN", "combat search: advisor log " + (f"found ({log.name})" if log else
-         "not found yet (it appears after the first advice; else set [combat_search].advisor_log_dir)"))
+def _doctor_autobattle(cfg, line, client) -> bool:
+    try:
+        status = MentorAutobattle(client).control("status")
+    except GameClientError as exc:
+        line("FAIL", str(exc))
+        return False
+    line("ok", f"combat: native Spire Mentor Autobattle ready (mode {status.get('mode')}); "
+               "no LLM combat fallback; nothing else of Mentor is read")
+    ready, why = pilot_install.status(cfg)
+    line("ok" if ready or not cfg.autobattle.pilot else "WARN", f"combat pilot: {why}")
+    if cfg.autobattle.offer_handoff:
+        if "fight_offer_hold" in status:
+            line("ok", "combat: the mod can have Mentor hold in-fight offers; offers an enemy opens go to the LLM")
+        else:
+            line("WARN", "combat: this mod build cannot hold in-fight offers, so Mentor answers them itself. "
+                         "Rebuild the agent mod extension to enable [autobattle] offer_handoff.")
     return True
 
 
@@ -143,11 +138,14 @@ def _objective(cfg) -> str:
     return cfg.llm.objective or DEFAULT_OBJECTIVE
 
 
-def _frame_from_view(view, *, run_id, run_id_source, facts_source, objective, expert_stats=None) -> DecisionFrame:
+def _frame_from_view(view, *, run_id, run_id_source, facts_source, objective, expert_stats=None,
+                     combat_delegated=False) -> DecisionFrame:
     cap = CAPABILITIES.get(view.kind, {})
     return DecisionFrame(
         run_id=run_id, run_id_source=run_id_source, objective=objective,
         screen={"kind": view.kind, "state_type": view.state_type, "encounter_key": view.encounter_key,
+                # Same marker a session sets, so a preview gets the prompt a session would send.
+                **({"combat_pilot": "spire_mentor_autobattle"} if combat_delegated and not view.in_combat else {}),
                 "capability": {"status": cap.get("status"), "live_validated": False, "mod_revision": MOD_REVISION}},
         observation_fingerprint=view.fingerprint, facts_source=facts_source, facts=view.facts,
         candidates=view.candidates, bindings=view.bindings, limitations=view.limitations,
@@ -210,8 +208,8 @@ def cmd_doctor(args) -> int:
 
     if cfg.game_dir:
         _doctor_game_dir(Path(cfg.game_dir), line)
-    if cfg.policy == "llm" and cfg.combat_search.enabled:
-        ok = _doctor_combat_search(cfg, line, client) and ok
+    if cfg.policy == "llm" and cfg.autobattle.enabled:
+        ok = _doctor_autobattle(cfg, line, client) and ok
 
     try:
         hello = client.hello()
@@ -244,14 +242,12 @@ def cmd_doctor(args) -> int:
         return 1
     obs = normalize(raw)
     line("ok", f"state readable: state_type={obs['state_type']} phase={obs['phase']}")
-    char, asc = obs["run"]["character"], obs["run"]["ascension"]
+    char = obs["run"]["character"]
     if char is not None and "ironclad" not in char.lower():
-        line("WARN", f"character is {char!r}; Day-1 target is the Ironclad")
-    if asc not in (None, 0):
-        line("WARN", f"ascension {asc}; Day-1 target is A0")
+        line("WARN", f"character is {char!r}; runs so far have only used the Ironclad, so this character is untried")
     texts = [c["description"] or "" for c in obs["hand"] or []] + [c["name"] or "" for c in obs["hand"] or []]
     if any(not t.isascii() for t in texts):
-        line("WARN", "card text is not English. The Day-1 effect parser only reads English descriptions "
+        line("WARN", "card text is not English. The baseline effect parser only reads English descriptions "
                      "('Deal N damage.', 'Gain N Block.'). Set the game language to English.")
     unknown_cards = [c["name"] for c in obs["hand"] or [] if not c["effects"]["fully_supported"]]
     if unknown_cards:
@@ -289,7 +285,7 @@ def cmd_observe(args) -> int:
         return 2
     obs = normalize(raw)
     print(json.dumps(obs, indent=2, ensure_ascii=False) if args.json else summarize(obs))
-    from .actions import build_candidates
+    from .baseline.actions import build_candidates
     cands, excluded = build_candidates(obs)
     if cands and not args.json:
         print("Candidate actions: " + ", ".join(c["action_id"] for c in cands))
@@ -316,6 +312,7 @@ def cmd_observe(args) -> int:
         _, run_id = _versions(client)
         frame = _frame_from_view(view, run_id=run_id or "preview", run_id_source="mod_compendium" if run_id else
                                  "preview_only", facts_source="observed", objective=_objective(cfg),
+                                 combat_delegated=cfg.autobattle.enabled,
                                  expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build))
         if args.save_frame:
             Path(args.save_frame).parent.mkdir(parents=True, exist_ok=True)
@@ -424,7 +421,7 @@ def _shareable_config(cfg) -> dict:
     d.pop("pinned_game_dir", None)
     d.pop("trace_dir", None)
     d.get("expert_stats", {}).pop("cache_dir", None)
-    d.get("combat_search", {}).pop("advisor_log_dir", None)
+    d.get("ui", {}).pop("browser", None)
     return d
 
 
@@ -435,10 +432,16 @@ def _run_state_path(cfg, run_id: str) -> str:
     return os.path.join(cfg.trace_dir, "run_state", re.sub(r"[^A-Za-z0-9_.-]", "_", str(run_id))[:120] + ".json")
 
 
-def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "observed", log=print) -> int:
-    """LLM session over any client (live GameClient or an injected scripted client)."""
-    from .model_progress import ModelProgress
-    progress = ModelProgress(log=log)
+def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "observed", log=print,
+                    hooks=None) -> int:
+    """LLM session over any client (live GameClient or an injected scripted client).
+
+    ``hooks`` (a ``SessionHooks``) lets the interface watch, pause and stop the session.
+    """
+    from .llm.progress import ModelProgress
+    progress = ModelProgress(log=log, listener=hooks.model_event if hooks is not None else None)
+    if hooks is not None and cfg.ui.live_thinking and hasattr(model, "stream_listener"):
+        model.stream_listener = hooks.thinking   # reasoning goes to the Thinking panel only, never to traces
     mod_version, run_id = _versions(client)
     session_id = new_session_id()
     run_id_source = "mod_compendium"
@@ -450,19 +453,19 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     policy = LLMDecisionPolicy(model, max_input_bytes=cfg.llm.max_input_bytes,
                                provider_retries=cfg.llm.provider_retries,
                                corrective_retries=cfg.llm.corrective_retries, progress=progress)
+    if hooks is not None:
+        policy.should_stop = hooks.stop_requested
     autobattle = None
-    # Live observed combat only: synthetic or scripted sessions never consult a running advisor.
-    if cfg.combat_search.enabled and facts_source != "synthetic" and not scripted:
-        if cfg.combat_search.autobattle:
-            autobattle = MentorAutobattle(client)
-            autobattle.control("status")  # Validate the bridge before any model or gameplay action.
-            log("combat: native Spire Mentor Autobattle; DeepSeek controls non-combat decisions"
-                + (" and in-fight offers an enemy opens ([combat_search] offer_handoff)"
-                   if cfg.combat_search.offer_handoff else ""))
-        else:
-            policy = SearchCombatPolicy(policy, _advisor(cfg))
-            log(f"combat search: Spire Mentor advisor at {cfg.combat_search.control_url} (LLM on any miss)")
-    planner = StrategicPlanner(model, progress=progress) if cfg.llm.strategic_planner else None
+    # Live observed combat only: synthetic or scripted sessions never touch the Autobattle bridge.
+    if cfg.autobattle.enabled and facts_source != "synthetic" and not scripted:
+        autobattle = MentorAutobattle(client)
+        autobattle.control("status")  # Validate the bridge before any model or gameplay action.
+        log("combat: native Spire Mentor Autobattle; the model controls non-combat decisions"
+            + (" and in-fight offers an enemy opens ([autobattle] offer_handoff)"
+               if cfg.autobattle.offer_handoff else ""))
+    planner = (StrategicPlanner(model, progress=progress, combat_delegated=autobattle is not None,
+                                reasoning_effort=_strategy_effort(cfg))
+               if cfg.llm.strategic_planner else None)
     ident = model_identity(model)
     rec = TraceRecorder(cfg.trace_dir, command=command, policy_name=policy.name, policy_version=policy.version,
                         mod_version=mod_version, game_build=cfg.game_build, run_id=run_id,
@@ -479,7 +482,7 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     progress.record = rec.event
     scope = {"step": "step", "play-combat": "combat", "play-run": "run"}[command]
     coord = RunCoordinator(client, policy, planner=planner, recorder=rec, limits=cfg.limits, scope=scope, autobattle=autobattle,
-                           offer_handoff=cfg.combat_search.offer_handoff, what_if_tools=cfg.llm.what_if_tools,
+                           offer_handoff=cfg.autobattle.offer_handoff, what_if_tools=cfg.llm.what_if_tools, hooks=hooks,
                            expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build)
                            if facts_source != "synthetic" and not scripted else None,
                            run_id=run_id, run_id_source=run_id_source, facts_source=facts_source,
@@ -495,6 +498,8 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     rec.update_manifest(model_usage=summary.get("model_usage"))
     rec.close(summary)
     log(json.dumps(summary, indent=2, ensure_ascii=False))
+    if hooks is not None:
+        hooks.finished(summary, str(rec.dir))
     good = {"step": {"step_done", "combat_ended"}, "play-combat": {"combat_ended"},
             "play-run": {"run_over_unconfirmed"}}[command]
     return 0 if summary["stop_reason"] in good else 1
@@ -524,13 +529,19 @@ def cmd_start_run(args) -> int:
         if cfg.policy != "llm":
             raise SetupError("start-run requires policy 'llm'.")
         model = _build_model(cfg)  # Validate provider before replacing the current run; no model call.
+        if not args.console:
+            # Same run, shown: the interface launches or adopts the game, sets the run up and plays it.
+            from .ui.app import UiApp
+            return UiApp(cfg, client, autostart=("new", character, ascension),
+                         setup_timeout_s=args.setup_timeout_s).run()
         # Pinned build only: launches the saved copy when no game runs, refuses any other build.
+        pilot_install.sync(cfg)
         game_pin.start_pinned(client, game_dir=cfg.game_dir, copy_root=cfg.pinned_game_dir)
         if cfg.game_build and not game_pin.is_pinned(cfg.game_build):
             print(f"pin: WARNING: config declares game_build {cfg.game_build}; the running game is "
                   f"{game_pin.PINNED_GAME_BUILD}", file=sys.stderr)
         client.hello()
-        if cfg.combat_search.enabled and cfg.combat_search.autobattle:
+        if cfg.autobattle.enabled:
             MentorAutobattle(client).control("off")
         RunStartup(client, timeout_s=args.setup_timeout_s,
                    poll_interval_s=cfg.limits.poll_interval_s).start(character, ascension)
@@ -541,6 +552,24 @@ def cmd_start_run(args) -> int:
         print(f"Cannot start run: {exc}", file=sys.stderr)
         return 2
     return run_llm_session(cfg, client, model, "play-run")
+
+
+# -- interface -------------------------------------------------------------------
+def cmd_ui(args) -> int:
+    from .ui.app import UiApp
+    try:
+        cfg, used, client = _build(args)
+    except Exception as e:
+        print(f"config: {e}", file=sys.stderr)
+        return 2
+    if cfg.policy != "llm":
+        print("The interface requires policy 'llm'.", file=sys.stderr)
+        return 2
+    if args.port is not None:
+        cfg.ui.port = args.port
+    if args.game_fraction is not None:
+        cfg.ui.game_fraction = args.game_fraction
+    return UiApp(cfg, client, launch_game=not args.no_launch, open_panels=not args.no_browser).run()
 
 
 # -- replay ----------------------------------------------------------------------
@@ -647,6 +676,8 @@ def main(argv=None) -> int:
     s.add_argument("--character", type=character_id, help="character name or number (default: prompt)")
     s.add_argument("--ascension", type=ascension_level, help="0-10 (default: prompt)")
     s.add_argument("--setup-timeout-s", type=float, default=120.0)
+    s.add_argument("--console", action="store_true",
+                   help="play in this console without opening the interface")
     s.add_argument("--pin-only", action="store_true",
                    help=f"only save the frozen {game_pin.PINNED_GAME_BUILD} game copy, then exit")
     s.add_argument("--trace-dir")
@@ -654,6 +685,18 @@ def main(argv=None) -> int:
     s.add_argument("--max-actions", type=int)
     s.add_argument("--max-no-progress-s", type=float)
     s.set_defaults(fn=cmd_start_run)
+
+    u = sub.add_parser("ui", help="open the interface: one window with the game, control bar, combat log, map plan, "
+                                  "status, thinking")
+    for flag in ("config", "base-url", "model"):
+        u.add_argument("--" + flag, default=argparse.SUPPRESS)
+    u.add_argument("--no-launch", action="store_true", help="do not start the game; only attach to one that is running")
+    u.add_argument("--no-browser", action="store_true", help="do not open any window; print the page's address instead")
+    u.add_argument("--port", type=int, help="localhost port of the interface (default: a free one)")
+    u.add_argument("--game-fraction", type=float, help="share of the window's width given to the game (default 0.70)")
+    u.add_argument("--trace-dir")
+    u.add_argument("--no-raw", action="store_true")
+    u.set_defaults(fn=cmd_ui)
 
     args = ap.parse_args(argv)
     return args.fn(args)

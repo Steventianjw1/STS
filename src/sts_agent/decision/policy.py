@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from ..model_progress import ModelProgress
+from ..llm.progress import ModelProgress
 from .models import Choice, ChoiceError, DecisionFrame, parse_choice, parse_tool_request
 from .prompts import DECISION_PROMPT_VERSION, DEFAULT_MAX_INPUT_BYTES, build_user_message, system_instruction
 
@@ -38,8 +38,7 @@ class ChoiceResult:
     attempts: list = field(default_factory=list)   # [{"response_text", "error", "call"}]
     history_dropped: int = 0
     support_trim: str | None = None      # decision_support reduction step used for this prompt
-    source: str = "llm"                  # "llm" or "spire_mentor_search"
-    search: dict | None = None           # combat-search record (hit, or the miss that led to the LLM)
+    source: str = "llm"
     provider_retries: int = 0            # extra calls made after transient provider failures
     tool_calls: int = 0                  # what-if tool requests answered (at most one per decision)
     prompt_modules: list = field(default_factory=list)   # system-prompt modules used for this screen
@@ -70,6 +69,14 @@ class LLMDecisionPolicy:
         self.corrective_retries = None if corrective_retries is None else max(0, int(corrective_retries))
         self.retry_backoff_s, self.sleep = retry_backoff_s, sleep
         self.progress = progress or ModelProgress()
+        # Set by the interface: a requested stop ends an otherwise unbounded retry loop.
+        self.should_stop: Callable[[], bool] | None = None
+
+    def _stopping(self, res: ChoiceResult) -> bool:
+        if self.should_stop is None or not self.should_stop():
+            return False
+        res.error_kind, res.diagnostic = "provider", "interrupted: stop requested before the next retry"
+        return True
 
     @property
     def scripted(self) -> bool:
@@ -101,6 +108,8 @@ class LLMDecisionPolicy:
                                      "error": f"{type(e).__name__}: {e}"[:300], "call": _call(self.model)})
                 if kind in RETRYABLE_PROVIDER_KINDS and (self.provider_retries is None or
                                                         res.provider_retries < self.provider_retries):
+                    if self._stopping(res):
+                        return res
                     res.provider_retries += 1
                     delay = min(self.retry_backoff_s * res.provider_retries, 10.0)
                     retry_kind = "provider"
@@ -136,6 +145,8 @@ class LLMDecisionPolicy:
             if self.corrective_retries is not None and answers > self.corrective_retries:
                 res.error_kind = "invalid_output"
                 res.diagnostic = f"model output invalid after {self.corrective_retries} corrective retries: {rec['error']}"
+                return res
+            if self._stopping(res):
                 return res
             delay = min(self.retry_backoff_s * answers, 10.0)
             retry_kind = "corrective"

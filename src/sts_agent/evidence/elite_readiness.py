@@ -32,13 +32,37 @@ def _bonus(card, field, upgraded):
     return base
 
 
+_MARKUP = re.compile(r"\[/?[A-Za-z_]+(?:=[^\]]*)?\]")
+# "Exhaust 1 card", "Exhaust your Hand", "Exhaust up to 3 cards": the card removes OTHER cards.
+_EXHAUSTS_OTHERS = re.compile(r"\bExhaust (?:\d+|an?|all|up to|your|X)\b")
+# The catalog's powers_applied field misses cards (Uppercut, Shockwave), so these read the text too.
+_APPLIES_WEAK = re.compile(r"\bapply\b[^.]*\bWeak\b", re.I)
+_APPLIES_DEBUFF = re.compile(r"\bapply\b[^.]*\b(?:Weak|Vulnerable|Poison|Frail|Doom)\b", re.I)
+_GAINS_STRENGTH = re.compile(r"\bgain \d+ Strength\b(?! this turn)", re.I)   # lasting Strength only
+_ENEMY_TARGETS = ("AnyEnemy", "AllEnemies", "RandomEnemy")
+
+
 def card_traits(card, upgraded=False):
-    """What a card can do according to its catalog fields (never its rules text)."""
+    """What a card can do according to its catalog fields.
+
+    A few traits read the rules text because the catalog has no reliable field for them:
+    ``exhausts_other_cards`` (the Exhaust keyword says the card exhausts itself, which is
+    something else), ``applies_weak``, ``applies_debuff`` and ``strength_gain``.
+    """
     damage, block = _bonus(card, "damage", upgraded), _bonus(card, "block", upgraded)
     target, kind, rarity = card.get("target"), card.get("type"), card.get("rarity")
+    hits = card.get("hit_count")
+    text = _MARKUP.sub("", str(card.get("description") or ""))
     return {
         "aoe_attack": target == "AllEnemies" and bool(damage),
         "random_target_attack": target == "RandomEnemy" and bool(damage),
+        "multi_hit_attack": kind == "Attack" and bool(damage) and (
+            (type(hits) is int and hits > 1) or card.get("is_x_cost") is True),
+        "exhausts_other_cards": bool(_EXHAUSTS_OTHERS.search(text)),
+        "applies_weak": target in _ENEMY_TARGETS and bool(_APPLIES_WEAK.search(text)),
+        "applies_debuff": target in _ENEMY_TARGETS and bool(_APPLIES_DEBUFF.search(text)),
+        "strength_gain": target not in ("AnyAlly", "AllAllies") and bool(_GAINS_STRENGTH.search(text)),
+        "draws_cards": bool(card.get("cards_draw")),
         "block": block or 0,
         "non_basic_block": bool(block) and rarity != "Basic",
         "non_basic_attack": kind == "Attack" and bool(damage) and rarity != "Basic",

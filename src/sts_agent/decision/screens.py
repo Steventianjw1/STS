@@ -10,10 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..observation import PHASE_COMBAT_ENDED, PHASE_COMBAT_READY, normalize
-from ..combat_preview import action_preview
-from ..expert_stats import _deck_ids, _id
-from .. import enemy_patterns
+from ..game.observation import PHASE_COMBAT_ENDED, PHASE_COMBAT_READY, normalize
+from .combat_preview import action_preview
+from ..evidence.expert_stats import _deck_ids, _id
+from ..evidence import enemy_patterns
 from .models import is_rest_destination, sha
 
 SOURCE_INSPECTED = "source_inspected"

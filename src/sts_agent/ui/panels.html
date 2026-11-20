@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STS Agent</title>
+<style>
+:root{
+  --bg:#0e1218; --panel:#161b24; --raise:#1d2430; --line:#2a3444; --text:#ebe6da; --muted:#8a94a6;
+  --gold:#e0b04a; --ok:#4cc38a; --warn:#e5a13a; --down:#ec5b4f; --info:#62a8ea; --off:#4d586b; --violet:#b58be0;
+  --sans:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif; --mono:"Cascadia Mono",Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:13px/1.45 var(--sans);overflow:hidden;-webkit-font-smoothing:antialiased}
+button,select{font:inherit;color:inherit}
+.label{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.muted{color:var(--muted)}
+.num{font-variant-numeric:tabular-nums}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#313c4f;border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- shells ---------- */
+#app{height:100%}
+.shell-all{display:grid;grid-template-columns:minmax(0,70fr) minmax(0,30fr);height:100%}
+.shell-all .left{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:64px minmax(0,1fr) 230px;min-width:0;min-height:0}
+.gamehole{display:grid;place-items:center;color:var(--off);border:1px dashed var(--line);margin:6px;border-radius:8px}
+/* single window: the host puts the game window over .gamehole, kept 16:9 while the log keeps 150px */
+.shell-frame{grid-template-columns:minmax(0,calc(var(--gf,.7)*100%)) minmax(0,1fr);grid-template-rows:52px minmax(0,1fr)}
+.shell-frame>.bar{grid-column:1/-1;overflow:hidden}
+.shell-frame .left{grid-template-rows:min(calc(var(--gf,.7)*100vw*9/16),calc(100vh - 202px)) minmax(0,1fr)}
+.shell-frame .logwrap{border-top:0}
+.shell-frame .gamehole{margin:0;border:0;border-radius:0;background:#000;text-align:center;padding:0 24px}
+.offline{position:fixed;inset:auto 10px 10px auto;background:var(--down);color:#fff;padding:4px 10px;border-radius:6px;
+  font-size:12px;display:none;z-index:9}
+.offline.on{display:block}
+
+/* ---------- control bar ---------- */
+.bar{height:100%;display:flex;align-items:center;gap:14px;padding:0 14px;background:linear-gradient(#171d27,#121720);
+  border-bottom:1px solid var(--line);white-space:nowrap;min-width:0;position:relative}
+.brand{display:flex;align-items:center;gap:9px;font-weight:650;font-size:14px;letter-spacing:.02em}
+.brand i{width:11px;height:11px;border-radius:2px;background:var(--gold);transform:rotate(45deg);display:block}
+.pill{font-size:11px;font-weight:600;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted);
+  text-transform:uppercase;letter-spacing:.06em}
+.pill.running{color:var(--ok);border-color:#2c6b4f}.pill.paused,.pill.pausing{color:var(--warn);border-color:#7a5a22}
+.pill.error{color:var(--down);border-color:#7c342e}.pill.starting,.pill.stopping{color:var(--info);border-color:#2f5576}
+.btns{display:flex;align-items:center;gap:7px}
+.btns .sep{width:1px;height:26px;background:var(--line);margin:0 4px}
+button{background:var(--raise);border:1px solid var(--line);border-radius:7px;padding:6px 12px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:7px;font-weight:550;min-height:32px}
+button:hover:not(:disabled){border-color:#46546b;background:#232c3a}
+button:focus-visible,select:focus-visible{outline:2px solid var(--info);outline-offset:1px}
+button:disabled{opacity:.38;cursor:default}
+button.primary{background:#2a2414;border-color:#6d5722;color:var(--gold)}
+button.primary:hover:not(:disabled){background:#352d18;border-color:#8f7330}
+button.danger:not(:disabled){color:#f08a80}
+button svg{width:13px;height:13px;fill:currentColor;flex:none}
+select{background:var(--raise);border:1px solid var(--line);border-radius:7px;padding:5px 6px;min-height:32px}
+.newrun{display:flex;gap:5px;align-items:center}
+.runinfo{margin-left:auto;display:flex;gap:14px;align-items:center;overflow:hidden}
+.runinfo b{font-weight:600}.runinfo .hp b{color:#f08a80}.runinfo .gold b{color:var(--gold)}
+.toast{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:#0b0e13;border:1px solid var(--line);
+  border-radius:7px;padding:6px 12px;max-width:46%;overflow:hidden;text-overflow:ellipsis;opacity:0;pointer-events:none;
+  transition:opacity .2s}
+.toast.on{opacity:1}.toast.bad{border-color:#7c342e;color:#f3a59d}
+
+/* ---------- combat log ---------- */
+.logwrap{height:100%;display:flex;flex-direction:column;min-height:0;min-width:0;border-top:1px solid var(--line)}
+.loghead{display:flex;align-items:center;gap:12px;padding:5px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+.loghead .fight{font-weight:600}
+.loghead label{margin-left:auto;display:flex;gap:6px;align-items:center;color:var(--muted);cursor:pointer}
+.turns{flex:1;display:flex;gap:8px;padding:8px 10px;overflow-x:auto;overflow-y:hidden;min-height:0;align-items:stretch}
+.card{flex:0 0 250px;background:var(--panel);border:1px solid var(--line);border-radius:8px;display:flex;
+  flex-direction:column;min-height:0}
+.card.fightcard{flex-basis:190px;border-color:#5b4a22;background:#1b1810}
+.card.result{flex-basis:170px}
+.card.result.victory{border-color:#2c6b4f}.card.result.defeat{border-color:#7c342e}
+.card h4{margin:0;padding:5px 9px;font-size:12px;font-weight:650;border-bottom:1px solid var(--line);display:flex;
+  gap:8px;align-items:baseline}
+.card h4 span{font-weight:500;color:var(--muted);font-size:11.5px}
+.rows{padding:5px 9px 7px;overflow-y:auto;min-height:0;font-size:12px;line-height:1.4}
+.rows div{margin:1px 0}
+.r-hand,.r-intent{color:var(--muted);font-size:11.5px}
+.r-play b{font-weight:600}
+.r-play b::before{content:"▸ ";color:var(--gold)}
+.r-end{color:var(--muted);border-top:1px dashed var(--line);margin-top:4px !important;padding-top:3px}
+.fx{color:var(--muted)}
+.fx .hurt{color:#f08a80}.fx .blk{color:var(--info)}.fx .kill{color:var(--gold)}.fx .heal{color:var(--ok)}
+.tag{font-size:10px;border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--muted);margin-left:4px}
+.empty{color:var(--off);padding:14px;align-self:center}
+
+/* ---------- side column ---------- */
+.side{height:100%;display:flex;flex-direction:column;gap:8px;padding:8px;min-height:0;border-left:1px solid var(--line)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.panel>header{display:flex;align-items:center;gap:8px;padding:6px 11px;border-bottom:1px solid var(--line)}
+.panel>header .label{color:var(--gold)}
+.panel>header .right{margin-left:auto;color:var(--muted);font-size:12px}
+.p-map{flex:0 0 33%}.p-status{flex:0 0 auto}.p-think{flex:1 1 0}
+.mapbody{flex:1;display:grid;grid-template-columns:44% minmax(0,1fr);grid-template-rows:minmax(0,1fr);min-height:0}
+.mapbody svg{width:100%;height:100%;min-height:0;display:block;padding:4px}
+.plan{padding:8px 11px;overflow-y:auto;min-height:0;border-left:1px solid var(--line)}
+.plan p{margin:0 0 8px}
+.plan .label{display:block;margin-bottom:2px}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.chip{border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:11.5px;background:var(--raise)}
+.chip small{color:var(--muted);margin-left:4px}
+
+.statusbody{padding:9px 11px 10px;display:flex;flex-direction:column;gap:9px}
+.stepline{display:flex;gap:9px;align-items:flex-start}
+.phase{flex:none;font-weight:650;padding:2px 9px;border-radius:6px;background:var(--raise);border:1px solid var(--line)}
+.phase.busy{color:var(--info);border-color:#2f5576}.phase.paused{color:var(--warn);border-color:#7a5a22}
+.phase.autobattle{color:var(--violet);border-color:#56407a}.phase.error{color:var(--down);border-color:#7c342e}
+.phase.busy::after,.phase.autobattle::after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:currentColor;margin-left:7px;animation:pulse 1.1s ease-in-out infinite;vertical-align:middle}
+@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.phase::after,.caret{animation:none !important}}
+.stepdetail{min-width:0;overflow-wrap:anywhere}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.tile{background:var(--raise);border:1px solid var(--line);border-radius:7px;padding:5px 8px;min-width:0}
+.tile b{display:block;font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.25}
+.tile span{font-size:10.5px;color:var(--muted);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.availhead{display:flex;align-items:baseline;gap:8px}
+.availhead b{font-weight:600}
+.availbar{display:flex;gap:3px;height:9px}
+.availbar i{flex:1;border-radius:3px;background:var(--off)}
+.ok{--c:var(--ok)}.warn{--c:var(--warn)}.down{--c:var(--down)}.off,.unknown{--c:var(--off)}
+.availbar i.ok,.availbar i.warn,.availbar i.down{background:var(--c)}
+.health{display:grid;grid-template-columns:auto auto 1fr;gap:2px 9px;font-size:12px;align-items:baseline}
+.health i{width:8px;height:8px;border-radius:50%;background:var(--c);display:block;align-self:center}
+.health span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.console{font:11.5px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.think{flex:1;overflow-y:auto;padding:8px 11px;min-height:0}
+.t{margin:0 0 9px;padding-left:9px;border-left:2px solid var(--line)}
+.t.decision{border-left-color:var(--gold)}.t.strategy{border-left-color:var(--violet)}
+.t.reasoning,.t.live{border-left-color:var(--info)}
+.t .head{font-size:11.5px;color:var(--muted);display:flex;gap:6px;align-items:baseline}
+.t .head b{color:var(--text);font-weight:600}
+.t .act{font-weight:600}
+.t .intent{color:var(--muted);font-style:italic}
+.t pre{margin:3px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 var(--mono);color:#c9d2df}
+.t details summary{cursor:pointer;color:var(--muted);font-size:11.5px}
+.t ul{margin:3px 0 0;padding-left:17px}
+.caret{display:inline-block;width:7px;height:13px;background:var(--info);vertical-align:-2px;animation:pulse 1s steps(2) infinite}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="offline" id="offline">Interface disconnected</div>
+<script>
+"use strict";
+const Q = new URLSearchParams(location.search);
+const PANEL = ["controls", "log", "side", "all", "frame"].includes(Q.get("panel")) ? Q.get("panel") : "all";
+const TOKEN = Q.get("t") || "";
+document.title = {controls: "STS Agent · Controls", log: "STS Agent · Combat log", side: "STS Agent · Run"}[PANEL] || "STS Agent";
+// The single window: this page fills a frame host that holds the game window as a child (see ui/windows.py).
+const HOST = PANEL === "frame" && window.chrome && window.chrome.webview ? window.chrome.webview : null;
+
+const $ = id => document.getElementById(id);
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+}
+const ICON = {
+  play: "M3 1.5v13l11-6.5z", pause: "M3 2h4v12H3zM9 2h4v12H9z", step: "M2 2l8 6-8 6zM11 2h3v12h-3z",
+  stop: "M3 3h10v10H3z", grid: "M1 1h6v6H1zM9 1h6v6H9zM1 9h6v6H1zM9 9h6v6H9z", full: "M1 1h5v2H3v3H1zM10 1h5v5h-2V3h-3zM1 10h2v3h3v2H1zM13 10h2v5h-5v-2h3z", folder: "M1 3h5l2 2h7v9H1z",
+  plus: "M7 2h2v5h5v2H9v5H7V9H2V7h5z"
+};
+function button(id, label, icon, cls) {
+  const b = el("button", cls);
+  b.id = id;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", ICON[icon]);
+  svg.append(p);
+  b.append(svg, el("span", null, label));
+  return b;
+}
+function secs(s) {
+  if (s === null || s === undefined || !isFinite(s)) return "–";
+  s = Math.max(0, s);
+  if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + "s";
+  const m = Math.floor(s / 60);
+  return m + "m " + String(Math.floor(s % 60)).padStart(2, "0") + "s";
+}
+
+/* ------------------------------------------------------------ build the panels */
+function buildControls() {
+  const bar = el("div", "bar");
+  const brand = el("div", "brand");
+  brand.append(el("i"), el("span", null, "STS Agent"));
+  const pill = el("span", "pill", "idle"); pill.id = "state";
+  brand.append(pill);
+  const btns = el("div", "btns");
+  const newrun = el("div", "newrun");
+  const ch = el("select"); ch.id = "character"; ch.title = "Character for a new run";
+  const asc = el("select"); asc.id = "ascension"; asc.title = "Ascension for a new run";
+  for (let i = 0; i <= 10; i++) { const o = el("option", null, "A" + i); o.value = i; asc.append(o); }
+  asc.value = "10";
+  newrun.append(ch, asc, button("b-new", "New run", "plus"));
+  const sep = () => el("span", "sep");
+  btns.append(button("b-continue", "Continue run", "play", "primary"), newrun, sep(),
+    button("b-pause", "Pause", "pause"), button("b-step", "Step", "step"), button("b-stop", "Stop", "stop", "danger"),
+    sep(), PANEL === "frame" ? button("b-full", "Full screen", "full") : button("b-snap", "Snap windows", "grid"),
+    button("b-traces", "Traces", "folder"));
+  const info = el("div", "runinfo"); info.id = "runinfo";
+  const toast = el("div", "toast"); toast.id = "toast";
+  bar.append(brand, btns, info, toast);
+  return bar;
+}
+function buildLog() {
+  const wrap = el("div", "logwrap");
+  const head = el("div", "loghead");
+  head.append(el("span", "label", "Combat log"));
+  const fight = el("span", "fight"); fight.id = "fightname";
+  const follow = el("label");
+  const box = el("input"); box.type = "checkbox"; box.checked = true; box.id = "follow";
+  follow.append(box, el("span", null, "Follow the latest turn"));
+  head.append(fight, follow);
+  const turns = el("div", "turns"); turns.id = "turns";
+  const empty = el("div", "empty", "No fight yet. Turns, cards played and what they did appear here.");
+  empty.id = "logempty";
+  turns.append(empty);
+  wrap.append(head, turns);
+  return wrap;
+}
+function panelBox(cls, title, rightId) {
+  const p = el("section", "panel " + cls);
+  const h = el("header");
+  h.append(el("span", "label", title));
+  const r = el("span", "right"); r.id = rightId;
+  h.append(r);
+  p.append(h);
+  return p;
+}
+function buildSide() {
+  const side = el("div", "side");
+  const map = panelBox("p-map", "Map plan", "mapmeta");
+  const body = el("div", "mapbody");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.id = "mapsvg";
+  const plan = el("div", "plan"); plan.id = "plan";
+  body.append(svg, plan); map.append(body);
+
+  const status = panelBox("p-status", "Current step", "sessmeta");
+  const sb = el("div", "statusbody");
+  const line = el("div", "stepline");
+  const phase = el("span", "phase", "Idle"); phase.id = "phase";
+  const detail = el("span", "stepdetail"); detail.id = "stepdetail";
+  line.append(phase, detail);
+  const tiles = el("div", "tiles");
+  for (const [id, cap] of [["t-step", "this step"], ["t-call", "model call"], ["t-avg", "average call"], ["t-act", "since last action"]]) {
+    const t = el("div", "tile"); const b = el("b", null, "–"); b.id = id; const s = el("span", null, cap); s.id = id + "-cap";
+    t.append(b, s); tiles.append(t);
+  }
+  const ah = el("div", "availhead");
+  ah.append(el("span", "label", "Availability"));
+  const count = el("b"); count.id = "availcount"; ah.append(count);
+  const bar = el("div", "availbar"); bar.id = "availbar";
+  const health = el("div", "health"); health.id = "health";
+  const con = el("div", "console"); con.id = "console";
+  sb.append(line, tiles, ah, bar, health, con); status.append(sb);
+
+  const think = panelBox("p-think", "Thinking", "thinkmeta");
+  const list = el("div", "think"); list.id = "think";
+  think.append(list);
+  side.append(map, status, think);
+  return side;
+}
+(function build() {
+  const app = $("app");
+  if (PANEL === "controls") app.append(buildControls());
+  else if (PANEL === "log") app.append(buildLog());
+  else if (PANEL === "side") app.append(buildSide());
+  else {
+    const shell = el("div", "shell-all" + (PANEL === "frame" ? " shell-frame" : "")), left = el("div", "left");
+    const hole = el("div", "gamehole", PANEL === "frame" ? "" : "The game window sits here");
+    hole.id = "gamehole";
+    if (PANEL === "frame") { shell.append(buildControls()); left.append(hole, buildLog()); }   // the bar spans the window
+    else left.append(buildControls(), hole, buildLog());
+    shell.append(left, buildSide());
+    app.append(shell);
+    const gf = parseFloat(Q.get("gf"));
+    if (PANEL === "frame" && gf >= 0.4 && gf <= 0.9) shell.style.setProperty("--gf", gf);
+  }
+})();
+
+/* ------------------------------------------------------------ single window */
+// The host places the game window on the rectangle it is told, in device pixels of this page.
+let fullscreen = false;
+function postGameRect() {
+  const r = $("gamehole").getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  HOST.postMessage({type: "game_rect", x: r.left * d, y: r.top * d, w: r.width * d, h: r.height * d});
+}
+if (HOST) {
+  HOST.postMessage({type: "ready"});
+  new ResizeObserver(postGameRect).observe($("gamehole"));
+  window.addEventListener("resize", postGameRect);
+  postGameRect();
+}
+
+/* ------------------------------------------------------------ commands */
+let toastTimer = 0;
+function toast(message, bad) {
+  const t = $("toast"); if (!t) return;
+  t.textContent = message; t.className = "toast on" + (bad ? " bad" : "");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = "toast", 4500);
+}
+async function send(cmd, extra) {
+  try {
+    const r = await fetch("/api/command", {method: "POST", headers: {"Content-Type": "application/json", "X-STS-Token": TOKEN},
+      body: JSON.stringify(Object.assign({cmd}, extra || {}))});
+    const j = await r.json();
+    toast(j.message || (j.ok ? "Done" : "Failed"), !j.ok);
+  } catch (e) { toast("The interface is not answering", true); }
+  if (HOST) HOST.postMessage({type: "focus_game"});   // keys go to the game again, not to the pressed button
+}
+if ($("b-continue")) {
+  $("b-continue").onclick = () => send("continue");
+  $("b-new").onclick = () => {
+    const who = $("character").selectedOptions[0], asc = $("ascension").value;
+    if (confirm("Start a new " + (who ? who.textContent : "") + " run at ascension " + asc +
+        "?\n\nThe run that is open in the game will be abandoned.")) send("new_run", {character: $("character").value, ascension: asc});
+  };
+  $("b-pause").onclick = () => send(S && S.control.paused ? "resume" : "pause");
+  $("b-step").onclick = () => send("step");
+  $("b-stop").onclick = () => send("stop");
+  if ($("b-snap")) $("b-snap").onclick = () => send("snap");
+  if ($("b-full")) {
+    $("b-full").disabled = !HOST;
+    $("b-full").onclick = () => {
+      fullscreen = !fullscreen;
+      HOST.postMessage({type: "fullscreen", on: fullscreen});
+      $("b-full").lastChild.textContent = fullscreen ? "Exit full screen" : "Full screen";
+    };
+  }
+  $("b-traces").onclick = () => send("traces");
+}
+
+/* ------------------------------------------------------------ state */
+let S = null, clockOffset = 0;
+const cur = {v: -1, log: 0, think: 0, live: 0, livelen: 0, route: -1};
+const now = () => Date.now() / 1000 + clockOffset;
+const PHASE = {idle: "Idle", starting: "Starting", waiting: "Waiting for the game", strategy: "Updating strategy",
+  evidence: "Collecting evidence", deciding: "Model is deciding", sending: "Sending action", autobattle: "Autobattle fighting",
+  paused: "Paused", stopped: "Stopped", error: "Stopped on error"};
+
+function renderControls(s) {
+  const st = s.session.state, pill = $("state");
+  pill.textContent = st; pill.className = "pill " + st;
+  const active = ["starting", "running", "pausing", "paused"].includes(st), stopping = st === "stopping";
+  $("b-continue").disabled = active || stopping; $("b-new").disabled = active || stopping;
+  $("character").disabled = $("ascension").disabled = active || stopping;
+  const pb = $("b-pause"), paused = s.control.paused;
+  pb.disabled = !active; pb.lastChild.textContent = paused ? "Resume" : "Pause";
+  pb.firstChild.firstChild.setAttribute("d", paused ? ICON.play : ICON.pause);
+  $("b-step").disabled = !(active && paused); $("b-stop").disabled = !active;
+  const sel = $("character");
+  if (!sel.options.length) for (const c of s.info.characters || []) {
+    const o = el("option", null, c.charAt(0) + c.slice(1).toLowerCase()); o.value = c; sel.append(o);
+  }
+  const r = s.run, info = $("runinfo"); info.replaceChildren();
+  const add = (cls, label, value) => { const d = el("span", cls); d.append(el("span", "muted", label + " "), el("b", "num", value)); info.append(d); };
+  if (r.character) add("", "", String(r.character).replace(/^the /i, "").toLowerCase().replace(/(^|\s)[a-z]/g, c => c.toUpperCase()) + (r.ascension != null ? " A" + r.ascension : ""));
+  if (r.act != null) add("", "Act", r.act + (r.floor != null ? " · floor " + r.floor : ""));
+  if (r.hp != null) add("hp", "HP", r.hp + "/" + (r.max_hp ?? "?"));
+  if (r.gold != null) add("gold", "Gold", r.gold);
+  if (r.screen) add("", "Screen", String(r.screen).replace(/_/g, " "));
+}
+
+/* ---- combat log ---- */
+const cards = new Map();
+let lastCard = null;
+function fxSpan(text) {
+  const cls = /^You −/.test(text) ? "hurt" : /defeated/.test(text) ? "kill" : /Block/.test(text) ? "blk" : /^You \+\d+ HP/.test(text) ? "heal" : "";
+  return el("span", cls, text);
+}
+function fxRow(prefix, effects, cls) {
+  const d = el("div", "fx " + (cls || ""));
+  if (prefix) d.append(el("span", null, prefix));
+  effects.forEach((e, i) => { if (i || prefix) d.append(document.createTextNode(i ? " · " : " ")); d.append(fxSpan(e)); });
+  return d;
+}
+function card(key, cls, title, sub) {
+  let c = cards.get(key);
+  if (!c) {
+    c = el("div", "card " + cls);
+    const h = el("h4"); h.append(el("b", null, title), el("span", null, sub || ""));
+    const rows = el("div", "rows");
+    c.append(h, rows); c.rows = rows; c.head = h;
+    cards.set(key, c); $("turns").append(c); lastCard = c;
+  }
+  return c;
+}
+function addLog(e) {
+  const empty = $("logempty"); if (empty) empty.remove();
+  if (e.k === "fight") {
+    const c = card("f" + e.fight, "fightcard", ({elite: "Elite", boss: "Boss"}[e.kind] || "Fight") + " " + e.fight,
+      (e.act != null ? "act " + e.act + " · floor " + e.floor : ""));
+    for (const name of e.enemies || []) c.rows.append(el("div", null, name));
+    c.rows.append(el("div", "muted", "You: " + e.hp + "/" + e.max_hp + " HP"));
+    $("fightname").textContent = (e.enemies || []).map(x => x.replace(/ \(.*/, "")).join(", ");
+    return;
+  }
+  if (e.k === "result") {
+    const c = card("r" + e.fight, "result " + (e.result || ""), e.result === "victory" ? "Victory" : e.result === "defeat" ? "Defeat" : "Fight over", "");
+    if (e.turns != null) c.rows.append(el("div", null, e.turns + " turns"));
+    if (e.hp_lost != null) c.rows.append(el("div", null, "Net HP lost: " + e.hp_lost));
+    if (e.damage != null) c.rows.append(el("div", "muted", "Damage taken " + e.damage + ", healed " + (e.healed ?? 0)));
+    return;
+  }
+  const c = card("t" + e.fight + ":" + e.round, "", "Turn " + (e.round ?? "?"), "");
+  const rows = c.rows;
+  if (e.k === "turn") {
+    c.head.lastChild.textContent = (e.energy != null ? e.energy + " energy · " : "") + "HP " + e.hp + (e.block ? " · Block " + e.block : "");
+    rows.append(el("div", "r-hand", "Hand: " + (e.hand || []).join(", ")));
+    for (const it of e.intents || []) rows.append(el("div", "r-intent", it));
+  } else if (e.k === "start") {
+    rows.append(fxRow("Start of turn:", e.effects || []));
+  } else if (e.k === "play") {
+    if ((e.cards || []).length) {
+      const d = el("div", "r-play");
+      e.cards.forEach((cd, i) => {
+        if (i) d.append(document.createTextNode(", "));
+        d.append(el("b", null, cd.name));
+        if (cd.to === "exhaust") d.append(el("span", "tag", "exhaust"));
+      });
+      rows.append(d);
+      if ((e.effects || []).length) rows.append(fxRow("", e.effects, "after"));
+    } else if ((e.effects || []).length) rows.append(fxRow("", e.effects, "after"));
+  } else if (e.k === "potion") {
+    const d = el("div", "r-play"); d.append(el("b", null, e.name), el("span", "tag", "potion")); rows.append(d);
+    if ((e.effects || []).length) rows.append(fxRow("", e.effects));
+  } else if (e.k === "end") {
+    rows.append(el("div", "r-end", "End turn" + (e.left ? " · " + e.left + " card" + (e.left > 1 ? "s" : "") + " left in hand" : "")));
+  } else if (e.k === "enemy") {
+    rows.append(fxRow("Enemy:", e.effects || []));
+  }
+  rows.scrollTop = rows.scrollHeight;
+}
+function renderLog(s) {
+  if (!s.log.length) return;
+  for (const e of s.log) { addLog(e); cur.log = Math.max(cur.log, e.id); }
+  const turns = $("turns");
+  if ($("follow").checked) turns.scrollLeft = turns.scrollWidth;
+}
+
+/* ---- map plan ---- */
+const NODE = {monster: ["M", "#8a94a6"], elite: ["E", "#ec5b4f"], restsite: ["R", "#4cc38a"], rest_site: ["R", "#4cc38a"],
+  shop: ["$", "#e0b04a"], unknown: ["?", "#62a8ea"], treasure: ["T", "#b58be0"], ancient: ["A", "#ebe6da"], boss: ["B", "#ec5b4f"]};
+const nodeKind = t => String(t || "unknown").toLowerCase();
+function svgEl(tag, attrs) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+}
+function renderRoute(route) {
+  const svg = $("mapsvg"), plan = $("plan");
+  svg.replaceChildren(); plan.replaceChildren();
+  if (!route || !(route.nodes || []).length) {
+    plan.append(el("p", "muted", "No map seen yet. The plan appears after the first map screen of the act."));
+    $("mapmeta").textContent = "";
+    return;
+  }
+  const key = (c, r) => c + "," + r, nodes = new Map();
+  for (const n of route.nodes) nodes.set(key(n.col, n.row), {col: n.col, row: n.row, type: nodeKind(n.type), children: n.children || []});
+  for (const b of route.bosses || []) if (!nodes.has(key(b.col, b.row))) nodes.set(key(b.col, b.row), {col: b.col, row: b.row, type: "boss", children: []});
+  let maxC = 0, maxR = 0;
+  for (const n of nodes.values()) { maxC = Math.max(maxC, n.col); maxR = Math.max(maxR, n.row); }
+  const W = 200, H = 300, px = 16, py = 14;
+  const X = c => px + (maxC ? c * (W - 2 * px) / maxC : (W - 2 * px) / 2), Y = r => H - py - (maxR ? r * (H - 2 * py) / maxR : 0);
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  const p = route.plan, samePlan = p && p.act === route.act;
+  const here = route.chosen || route.current || null;
+  const path = samePlan ? (p.coords || []).map(c => key(c[0], c[1])) : [];
+  const onPath = new Set(path);
+  const planEdges = new Set();
+  const chain = (samePlan && p.start && p.start[0] != null ? [key(p.start[0], p.start[1])] : []).concat(path);
+  for (let i = 0; i + 1 < chain.length; i++) planEdges.add(chain[i] + ">" + chain[i + 1]);
+  const visited = new Set((route.visited || []).map(v => key(v[0], v[1])));
+  const edges = svgEl("g", {}), marks = svgEl("g", {});
+  for (const [k, n] of nodes) for (const c of n.children) {
+    const t = nodes.get(key(c[0], c[1])); if (!t) continue;
+    const planned = planEdges.has(k + ">" + key(c[0], c[1]));
+    edges.append(svgEl("line", {x1: X(n.col), y1: Y(n.row), x2: X(t.col), y2: Y(t.row),
+      stroke: planned ? "#e0b04a" : "#2f3a4c", "stroke-width": planned ? 2.4 : 1}));
+  }
+  for (const [k, n] of nodes) {
+    const [letter, color] = NODE[n.type] || NODE.unknown;
+    const isHere = here && here.col === n.col && here.row === n.row, planned = onPath.has(k), seen = visited.has(k);
+    const r = n.type === "boss" ? 8.5 : 6.5;
+    if (isHere) marks.append(svgEl("circle", {cx: X(n.col), cy: Y(n.row), r: r + 4, fill: "none", stroke: "#ebe6da", "stroke-width": 1.6}));
+    marks.append(svgEl("circle", {cx: X(n.col), cy: Y(n.row), r, fill: planned || isHere ? color : "#161b24", stroke: color,
+      "stroke-width": 1.4, opacity: seen && !isHere ? 0.35 : planned || isHere ? 1 : 0.75}));
+    const t = svgEl("text", {x: X(n.col), y: Y(n.row) + 3.2, "text-anchor": "middle", "font-size": 8.5, "font-weight": 700,
+      fill: planned || isHere ? "#0e1218" : color, opacity: seen && !isHere ? 0.45 : 1});
+    t.textContent = letter; marks.append(t);
+  }
+  svg.append(edges, marks);
+  $("mapmeta").textContent = "Act " + (route.act ?? "?") + ((route.bosses || []).length ? " · boss " + route.bosses.map(b => b.name).join(" + ") : "");
+  if (!p) { plan.append(el("p", "muted", "The model has not stored a route plan for this act yet.")); return; }
+  if (!samePlan) plan.append(el("p", "muted", "The stored plan is from act " + p.act + "; a new one is made on this act's first map screen."));
+  plan.append(el("span", "label", "Plan" + (p.set_at_floor != null ? " · set on floor " + p.set_at_floor : "")), el("p", null, p.text || "—"));
+  if ((p.trajectory || []).length) {
+    plan.append(el("span", "label", "Rooms ahead · projected HP"));
+    const chips = el("div", "chips");
+    for (const st of p.trajectory) {
+      const c = el("span", "chip", (NODE[nodeKind(st.type)] || ["?"])[0] + " " + String(st.type || "?").replace(/_/g, " "));
+      if (st.hp_pct != null) c.append(el("small", null, Math.round(st.hp_pct) + "%"));
+      chips.append(c);
+    }
+    plan.append(chips);
+  }
+  if (p.change_if) plan.append(el("span", "label", "Change course if"), el("p", "muted", p.change_if));
+}
+
+/* ---- status ---- */
+let healthShown = "";
+function renderStatus(s) {
+  const st = s.step, phase = $("phase"), ph = st.phase || "idle";
+  phase.textContent = PHASE[ph] || ph;
+  phase.className = "phase " + (ph === "paused" ? "paused" : ph === "autobattle" ? "autobattle" : ph === "error" ? "error" :
+    ["idle", "stopped"].includes(ph) ? "" : "busy");
+  $("stepdetail").textContent = st.detail || s.session.detail || "";
+  $("sessmeta").textContent = (s.info.provider ? s.info.provider + ":" + (s.info.model || "no model") : "") +
+    (s.session.state === "pausing" ? " · pausing after this step" : "");
+  const signature = JSON.stringify(s.health);
+  if (signature !== healthShown) {   // rebuilt only when a status changed, not on every thinking update
+    healthShown = signature;
+    const items = s.health.filter(h => h.state !== "off");
+    const good = items.filter(h => h.state === "ok").length;
+    $("availcount").textContent = good + " of " + items.length + " available";
+    const bar = $("availbar"), list = $("health");
+    bar.replaceChildren(); list.replaceChildren();
+    for (const h of s.health) {
+      if (h.state !== "off") { const seg = el("i", h.state); seg.title = h.label + ": " + h.detail; bar.append(seg); }
+      const detail = el("span", null, h.detail);
+      detail.title = h.detail;
+      list.append(el("i", h.state), el("b", null, h.label), detail);
+    }
+  }
+  $("console").textContent = s.console || "";
+  if (PANEL === "frame") {   // shown only until the game window covers it
+    const game = s.health.find(h => h.key === "game");
+    $("gamehole").textContent = !game || game.state === "ok" ? "" : game.detail;
+  }
+  tick();
+}
+function tick() {
+  if (!S || !$("t-step")) return;
+  const t = now(), m = S.model;
+  $("t-step").textContent = ["idle", "stopped", "error"].includes(S.step.phase) ? "–" : secs(t - S.step.since);
+  if (m.status === "calling" && m.since) {
+    $("t-call").textContent = secs(t - m.since);
+    $("t-call-cap").textContent = (m.purpose || "model") + " call · attempt " + (m.attempt ?? 1);
+  } else {
+    $("t-call").textContent = m.last_s != null ? secs(m.last_s) : "–";
+    $("t-call-cap").textContent = m.status === "retrying" ? "retrying: " + (m.error || "") : m.status === "failed" ? "last call failed" : "last model call";
+  }
+  let calls = 0, total = 0;
+  for (const k in S.calls) { calls += S.calls[k].calls; total += S.calls[k].total_s; }
+  $("t-avg").textContent = calls ? secs(total / calls) : "–";
+  $("t-avg-cap").textContent = calls ? "average of " + calls + " calls" : "average call";
+  $("t-act").textContent = S.last_action ? secs(t - S.last_action) : "–";
+  const live = $("livehead");
+  if (live && m.status === "calling" && m.since) live.textContent = secs(t - m.since);
+}
+
+/* ---- thinking ---- */
+let liveNode = null, liveText = null;
+function nearBottom(n) { return n.scrollHeight - n.scrollTop - n.clientHeight < 60; }
+function thinkEntry(e) {
+  const d = el("div", "t " + e.k), head = el("div", "head");
+  if (e.k === "decision") {
+    head.append(el("b", null, "#" + e.seq + " " + String(e.screen).replace(/_/g, " ")),
+      el("span", null, e.source === "llm" ? "decision" : "automatic"));
+    d.append(head, el("div", "act", e.action));
+    if (e.reason) d.append(el("div", null, e.reason));
+    if (e.intent) d.append(el("div", "intent", "Next: " + e.intent));
+  } else if (e.k === "strategy") {
+    head.append(el("b", null, "Strategy" + (e.revision != null ? " r" + e.revision : "")),
+      el("span", null, e.status + ((e.reasons || []).length ? " · " + e.reasons.join(", ").replace(/_/g, " ") : "")));
+    d.append(head);
+    if (e.summary) d.append(el("div", null, e.summary));
+    if (e.change) d.append(el("div", "intent", e.change));
+    if (e.status !== "updated" && e.diagnostic) d.append(el("div", "muted", e.diagnostic));
+    if (e.plan) {
+      const det = el("details"); det.append(el("summary", null, "Standing plan"));
+      const ul = el("ul");
+      const item = (label, v) => { if (v && v.length) { const li = el("li"); li.append(el("b", null, label + ": "), document.createTextNode(Array.isArray(v) ? v.join("; ") : v)); ul.append(li); } };
+      item("Needs", e.plan.deck_needs); item("Avoid", e.plan.avoid); item("Remove", e.plan.removal_targets);
+      item("Upgrade", e.plan.upgrade_targets); item("Skip rule", e.plan.skip_rule); item("Boss prep", e.plan.boss_prep);
+      det.append(ul); d.append(det);
+    }
+  } else if (e.k === "reasoning") {
+    const det = el("details");
+    det.append(el("summary", null, "Reasoning · " + e.purpose + " · " + secs(e.seconds) + (e.clipped ? " · end of a longer stream" : "")));
+    det.append(el("pre", null, e.text)); d.append(det);
+  } else {
+    d.append(el("div", "muted", e.text || ""));
+  }
+  return d;
+}
+function renderThink(s) {
+  const list = $("think"), stick = nearBottom(list), lv = s.live;
+  for (const e of s.think) {
+    const node = thinkEntry(e);
+    if (liveNode) list.insertBefore(node, liveNode); else list.append(node);
+    cur.think = Math.max(cur.think, e.id);
+  }
+  if (lv.id !== cur.live || lv.reset) {
+    if (liveNode) liveNode.remove();
+    liveNode = liveText = null; cur.live = lv.id; cur.livelen = 0;
+  }
+  if (lv.active) {
+    if (!liveNode) {
+      liveNode = el("div", "t live");
+      const head = el("div", "head"), time = el("span"); time.id = "livehead";
+      head.append(el("b", null, "Thinking · " + (lv.purpose || "model")), time);
+      liveText = el("pre");
+      const caret = el("span", "caret");
+      liveNode.append(head, liveText, caret);
+      if (!s.info.live_thinking) liveText.textContent = "This provider does not stream its reasoning. The decision and its stated reason appear when the call returns.";
+      list.append(liveNode);
+    }
+    if (lv.append) liveText.append(document.createTextNode(lv.append));
+    cur.livelen = lv.len;
+  } else if (liveNode) { liveNode.remove(); liveNode = liveText = null; }
+  $("thinkmeta").textContent = lv.active ? (lv.answer_chars ? "writing the answer" : lv.len ? "reasoning" : "waiting for the model") : "";
+  if (stick) list.scrollTop = list.scrollHeight;
+}
+
+/* ------------------------------------------------------------ feed */
+function apply(s) {
+  S = s; clockOffset = s.now - Date.now() / 1000; cur.v = s.version;
+  if ($("state")) renderControls(s);
+  if ($("turns")) renderLog(s); else cur.log = s.log.length ? s.log[s.log.length - 1].id : cur.log;
+  if ($("think")) {
+    if ("route" in s) { renderRoute(s.route); cur.route = s.route_rev; }
+    renderStatus(s); renderThink(s);
+  } else {
+    cur.route = s.route_rev; cur.live = s.live.id; cur.livelen = s.live.len;
+    if (s.think.length) cur.think = s.think[s.think.length - 1].id;
+  }
+}
+async function poll() {
+  try {
+    const q = new URLSearchParams({t: TOKEN, v: cur.v, log: cur.log, think: cur.think, live: cur.live, livelen: cur.livelen, route: cur.route});
+    const r = await fetch("/api/state?" + q);
+    if (!r.ok) throw new Error(r.status);
+    apply(await r.json());
+    $("offline").classList.remove("on");
+    setTimeout(poll, 80);
+  } catch (e) {
+    $("offline").classList.add("on");
+    setTimeout(poll, 1500);
+  }
+}
+setInterval(tick, 500);
+poll();
+</script>
+</body>
+</html>

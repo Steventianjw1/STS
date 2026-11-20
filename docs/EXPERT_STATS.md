@@ -217,7 +217,7 @@ discard usable responses. Local history is a bounded indexed corpus, not merely
 an expiring HTTP response cache.
 
 Fetches use `request_timeout_s` (default three seconds) and total `max_fetch_s`
-(default twelve seconds), reduced by remaining session time. A 429 honors
+(default twelve seconds). A 429 honors
 `Retry-After` by deferring requests, without sleeping/retrying during the decision.
 Network/private/missing data are labeled unavailable/partial. Unexpected
 external-data exceptions are caught at `for_view` and reported as unavailable

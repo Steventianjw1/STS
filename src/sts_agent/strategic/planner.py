@@ -12,12 +12,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from ..model_progress import ModelProgress
+from ..llm.progress import ModelProgress
 from .models import (
     FAILED, INVALID_INPUT, UNCHANGED, UPDATED, InputError, OutputError,
     PlannerResult, StrategicAssessment, StrategicSnapshot, parse_assessment,
 )
-from .prompts import PROMPT_VERSION, SYSTEM_INSTRUCTION, build_user_message
+from .prompts import PROMPT_VERSION, build_user_message, system_instruction
 
 
 class TextModel(Protocol):
@@ -26,12 +26,19 @@ class TextModel(Protocol):
 
 class StrategicPlanner:
     def __init__(self, model: TextModel, *, transcript_path: str | Path | None = None,
-                 progress: ModelProgress | None = None):
+                 progress: ModelProgress | None = None, combat_delegated: bool = False,
+                 reasoning_effort: str | None = None):
         """``transcript_path``: optional local JSONL log of model calls. Keep it
-        under the Git-ignored ``traces/`` directory."""
+        under the Git-ignored ``traces/`` directory. ``reasoning_effort`` replaces the
+        model's configured effort for planner calls when the model takes one per call."""
         self._model = model
+        self._options = ({"reasoning_effort": reasoning_effort}
+                         if reasoning_effort is not None and getattr(model, "accepts_reasoning_effort", False)
+                         else {})
         self._transcript = Path(transcript_path) if transcript_path else None
         self.progress = progress or ModelProgress()
+        # True when native Autobattle plays the fights: the prompt then prices potions and per-play costs for it.
+        self._system = system_instruction(combat_delegated=combat_delegated)
         self.reset()
 
     # -- state -----------------------------------------------------------------
@@ -107,7 +114,7 @@ class StrategicPlanner:
             self.last_attempts.append(record)
             try:
                 with self.progress.call("strategy", attempt, revision=snap.revision, retry_kind=retry_kind):
-                    text = self._model.complete(system=SYSTEM_INSTRUCTION, user=user)
+                    text = self._model.complete(system=self._system, user=user, **self._options)
             except Exception as e:  # provider failures are never retried
                 diag = f"model call failed ({reason}): {type(e).__name__}: {e}"
                 record["error"] = diag

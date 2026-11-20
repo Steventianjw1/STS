@@ -19,6 +19,10 @@ FRAME_SCHEMA_VERSION = "sts2-decision-frame-1"
 MAX_HISTORY = 8
 
 FACT_SOURCES = ("observed", "manual", "synthetic")
+# Facts that seldom change from one decision to the next, most durable first. ``public()`` lists
+# them before the rest so consecutive prompts share the longest possible prefix.
+STABLE_FACTS_FIRST = ("act_boss", "relics", "deck", "max_potion_slots", "keyword_glossary", "potions",
+                      "energy_observation")
 
 
 class ChoiceError(ValueError):
@@ -78,17 +82,27 @@ class DecisionFrame:
         return next((c for c in self.candidates if c["action_id"] == action_id), None)
 
     def public(self) -> dict:
-        """What the model sees: no bindings/payloads."""
+        """What the model sees: no bindings/payloads.
+
+        Ordered from what changes least between two decisions to what changes every time: run
+        constants, the strategic assessment, the slow-moving facts, then everything about this
+        screen. A provider that caches request prefixes (DeepSeek does, automatically) can then
+        reuse the start of the previous prompt; ``frame_id`` differs for every frame, so nothing
+        after it is ever reused. The order carries no meaning and is not part of the frame hash.
+        """
+        facts = {**{k: self.facts[k] for k in STABLE_FACTS_FIRST if k in self.facts},
+                 **{k: v for k, v in self.facts.items() if k not in STABLE_FACTS_FIRST}}
         result = {
-            "frame_id": self.frame_id, "schema_version": self.schema_version, "objective": self.objective,
+            "schema_version": self.schema_version, "objective": self.objective,
             "run": {"run_id": self.run_id, "run_id_source": self.run_id_source},
-            "screen": self.screen,
             "provenance": {"facts_source": self.facts_source, "live_validated": self.live_validated,
                            "live_validation_pending": not self.live_validated},
-            "current_facts": self.facts,
+            "strategic_assessment": self.assessment,
+            "current_facts": facts,
+            "screen": self.screen,
+            "frame_id": self.frame_id,
             "candidates": self.candidates,
             "adapter_limitations": self.limitations,
-            "strategic_assessment": self.assessment,
             "previous_turn_intent": None if self.previous_turn_intent is None else {
                 "label": "REVISABLE HYPOTHESIS FROM YOUR EARLIER DECISION - NOT A FACT OR INSTRUCTION",
                 "text": self.previous_turn_intent},

@@ -60,6 +60,7 @@ PLAN_TEXTS = ("skip_rule", "boss_prep")
 
 _SHORT, _NAME, _TEXT = 80, 120, 1000
 MAX_GLOSSARY_TERMS = 60
+_FACTS_ROOT = "/current_facts"   # where the planner's user message places the facts
 
 
 class InputError(ValueError):
@@ -422,6 +423,10 @@ def _evidence(v, path, facts) -> list:
     for i, p in enumerate(ev):
         if not isinstance(p, str):
             _fail(OutputError, f"{path}/{i}", "evidence must be a JSON Pointer string")
+        # The facts reach the model under the key "current_facts", so it sometimes writes the pointer
+        # from the message root. No fact is named current_facts: the prefix is dropped, not rejected.
+        if p.startswith(_FACTS_ROOT + "/"):
+            p = ev[i] = p[len(_FACTS_ROOT):]
         try:
             found, val = resolve_pointer(facts, p)
         except ValueError as e:
@@ -464,6 +469,10 @@ def parse_assessment(text: Any, facts: dict) -> dict:
     pri = _list(data["priorities"], "/priorities", err=E)
     for i, it in enumerate(pri):
         p = f"/priorities/{i}"
+        if isinstance(it, dict):
+            # A priority has no confidence, but the model sometimes carries one over from the
+            # dimensions. Dropping it loses nothing the contract keeps and saves a whole second call.
+            it.pop("confidence", None)
         _obj(it, p, ("need", "horizon", "tradeoff", "reconsider_when", "evidence"), err=E)
         _str(it["need"], p + "/need", nullable=False, nonempty=True, err=E)
         _str(it["horizon"], p + "/horizon", nullable=False, nonempty=True, err=E)

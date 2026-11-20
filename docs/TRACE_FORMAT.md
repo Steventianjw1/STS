@@ -7,7 +7,9 @@ evidence makes the recorded gameplay a human/expert demonstration.
 
 ## Session layout and durability
 
-`step`, `play-combat`, and (LLM only) `play-run` create:
+`step`, `play-combat`, and (LLM only) `play-run` and `start-run` create the
+files below. A run started from the [interface](INTERFACE.md) is recorded the
+same way, with command `play-run`:
 
 ```text
 traces/<session_id>/
@@ -40,14 +42,16 @@ Common fields include:
 | `game_build` | User-declared build, null if unknown; not reported by the API. |
 | `mod_version`, `mod_source_commit_adapter_written_against` | Greeting version and source-inspected adapter revision; a 0.4.0 greeting alone does not identify the build. |
 | `provenance` | Policy/source labels described below. |
-| `config` | Effective config; `game_dir`, `trace_dir`, and expert `cache_dir` are removed. Other configured values, including `monster_data_path`, can remain. |
+| `config` | Effective config; `game_dir`, `pinned_game_dir`, `trace_dir`, expert `cache_dir`, and `[ui].browser` are removed. Other configured values, including `monster_data_path`, can remain. |
 | `files`, `counts`, `outcome` | Output filenames, decision/outcome/error counts, and final summary. |
 
 LLM manifests additionally carry `model`, `decision_prompt_version`,
 `run_id_source` (`mod_compendium` or `session_scoped`), `facts_source`,
 `capabilities_mod_revision`, and final `model_usage`. Provider identity includes
-provider/model, output cap, timeout, disabled SDK retries, and scripted flag.
-DeepSeek identity includes `reasoning_effort` when configured. Usage includes
+provider/model, output cap (null when none is set), timeout, disabled SDK
+retries, and scripted flag. DeepSeek identity includes the `reasoning_effort`
+sent, the `requested_reasoning_effort` from configuration (`medium` is sent as
+`high`), and `streamed: true` when the interface had the calls streamed. Usage includes
 shared call/input/output token accounting and configured budgets; estimated cost
 appears only with configured prices.
 
@@ -73,10 +77,11 @@ running game; a trace label does not automatically certify a screen.
 | Type | Contents |
 | --- | --- |
 | `llm_decision` | `seq`, provenance, policy/prompt/model identity, full `frame`, `choice` or null, `attempts`, `error_kind`, `diagnostic`, `history_dropped`, `support_trim`, `provider_retries`, `tool_calls`, and `prompt_modules`. Written before action execution. |
+| `automatic_decision` | A forced click made without a model call: `seq`, `decision_source` (`single_map_destination` or `forced_progress`), `facts_source`, `observation_fingerprint`, the one `candidate`, its `binding`, and a fixed `reason`. No frame. Written before action execution. |
 | `outcome` | Same `seq`, verdict, game response, `timing.since_send_s`, `observation_after` (kind/fingerprint/facts), and detail. |
 | `strategic_update` | Revision/snapshot ID/change reasons, status, whether a model was called, diagnostic, assessment, applicability, call metadata, and attempts. |
-| `event` | Session start and `combat_finished` with observed HP change, turns, and agent potion-use notes. |
-| `error` | Such as ambiguous response, invalid strategic snapshot, or unexpected exception. |
+| `event` | Session start and `combat_finished` with observed HP change, turns, and agent potion-use notes. Delegated fights add `autobattle_started`, `autobattle_finished`, `autobattle_offer_hold`, `autobattle_offer`, and, when the interface pauses a fight, `autobattle_paused` and `autobattle_resumed`. Model-call progress is recorded as `model_call_started`, `model_call_waiting`, `model_call_finished`, and the retry events. Multi-step choices add `rest_plan_step`, `shop_plan_step`, and `reward_batch_step` for each later step. Same-run resume adds `run_state_restored` or `run_state_not_restored` with the reason. |
+| `error` | Such as ambiguous response, invalid strategic snapshot, `run_state_save_failed`, or unexpected exception. |
 | `session_end` | Final session summary. |
 
 The saved `frame` uses `sts2-decision-frame-1` and contains its ID, run identity,
@@ -85,24 +90,37 @@ facts, candidates, private `bindings`, limitations, assessment, previous turn
 intent, history, and optional `decision_support`. Bindings contain executable
 payloads and resolution modes; the public LLM message omits them and labels facts
 as `current_facts`. Frames carry at most eight recent encounter history entries.
-The current decision prompt version is `decision-prompt-18`. `prompt_modules`
+The current decision prompt version is `decision-prompt-20`. `prompt_modules`
 names the instruction modules assembled for that screen.
 
+Every current `llm_decision` has `decision_source: llm`. Traces written before
+the per-action combat search was removed can also carry a `search` object,
+`decision_source: spire_mentor_search`, provenance `search_generated`, and
+`combat_search_decisions`/`combat_search_misses` in the session summary. Current
+sessions write none of these; replay ignores them.
+
 A successful recorded choice has `action_id`, `reason`, `turn_intent`,
-`route_plan` (null or the optional map-only plan), and `shop_plan` (null or the
-ordered shop actions). Plans have `path_id`, `plan`,
+`route_plan` (null or the optional map-only plan), `shop_plan` (null or the
+ordered shop actions), and `rest_option` (null or the campfire option ID chosen
+together with travel to a campfire). Route plans have `path_id`, `plan`,
 and `change_course_if`; supplied path IDs must be compatible with the chosen
 map action. The coordinator keeps additional plan state/trajectory in memory;
 that internal state is not the choice object. Applicable route-plan status and
 triggers reappear inside later map support.
 
 Attempt records hold bounded response text (up to 8 KiB for decisions), a
-validation error, and provider call usage/stop reason/request ID/latency when
-available. An attempt that was a what-if tool request also has `tool_call` with
+validation error, `retry_kind` (`provider`, `corrective`, or null), and provider
+call usage/stop reason/request ID/latency when available. An attempt that was a what-if tool request also has `tool_call` with
 the parsed `request` and the computed `result`; a failed provider call that was
 retried is an attempt with an error and no response text. Strategic attempts have their separate 16 KiB text bound. No private
-reasoning transcript is requested; DeepSeek `reasoning_content` is discarded.
+reasoning transcript is stored. DeepSeek `reasoning_content` is discarded, or,
+in a session started from the interface, shown in its Thinking panel and then
+discarded; it never reaches a trace record.
 Reasons and conditional plans are the contracted public explanation.
+
+The same-run resume file under `traces/run_state/` now also keeps `visited` and
+`current` inside `map_memory`. They exist for the interface's map drawing; route
+logic does not read them.
 
 ### Advisory evidence and prompt reduction
 
@@ -113,7 +131,8 @@ provenance where available; it is not an observed game fact. See
 [EXPERT_STATS.md](EXPERT_STATS.md).
 
 Support participates in the full frame hash. Absent support is omitted from
-serialization to preserve older frame hashes. Size reduction changes the
+serialization to preserve older frame hashes. Size reduction happens only when
+`[llm].max_input_bytes` is set; there is no cap by default. It changes the
 serialized user message, not the full saved frame or its ID:
 
 | `support_trim` | Meaning |
@@ -125,8 +144,8 @@ serialized user message, not the full saved frame or its ID:
 
 `history_dropped` counts oldest encounter history entries removed. Reduction
 order is support detail, community advice, oldest history, then all support.
-Facts and candidates are never removed. If essential context still exceeds
-`[llm].max_input_bytes`, the decision fails without execution. The saved frame
+Facts and candidates are never removed. If essential context still exceeds a
+configured `[llm].max_input_bytes`, the decision fails without execution. The saved frame
 can therefore be larger than the actual prompt; the trace records reduction
 metadata rather than a separate exact copy of every decision prompt.
 
@@ -143,7 +162,8 @@ metadata rather than a separate exact copy of every decision prompt.
 | `ambiguous_inferred_executed` | Delivery uncertain but subsequent state change was observed; request is never resent. |
 | `ambiguous_unresolved` | Delivery uncertain without sufficient observed resolution; stop, never resend. |
 | `not_delivered` | Request known not delivered. |
-| `not_sent_validation_read_failed`, `not_sent_deadline` | Validation read failed or deadline reached before POST. |
+| `not_sent_validation_read_failed`, `not_sent_action_limit` | Validation read failed, or a configured action limit was reached before POST. Older traces can carry `not_sent_deadline` from the removed session time limit. |
+| `rest_plan_stopped_state_changed`, `rest_plan_stopped_unavailable`, `shop_plan_stopped_state_changed`, `shop_plan_stopped_unavailable`, `batch_stopped_state_changed`, `batch_stopped_unavailable` | The next step of a multi-step choice was not sent because the screen, resources, or the planned action changed; the screen is decided again. |
 | `interrupted_during_send` | Interrupted while request was in flight; outcome unknown. |
 
 An inferred execution is an observation-based conclusion, not proof of every
@@ -195,8 +215,9 @@ checks that the selected action was offered, and parses the final recorded model
 response under the frame contract (including map-plan validation). It compares
 the parsed **action ID** with `choice.action_id`; it does not separately compare
 the saved reason, intent, or route-plan text with the parsed response. A recorded
-failure with no choice must have an `error_kind`. Strategic-update records and
-execution outcomes are not regenerated or independently verified by this replay.
+failure with no choice must have an `error_kind`. Strategic-update records,
+`automatic_decision` records, and execution outcomes are not regenerated or
+independently verified by this replay.
 
 For baseline records, replay recomputes the observation fingerprint, rebuilds
 candidate IDs with recorded blocked actions removed, and reruns the deterministic

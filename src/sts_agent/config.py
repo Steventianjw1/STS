@@ -31,6 +31,9 @@ class LLMConfig:
     provider_retries: int | None = None    # None retries recoverable model failures until recovery or interruption
     corrective_retries: int | None = None # None keeps requesting a valid action without ending the run
     deepseek_reasoning_effort: str | None = "medium"  # DeepSeek maps medium to high; None uses its default
+    # The strategic planner's own effort ("same" follows the line above). The planner is about half of all
+    # model time and most of that is reasoning tokens; "low" measured roughly a third faster per call.
+    deepseek_strategy_reasoning_effort: str | None = "same"
     max_calls_per_run: int | None = None
     max_input_tokens_per_run: int | None = None
     max_output_tokens_per_run: int | None = None
@@ -70,21 +73,27 @@ class ExpertStatsConfig:
     elite_readiness_enabled: bool = True   # elite threats vs. observed deck (needs the patched mod's deck)
     elite_block_attack_pct: float = 20.0   # block gap: elite attack turn >= this % of max HP (or Strength gain)
     elite_trigger_steps: int = 3           # re-plan trigger: planned elite this close while gaps remain
+    boss_readiness_enabled: bool = True    # card/shop screens: the act boss's deck demands vs. the deck, fight stats, builds
     ancient_advisor_enabled: bool = True   # ancient screens: relic effects vs. deck/state + offer-conditioned stats
 
 
 @dataclass
-class CombatSearchConfig:
-    enabled: bool = False                  # combat actions from the Spire Mentor advisor; LLM on any miss
-    autobattle: bool = False               # Mentor executes whole fights; no LLM combat fallback
-    offer_handoff: bool = True             # autobattle only: Mentor holds in-fight card offers; the LLM decides the
-                                           # ones an enemy opens, Mentor's own pick answers the rest
-    control_url: str = "http://127.0.0.1:8079"   # the advisor's localhost control plane
-    advisor_log_dir: str | None = None     # folder of advisor-*.jsonl; None = derive from the advisor's /status
-    advice_timeout_s: float = 30.0         # wait per decision for a matching board and its advice
-    poll_interval_s: float = 0.2
-    request_timeout_s: float = 2.0
-    cooldown_s: float = 120.0              # pause the search this long after 3 consecutive timeouts
+class AutobattleConfig:
+    enabled: bool = False                  # Spire Mentor's native Autobattle plays whole fights; no LLM combat fallback
+    offer_handoff: bool = True             # Mentor holds in-fight card offers; the LLM decides the ones an enemy
+                                           # opens, Mentor's own pick answers the rest
+    pilot: bool = False                    # the agent's own per-fight combat search decides inside Mentor's advisor
+    pilot_source: str = "data/mentor_source"   # Mentor's advisor source (tools/fetch_mentor_source.py)
+
+
+@dataclass
+class UiConfig:
+    game_fraction: float = 0.70            # share of the screen's width and height given to the game window
+    port: int = 0                          # localhost port of the interface; 0 picks a free one
+    browser: str | None = None             # path of a Chromium browser (Edge/Chrome); None = find one
+    live_thinking: bool = True             # stream the model's reasoning into the Thinking panel (DeepSeek)
+    place_game_window: bool = True         # tiled layout only: move/resize the game window on launch
+    single_window: bool = True             # game and panels in one window (Spire Mentor's frame host)
 
 
 @dataclass
@@ -102,7 +111,8 @@ class Config:
     limits: Limits = field(default_factory=Limits)
     llm: LLMConfig = field(default_factory=LLMConfig)
     expert_stats: ExpertStatsConfig = field(default_factory=ExpertStatsConfig)
-    combat_search: CombatSearchConfig = field(default_factory=CombatSearchConfig)
+    autobattle: AutobattleConfig = field(default_factory=AutobattleConfig)
+    ui: UiConfig = field(default_factory=UiConfig)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -126,7 +136,7 @@ _SECRET_KEYS = {"api_key", "anthropic_api_key", "openai_api_key", "deepseek_api_
 
 def _apply(cfg: Config, data: dict, p: Path) -> None:
     tables = {"limits": cfg.limits, "llm": cfg.llm, "expert_stats": cfg.expert_stats,
-              "combat_search": cfg.combat_search}
+              "autobattle": cfg.autobattle, "ui": cfg.ui}
     top = {f.name for f in fields(Config)} - set(tables)
     for k, v in data.items():
         if k in tables:
