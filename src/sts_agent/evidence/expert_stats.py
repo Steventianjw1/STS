@@ -428,7 +428,7 @@ class ExpertDecisionStats:
                 and self.config.ancient_advisor_enabled):
             if not self.config.enabled:
                 return None
-            support = self._ancient_view(view, deadline=deadline)
+            support = self._ancient_view(view, deadline=deadline, route_state=route_state)
             self._add_upgrade_evidence(view, support, deadline=deadline)
             return support
         if self.config.enabled and (view.kind == "rest_site" or
@@ -812,7 +812,7 @@ class ExpertDecisionStats:
             result["offered_cards"] = offered_answers(offered, cards, bosses)
         return result
 
-    def _ancient_view(self, view, *, deadline):
+    def _ancient_view(self, view, *, deadline, route_state=None):
         """Ancient offers vs. the observed deck and state, plus Spire Codex expert and community evidence."""
         from .ancient_advisor import (archetype_fit, deck_facts, expert_offer_stats, labels, relic_effects,
                                       state_comparison)
@@ -946,7 +946,8 @@ class ExpertDecisionStats:
             o["archetype_fit"] = archetype_fit(rid, archetypes, deck_ids)
         if amap and map_act:
             self._ancient_map_outlook(support, options, amap, map_act, runs_by_act.get(map_act) or [],
-                                      profiles.get(map_act), view, character, version, deadline=deadline)
+                                      profiles.get(map_act), view, character, version, deadline=deadline,
+                                      route_state=route_state)
         labels([o for o in options if o["relic_id"]])
         support["options"] = options
         if self.config.elite_readiness_enabled:
@@ -963,10 +964,16 @@ class ExpertDecisionStats:
             support["reason"] = "no_matched_relic_options"
         return support
 
-    def _ancient_map_outlook(self, support, options, amap, act_id, runs, profile, view, character, version, *, deadline):
-        """Project this act's map from the current state and from each option's resulting HP/max HP/gold."""
+    def _ancient_map_outlook(self, support, options, amap, act_id, runs, profile, view, character, version, *,
+                             deadline, route_state=None):
+        """Project this act's map from the current state and from each option's resulting HP/max HP/gold.
+
+        The act map is readable at the ancient, so the routes a map screen would list are listed here
+        too (``paths``): the relic and the act's route are chosen in the same decision."""
         from .route_paths import plan_paths
         player = view.facts.get("player") or {}
+        act = (view.facts.get("run") or {}).get("act")
+        outcomes = (route_state or {}).get("outcomes")
         try:
             act_entry, encounters, weak = self._act_context(act_id, deadline)
             risk = self._risk_model(runs, act_id, act_entry, encounters, weak, character, player.get("max_hp"),
@@ -979,10 +986,28 @@ class ExpertDecisionStats:
             ready = self._readiness_for_view(view, act_id, deadline=deadline)
             pool = next((p for p in ready.get("pools") or [] if p["relation"] == "current"), None)
 
-        def project(hp, max_hp, gold):
-            return plan_paths(amap, hp=hp, max_hp=max_hp, gold=gold, risk=risk, profile=profile, candidates=0,
-                              max_routes=self.config.route_max_routes, elite_pool=pool)
-        base = project(player.get("hp"), player.get("max_hp"), player.get("gold"))
+        def project(hp, max_hp, gold, candidates=0):
+            return plan_paths(amap, hp=hp, max_hp=max_hp, gold=gold, risk=risk, profile=profile, candidates=candidates,
+                              max_routes=self.config.route_max_routes, elite_pool=pool, outcomes=outcomes, act=act)
+        base = project(player.get("hp"), player.get("max_hp"), player.get("gold"),
+                       self.config.route_candidates if self.config.route_planning_enabled else 0)
+        if base.get("candidates"):
+            support["paths"] = {
+                "status": "available",
+                "label": "ROUTES FROM THIS ACT'S FIRST ROW TO THE BOSS, as a map screen would list them, projected "
+                         "from the CURRENT HP, max HP and gold, before any option here is taken. They are not "
+                         "actions: the first node is travelled to on the map screen that follows this choice.",
+                "start": base.get("start"), "distinct_routes": base.get("distinct_routes"),
+                "non_dominated": base.get("non_dominated"), "truncated": base.get("truncated"),
+                "simulation": base.get("simulation"), "candidates": base["candidates"],
+                "limitations": [
+                    "Projections use pooled fight losses of other players for this character and act "
+                    "(map_outlook.hp_risk_classes) and independent fights. The offered relics are NOT modeled: no "
+                    "route number includes what a relic does to the deck, the fights, HP or gold.",
+                    "death_risk_* is the share of replays in which sampled fight losses used up the HP: a rough "
+                    "estimate, not a calibrated probability. p10_* is the 10th percentile across replays; HP below "
+                    "0 is kept and means the path fell short by that much.",
+                    "selected_for labels say what a path is best at; there is no combined score. Python never chooses."]}
         bosses = [{"id": b.get("id"), "name": b.get("name")} for b in amap.get("bosses") or [] if isinstance(b, dict)]
         support["map_outlook"] = {
             "status": base.get("status"), "reason": base.get("reason"), "act_id": act_id, "bosses": bosses,
@@ -1156,8 +1181,14 @@ class ExpertDecisionStats:
         here = tuple(c for c in [(details.get("current_position") or {}).get("col"),
                                  (details.get("current_position") or {}).get("row")])
         coords = [tuple(c) for c in (plan or {}).get("coords") or []]
-        previous = ([list(c) for c in coords[coords.index(here) + 1:]] if plan and plan["act"] == view.facts["run"].get("act")
-                    and here in coords else None)
+        previous = None
+        if plan and plan["act"] == view.facts["run"].get("act") and coords:
+            if here in coords:
+                previous = [list(c) for c in coords[coords.index(here) + 1:]]
+            elif here == tuple(plan.get("start") or ()):
+                # Still where the plan was made (a plan chosen with the ancient's relic starts here):
+                # the whole planned route lies ahead and is listed as the previous plan.
+                previous = [list(c) for c in coords]
         pool = None
         if self.config.elite_readiness_enabled:
             support["elite_readiness"] = self._readiness_for_view(view, act_id, deadline=deadline)

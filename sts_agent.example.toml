@@ -45,14 +45,26 @@ max_total_rejections = 10
 # max_run_actions = 3000           # optional explicit run action cap; omitted = unlimited
 
 [llm]
-provider = "deepseek"              # or "anthropic" for the original Claude adapter
-# Set DEEPSEEK_MODEL in .env, or set model here. No model is assumed.
+provider = "deepseek"              # or "anthropic" ("claude" means the same). The interface's model
+                                   # selector writes its choice here; --provider overrides it for one launch.
+# Model of the provider named above. Unset: DEEPSEEK_MODEL from .env for DeepSeek, anthropic_model for Claude.
 # model = "<model id>"
 # Set DEEPSEEK_API_KEY in .env. DEEPSEEK_BASE_URL optionally overrides https://api.deepseek.com.
-# For anthropic, use ANTHROPIC_API_KEY instead. Never put credentials here.
-# max_output_tokens = 16384        # optional override; DeepSeek default uses the provider limit
+# For Claude, put a Claude Console key (platform.claude.com) in .env as ANTHROPIC_API_KEY.
+# Never put credentials here.
+anthropic_model = "claude-opus-5-5"  # the model the Claude option calls
+anthropic_effort = "medium"          # low, medium, high, xhigh, or max: how much Claude thinks per call
+# max_output_tokens = 16384        # optional override; DeepSeek default uses the provider limit,
+                                   # Claude's is 64000 (thinking counts toward it)
 timeout_s = 60.0                   # SDK timeout per connect and per wait for data; a call that keeps
                                    # receiving bytes can run longer. SDK retries are disabled.
+# Streamed calls (the interface streams them): a call that sends no reasoning or answer text for this long
+# is ended as a timeout, also when the connection stays alive. A decision is then asked again; a strategy
+# update is skipped until the next one. 0 = no limit. For Claude the limits apply while its reasoning
+# summary is streamed ([ui] live_thinking).
+stream_idle_timeout_s = 60.0          # after the first text has arrived
+stream_first_token_timeout_s = 180.0  # DeepSeek, before the first text; long, because DeepSeek may queue a request
+anthropic_stream_first_token_timeout_s = 40.0   # Claude, before the first text (normally 1-17 s)
 # provider_retries = 2             # optional cap; omitted = retry recoverable model failures
 # corrective_retries = 1           # optional cap; omitted = keep requesting a valid action
 deepseek_reasoning_effort = "medium" # none, low, medium (served as high), high, or max

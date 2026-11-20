@@ -1,11 +1,13 @@
-"""Load only the three supported DeepSeek settings from a local .env file.
+"""Load only the supported model-provider settings from a local .env file: the three
+DeepSeek ones, the Claude Console key and, for a key not tied to one workspace, its workspace ID.
 
 No execution, interpolation, or export to traces; real environment values win.
+Loading again is safe: a value added to the file since is picked up, nothing set is replaced.
 """
 import os
 from pathlib import Path
 
-ENV_NAMES = {"DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL"}
+ENV_NAMES = {"DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_WORKSPACE_ID"}
 
 
 def load_env(path: str | Path = ".env") -> None:

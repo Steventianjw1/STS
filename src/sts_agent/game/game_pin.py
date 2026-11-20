@@ -86,14 +86,21 @@ def _pick_exe(paths) -> Path | None:
     return paths[0] if len(paths) == 1 else None
 
 
+def install_of(exe) -> Path | None:
+    """The game install an executable was started from; None when it is not inside one."""
+    for folder in list(Path(exe).parents)[:3]:
+        if (folder / RELEASE_INFO).is_file():
+            return folder
+    return None
+
+
 def running_games() -> list[tuple[Path, Path | None]]:
     """(install folder, executable) for every running process started from a game install."""
     folders: dict[Path, list[Path]] = {}
     for exe in map(Path, _process_executables()):
-        for folder in list(exe.parents)[:3]:
-            if (folder / RELEASE_INFO).is_file():
-                folders.setdefault(folder, []).append(exe)
-                break
+        folder = install_of(exe)
+        if folder is not None:
+            folders.setdefault(folder, []).append(exe)
     return [(folder, _pick_exe(sorted(set(exes)))) for folder, exes in folders.items()]
 
 

@@ -55,6 +55,8 @@ button:disabled{opacity:.38;cursor:default}
 button.primary{background:#2a2414;border-color:#6d5722;color:var(--gold)}
 button.primary:hover:not(:disabled){background:#352d18;border-color:#8f7330}
 button.danger:not(:disabled){color:#f08a80}
+button.armed:not(:disabled){background:#3a1c19;border-color:#a8483f;color:#f3a59d}
+button[hidden]{display:none}
 button svg{width:13px;height:13px;fill:currentColor;flex:none}
 select{background:var(--raise);border:1px solid var(--line);border-radius:7px;padding:5px 6px;min-height:32px}
 .newrun{display:flex;gap:5px;align-items:center}
@@ -95,7 +97,10 @@ select{background:var(--raise);border:1px solid var(--line);border-radius:7px;pa
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .panel>header{display:flex;align-items:center;gap:8px;padding:6px 11px;border-bottom:1px solid var(--line)}
 .panel>header .label{color:var(--gold)}
-.panel>header .right{margin-left:auto;color:var(--muted);font-size:12px}
+.panel>header .right{margin-left:auto;color:var(--muted);font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.panel>header .modelpick{margin-left:auto;min-height:24px;padding:1px 4px;font-size:12px;flex:none}
+.panel>header .modelpick+.right{margin-left:0}
+.panel>header .label{flex:none}
 .p-map{flex:0 0 33%}.p-status{flex:0 0 auto}.p-think{flex:1 1 0}
 .mapbody{flex:1;display:grid;grid-template-columns:44% minmax(0,1fr);grid-template-rows:minmax(0,1fr);min-height:0}
 .mapbody svg{width:100%;height:100%;min-height:0;display:block;padding:4px}
@@ -201,7 +206,8 @@ function buildControls() {
   const asc = el("select"); asc.id = "ascension"; asc.title = "Ascension for a new run";
   for (let i = 0; i <= 10; i++) { const o = el("option", null, "A" + i); o.value = i; asc.append(o); }
   asc.value = "10";
-  newrun.append(ch, asc, button("b-new", "New run", "plus"));
+  const cancel = button("b-cancel", "Cancel", "stop"); cancel.hidden = true;
+  newrun.append(ch, asc, button("b-new", "New run", "plus"), cancel);
   const sep = () => el("span", "sep");
   btns.append(button("b-continue", "Continue run", "play", "primary"), newrun, sep(),
     button("b-pause", "Pause", "pause"), button("b-step", "Step", "step"), button("b-stop", "Stop", "stop", "danger"),
@@ -246,6 +252,8 @@ function buildSide() {
   body.append(svg, plan); map.append(body);
 
   const status = panelBox("p-status", "Current step", "sessmeta");
+  const prov = el("select", "modelpick"); prov.id = "provider"; prov.title = "Model that plays the next run";
+  status.firstChild.insertBefore(prov, $("sessmeta") || status.firstChild.lastChild);
   const sb = el("div", "statusbody");
   const line = el("div", "stepline");
   const phase = el("span", "phase", "Idle"); phase.id = "phase";
@@ -318,13 +326,28 @@ async function send(cmd, extra) {
   } catch (e) { toast("The interface is not answering", true); }
   if (HOST) HOST.postMessage({type: "focus_game"});   // keys go to the game again, not to the pressed button
 }
+// "New run" asks in the bar itself: a browser dialog would open behind the game window, where it cannot be answered.
+// The first press turns the button into the confirmation (the two selectors make room for it); the second starts.
+let armTimer = 0;
+function armNew(on) {
+  clearTimeout(armTimer);
+  const b = $("b-new"), who = $("character").selectedOptions[0];
+  b.classList.toggle("armed", on);
+  b.lastChild.textContent = on ? "Abandon run, start " + (who ? who.textContent : "new") + " A" + $("ascension").value : "New run";
+  b.title = on ? "Starts the new run. The run open in the game is abandoned." : "";
+  $("character").hidden = $("ascension").hidden = on;
+  $("b-cancel").hidden = !on;
+  if (on) armTimer = setTimeout(() => armNew(false), 10000);
+}
+if ($("provider")) $("provider").onchange = () => send("provider", {provider: $("provider").value});
 if ($("b-continue")) {
   $("b-continue").onclick = () => send("continue");
   $("b-new").onclick = () => {
-    const who = $("character").selectedOptions[0], asc = $("ascension").value;
-    if (confirm("Start a new " + (who ? who.textContent : "") + " run at ascension " + asc +
-        "?\n\nThe run that is open in the game will be abandoned.")) send("new_run", {character: $("character").value, ascension: asc});
+    if (!$("b-new").classList.contains("armed")) return armNew(true);
+    armNew(false);
+    send("new_run", {character: $("character").value, ascension: $("ascension").value});
   };
+  $("b-cancel").onclick = () => armNew(false);
   $("b-pause").onclick = () => send(S && S.control.paused ? "resume" : "pause");
   $("b-step").onclick = () => send("step");
   $("b-stop").onclick = () => send("stop");
@@ -354,6 +377,7 @@ function renderControls(s) {
   const active = ["starting", "running", "pausing", "paused"].includes(st), stopping = st === "stopping";
   $("b-continue").disabled = active || stopping; $("b-new").disabled = active || stopping;
   $("character").disabled = $("ascension").disabled = active || stopping;
+  if ((active || stopping) && $("b-new").classList.contains("armed")) armNew(false);
   const pb = $("b-pause"), paused = s.control.paused;
   pb.disabled = !active; pb.lastChild.textContent = paused ? "Resume" : "Pause";
   pb.firstChild.firstChild.setAttribute("d", paused ? ICON.play : ICON.pause);
@@ -461,7 +485,7 @@ function renderRoute(route) {
   const svg = $("mapsvg"), plan = $("plan");
   svg.replaceChildren(); plan.replaceChildren();
   if (!route || !(route.nodes || []).length) {
-    plan.append(el("p", "muted", "No map seen yet. The plan appears after the first map screen of the act."));
+    plan.append(el("p", "muted", "No map seen yet. The map and the route plan appear on the act's opening screen."));
     $("mapmeta").textContent = "";
     return;
   }
@@ -526,8 +550,17 @@ function renderStatus(s) {
   phase.className = "phase " + (ph === "paused" ? "paused" : ph === "autobattle" ? "autobattle" : ph === "error" ? "error" :
     ["idle", "stopped"].includes(ph) ? "" : "busy");
   $("stepdetail").textContent = st.detail || s.session.detail || "";
-  $("sessmeta").textContent = (s.info.provider ? s.info.provider + ":" + (s.info.model || "no model") : "") +
+  // The model selector: which provider plays the next run. Fixed while a session runs (it holds its model).
+  const prov = $("provider");
+  if (!prov.options.length) for (const p of s.info.providers || []) {
+    const o = el("option", null, p.label); o.value = p.id; prov.append(o);
+  }
+  prov.disabled = ["starting", "running", "pausing", "paused", "stopping"].includes(s.session.state);
+  if (document.activeElement !== prov && s.info.provider) prov.value = s.info.provider;
+  $("sessmeta").textContent = (s.info.provider ? (s.info.model || "no model") +
+    (s.info.effort ? " · " + s.info.effort : "") : "") +
     (s.session.state === "pausing" ? " · pausing after this step" : "");
+  $("sessmeta").title = $("sessmeta").textContent;
   const signature = JSON.stringify(s.health);
   if (signature !== healthShown) {   // rebuilt only when a status changed, not on every thinking update
     healthShown = signature;

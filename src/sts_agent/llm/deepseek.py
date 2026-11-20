@@ -14,6 +14,14 @@ a plain response is. If the endpoint rejects a streamed request, the model goes
 back to plain calls for the rest of the session. Reasoning text is handed to the
 listener only; it is never returned, stored or traced.
 
+A streamed call is watched (``stream_guard.py``), because the SDK timeout does not
+end a response that stays connected and sends no text: the call ends with kind
+``timeout`` when no reasoning or answer text arrives for ``stream_idle_timeout_s``
+(``stream_first_token_timeout_s`` before the first text, where DeepSeek may hold a
+request in its queue), and with kind ``interrupted`` when ``should_stop`` (set by
+the interface) reports a requested stop. A stop hook alone also makes calls
+streamed, so Stop works when the reasoning is not shown. Plain calls are not watched.
+
 Where the time of a call goes is recorded per call (``CallRecord``): input tokens
 DeepSeek read from its prompt-prefix cache, output tokens spent on reasoning, and
 for streamed calls the wait for the first text. The cache needs no request
@@ -32,6 +40,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from .base import CallRecord, ProviderConfigError, ProviderError, UsageBudget
+from .stream_guard import StreamEnded, StreamGuard
 
 API_KEY_ENV = "DEEPSEEK_API_KEY"
 # "none" switches thinking off for the call. DeepSeek has no distinct medium tier and serves it as high.
@@ -72,6 +81,8 @@ class DeepSeekTextModel:
     def __init__(self, model: str | None, *, max_output_tokens: int | None = None,
                  timeout_s: float = 60.0, budget: UsageBudget | None = None,
                  reasoning_effort: str | None = None,
+                 stream_idle_timeout_s: float | None = 60.0,
+                 stream_first_token_timeout_s: float | None = 180.0,
                  client: Any = None, clock: Callable[[], float] = time.monotonic):
         if not isinstance(model, str) or not model.strip():
             raise ProviderConfigError("set DEEPSEEK_MODEL in .env, [llm] model, or --model")
@@ -85,6 +96,11 @@ class DeepSeekTextModel:
         self.last_call: CallRecord | None = None
         # callable(kind, text) with kind "reasoning" or "answer"; set by the interface, None otherwise.
         self.stream_listener: Callable[[str, str], None] | None = None
+        # Streamed calls only: seconds without text before the call is ended; None or 0 = no limit.
+        self.stream_idle_timeout_s = stream_idle_timeout_s
+        self.stream_first_token_timeout_s = stream_first_token_timeout_s
+        # Set by the interface: True once a stop was requested, which ends a streamed call in flight.
+        self.should_stop: Callable[[], bool] | None = None
         self._stream_unsupported = False
         if client is None:
             key = os.environ.get(API_KEY_ENV)
@@ -108,10 +124,13 @@ class DeepSeekTextModel:
                 **({"requested_reasoning_effort": self.requested_reasoning_effort}
                    if self.requested_reasoning_effort is not None else {}),
                 "sdk_retries": 0, "scripted": False,
-                **({"streamed": True} if self._streaming() else {})}
+                **({"streamed": True, "stream_idle_timeout_s": self.stream_idle_timeout_s,
+                    "stream_first_token_timeout_s": self.stream_first_token_timeout_s}
+                   if self._streaming() else {})}
 
     def _streaming(self) -> bool:
-        return self.stream_listener is not None and not self._stream_unsupported
+        return ((self.stream_listener is not None or self.should_stop is not None)
+                and not self._stream_unsupported)
 
     def _tell(self, kind: str, text) -> None:
         if self.stream_listener is not None and isinstance(text, str) and text:
@@ -122,41 +141,52 @@ class DeepSeekTextModel:
 
     def _stream(self, request: dict, start: float):
         """Run one streamed request and return it in the shape of a plain response."""
-        try:
-            stream = self._client.chat.completions.create(stream=True, stream_options={"include_usage": True},
-                                                          **request)
-        except Exception as exc:
-            if getattr(exc, "status_code", None) in (400, 404, 422):
-                raise _StreamUnsupported() from None   # the request shape, not the provider, is the problem
-            raise
         parts, finish, usage, tools, first = [], None, None, False, None
-        try:
-            for chunk in stream:
-                usage = getattr(chunk, "usage", None) or usage
-                for choice in getattr(chunk, "choices", None) or []:
-                    if getattr(choice, "index", 0) not in (0, None):
-                        raise _StreamUnsupported()
-                    delta = getattr(choice, "delta", None)
-                    thought = _extra(delta, "reasoning_content")
-                    piece = getattr(delta, "content", None)
-                    if first is None and ((isinstance(thought, str) and thought) or (isinstance(piece, str) and piece)):
-                        first = round(self.clock() - start, 3)
-                    self._tell("reasoning", thought)
-                    if isinstance(piece, str) and piece:
-                        parts.append(piece)
-                        self._tell("answer", piece)
-                    tools = tools or bool(getattr(delta, "tool_calls", None))
-                    finish = getattr(choice, "finish_reason", None) or finish
-        finally:
-            close = getattr(stream, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception:
-                    pass
+        with StreamGuard(first_text_s=self.stream_first_token_timeout_s, idle_s=self.stream_idle_timeout_s,
+                         should_stop=self.should_stop) as guard:
+            try:
+                stream = self._client.chat.completions.create(stream=True, stream_options={"include_usage": True},
+                                                              **request)
+            except Exception as exc:
+                if getattr(exc, "status_code", None) in (400, 404, 422):
+                    raise _StreamUnsupported() from None   # the request shape, not the provider, is the problem
+                raise
+            guard.attach(stream)
+            try:
+                for chunk in stream:
+                    usage = getattr(chunk, "usage", None) or usage
+                    for choice in getattr(chunk, "choices", None) or []:
+                        if getattr(choice, "index", 0) not in (0, None):
+                            raise _StreamUnsupported()
+                        delta = getattr(choice, "delta", None)
+                        thought = _extra(delta, "reasoning_content")
+                        piece = getattr(delta, "content", None)
+                        if (isinstance(thought, str) and thought) or (isinstance(piece, str) and piece):
+                            guard.text()
+                            if first is None:
+                                first = round(self.clock() - start, 3)
+                        self._tell("reasoning", thought)
+                        if isinstance(piece, str) and piece:
+                            parts.append(piece)
+                            self._tell("answer", piece)
+                        tools = tools or bool(getattr(delta, "tool_calls", None))
+                        finish = getattr(choice, "finish_reason", None) or finish
+            except Exception:
+                if guard.ended is None:
+                    raise   # the stream's own failure; a read the guard cut short is reported below
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        pass
+        if guard.ended is not None:
+            guard.ended.first_token_s, guard.ended.longest_quiet_s = first, guard.longest_quiet_s
+            raise guard.ended
         message = SimpleNamespace(content="".join(parts), refusal=None, tool_calls=tools or None)
         return SimpleNamespace(usage=usage, choices=[SimpleNamespace(finish_reason=finish, message=message)],
-                               _request_id=None, first_token_s=first)
+                               _request_id=None, first_token_s=first, longest_quiet_s=guard.longest_quiet_s)
 
     @staticmethod
     def _reasoning_options(effort: str | None) -> dict:
@@ -188,7 +218,11 @@ class DeepSeekTextModel:
             kind = "timeout" if "Timeout" in type(exc).__name__ else (f"http_{status}" if status else "transport")
             # Never put raw SDK exceptions or response bodies in diagnostics/traces.
             message = f"DeepSeek request failed ({kind})"
+            if isinstance(exc, StreamEnded):   # ended here by the guard, not by the provider or the network
+                kind, message = exc.kind, f"DeepSeek call ended: {exc}"
             self.last_call = CallRecord(round(self.clock() - start, 3), None, None, None, None, message,
+                                        first_token_s=getattr(exc, "first_token_s", None),
+                                        longest_quiet_s=getattr(exc, "longest_quiet_s", None),
                                         reasoning_effort=effort)
             raise ProviderError(kind, message) from None
         usage = getattr(response, "usage", None)
@@ -204,6 +238,7 @@ class DeepSeekTextModel:
                                     getattr(response, "_request_id", None), cache_hit_tokens=cached,
                                     reasoning_tokens=thought,
                                     first_token_s=getattr(response, "first_token_s", None) if streamed else None,
+                                    longest_quiet_s=getattr(response, "longest_quiet_s", None) if streamed else None,
                                     reasoning_effort=effort)
         if stop == "length":
             raise self._fail("truncated", "DeepSeek response truncated; no action selected")

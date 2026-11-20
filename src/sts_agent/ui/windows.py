@@ -58,6 +58,8 @@ if WINDOWS:
     _kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
                                                      ctypes.POINTER(wintypes.DWORD)]
     _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    _kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     _kernel32.GetConsoleWindow.restype = wintypes.HWND
     _user32.EnumChildWindows.argtypes = [wintypes.HWND, _EnumProc, wintypes.LPARAM]
     _user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
@@ -137,7 +139,7 @@ def _windows() -> list[dict]:
     return out
 
 
-def _exe_name(pid: int) -> str:
+def _exe_path(pid: int) -> str:
     handle = _kernel32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
     if not handle:
         return ""
@@ -146,7 +148,31 @@ def _exe_name(pid: int) -> str:
         buffer = ctypes.create_unicode_buffer(size.value)
         if not _kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
             return ""
-        return os.path.basename(buffer.value).lower()
+        return buffer.value
+    finally:
+        _kernel32.CloseHandle(handle)
+
+
+def _exe_name(pid: int) -> str:
+    return os.path.basename(_exe_path(pid)).lower()
+
+
+def window_exe(hwnd) -> str | None:
+    """Full path of the program that owns a window; None when it cannot be read."""
+    if not WINDOWS or not hwnd:
+        return None
+    return _exe_path(window_pid(hwnd)) or None
+
+
+def wait_exit(pid: int, timeout_s: float) -> bool:
+    """True once the process has ended; False when it is still running after ``timeout_s``."""
+    if not WINDOWS:
+        return True
+    handle = _kernel32.OpenProcess(0x00100000, False, pid)   # SYNCHRONIZE
+    if not handle:
+        return True   # nothing to wait for: it is already gone
+    try:
+        return _kernel32.WaitForSingleObject(handle, int(max(0.0, timeout_s) * 1000)) == 0
     finally:
         _kernel32.CloseHandle(handle)
 

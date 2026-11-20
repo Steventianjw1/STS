@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import json
 
-from .models import DecisionFrame
+from .models import DecisionFrame, route_plan_mode
 
-DECISION_PROMPT_VERSION = "decision-prompt-25"
+DECISION_PROMPT_VERSION = "decision-prompt-26"
 DEFAULT_MAX_INPUT_BYTES = None
 DEFAULT_OBJECTIVE = ("Win the run (ordinary victory) with the current character at the current difficulty. "
                      "No extra challenge objectives.")
@@ -88,6 +88,14 @@ What changes from act 1 is how much risk to accept, because these elites hit har
 - Drop to one elite, and to none only in the worst case, when the numbers say so: low HP with no rest site before the elite (the path's death_risk_before_next_rest_pct and p10 HP), this run's own elite and boss fights costing well more than projected (agent_loss_scale, recent_combat_outcomes), or a gap that no room before the elite can fill.
 - A gap or a bad projection calls for fixing the deck or moving the elite later on the route before it calls for removing the elite.
 Say in route_plan how many elites you accept, where the rest sites fall around them, and what would remove or add one."""
+
+_ANCIENT_ROUTE = """\
+CHOOSE THE RELIC AND THE ROUTE TOGETHER. The act map is readable on this screen, before its first map screen. The relic you take decides how hard a route this act can carry, and the map decides what each relic is worth, so settle both in this one decision and return the route as route_plan.
+- Read the map first: decision_support.paths.candidates lists routes from the act's first row to the boss, with the fields a map screen gives (nodes in order, elite_steps and rest_steps counted along that route, next_rest, death_risk_before_next_rest_pct, death_risk_before_boss_pct, expected_boss_arrival_hp_pct, p10 values for the worst tenth of replays, elite_preparation for the rooms before each elite that can fix the deck, selected_for for what the route is best at). map_outlook summarises every route, and each option's route_outlook re-projects the map from that option's HP, max HP and gold. All of these are rough pooled simulations of other players' fights from your current state; none includes what a relic does, so add that yourself.
+- A relic that makes the deck stronger from the first fights (upgraded or better card rewards, a strong card or relic now, energy, draw, damage or Block every fight, a bonus in elite fights) pays for an aggressive route: more elites, an earlier first elite, more fights before a rest site. Take such a relic FOR such a route, and plan the route that cashes it in.
+- A relic whose value arrives late, depends on rooms this map may not give, or costs HP, max HP or deck quality now calls for a reserved route: fewer and later elites, hallway fights and a shop or rest site before the first elite, a rest site close behind it.
+- Read the map the other way round as well: a relic that pays per elite, shop, ? room, rest site or treasure chest is worth what the routes actually contain (paths, map_outlook.route_ranges), and a map that forces an early elite or offers few rest sites raises the value of a relic that makes the early act safer.
+- Choose the pair that gives the best run, not the best relic in isolation. Say in reason which route the relic is taken for. The elite stance for this act, below, says which way to lean when the relic leaves it open; the deck gaps it speaks of are listed here under elite_gaps_by_act and map_outlook.elite_gaps."""
 
 _GRID = """\
 On removal or transform grids prefer the standing plan's removal_targets when they are offered; only offered cards can be chosen, and a card that cannot be removed will not be offered."""
@@ -237,6 +245,9 @@ On this map screen you may add a key "route_plan": {{"path_id": "<a decision_sup
 
 If your chosen immediate destination is a RestSite/campfire, you MUST also include "rest_option": "HEAL" to rest or "rest_option": "SMITH" to upgrade. For another campfire activity, use its stable uppercase game option ID only when supported by observed relic/game text. Omit rest_option for other destinations and for fires farther along your route. Travel and this option execute as ONE decision, even when the fire is the only path: there is no second call to reconsider an unchanged rest-versus-smith choice on arrival. Compare healing against the best upgrade using current HP, deck, standing_plan.upgrade_targets and the rooms AFTER this fire on the chosen path. Do not claim this fire still lies ahead of those rooms. Full option availability is checked on arrival; an unavailable option or changed player facts causes reconsideration there. Smith opens a card picker, where you choose among the actual legal targets."""
 
+_C_ANCIENT_ROUTE = """\
+On this ancient screen you MUST add a key "route_plan": {"path_id": "<a decision_support.paths.candidates path_id, or empty if you plan a route that is not listed>", "plan": "<the route you intend for this act with the relic you chose: the first node, the elites you accept and what the deck must pick up before each, where the rest sites and shops fall, and why this relic supports that route>", "change_course_if": "<observable conditions that would make you change route>"}. It is the act's first route plan. The choice here only takes the relic; you travel to the first node on the map screen that follows, where this plan is shown back to you as your own hypothesis."""
+
 _C_SHOP = """\
 On this shop screen, include a fourth key "shop_plan": ["<first action_id>", "<next action_id>", "proceed"]. This is the complete ordered list of intended actions, with action_id as its first entry and no repeats. Use only offered shop_purchase/proceed ids. Include proceed last to finish shopping, or end with card removal to choose its target in the picker. If saving all gold, use action_id="proceed" and shop_plan=["proceed"]. Purchases execute sequentially with state checks between them, without another model call unless the plan stops. Omission retains single-action behavior for compatibility."""
 
@@ -250,12 +261,14 @@ _MODULES = {
     "core": _CORE, "noncombat": _NONCOMBAT, "autobattle_pilot": _AUTOBATTLE,
     "combat_state": _COMBAT_STATE, "combat_play": _COMBAT_PLAY,
     "fight_picker": _FIGHT_PICKER, "card_reward": _CARD_REWARD, "shop": _SHOP, "map": _MAP, "rest": _REST,
-    "grid": _GRID, "elite_stance_act1": _ELITE_ACT1, "elite_stance_later": _ELITE_LATER,
+    "grid": _GRID, "ancient_route": _ANCIENT_ROUTE,
+    "elite_stance_act1": _ELITE_ACT1, "elite_stance_later": _ELITE_LATER,
     "evidence_profile": _E_PROFILE, "evidence_duplicate": _E_DUPLICATE,
     "evidence_upgrade_pick": _E_UPGRADE_PICK, "evidence_upgrade_choice": _E_UPGRADE_CHOICE,
     "evidence_elite_pick": _E_ELITE_PICK, "evidence_boss_pick": _E_BOSS_PICK, "evidence_map": _E_MAP,
     "evidence_ancient": _E_ANCIENT,
-    "contract": _C_BASE, "contract_map": _C_MAP, "contract_shop": _C_SHOP, "contract_rewards": _C_REWARDS,
+    "contract": _C_BASE, "contract_map": _C_MAP, "contract_ancient_route": _C_ANCIENT_ROUTE,
+    "contract_shop": _C_SHOP, "contract_rewards": _C_REWARDS,
     "contract_tools": _C_TOOLS,
 }
 
@@ -288,15 +301,21 @@ def prompt_modules(frame: DecisionFrame, *, tools: bool = False) -> list[str]:
         body = ("noncombat", "evidence_ancient", "evidence_upgrade_choice")
     else:
         body = _BY_KIND.get(kind, _DEFAULT)
+    # An ancient whose act map came with route candidates: its relic and the act's route are one decision.
+    plans_route = route_plan_mode(frame) == "required"
+    if plans_route:
+        body = (*body, "ancient_route")
     if screen.get("combat_pilot") and not screen.get("during_combat") and "noncombat" in body:
         body = ("noncombat", "autobattle_pilot", *body[1:])   # right after the plan rules it qualifies
     act = (frame.facts.get("run") or {}).get("act")
-    if kind in _ELITE_STANCE_KINDS and not screen.get("during_combat") and type(act) is int:
+    if (kind in _ELITE_STANCE_KINDS or plans_route) and not screen.get("during_combat") and type(act) is int:
         # last, after the evidence notes that define the fields it names; an unknown act gets neither stance
         body = (*body, "elite_stance_act1" if act == 1 else "elite_stance_later")
     names = ["core", *body, "contract"]
     if kind in _CONTRACT_BY_KIND and not screen.get("during_combat"):
         names.append(_CONTRACT_BY_KIND[kind])
+    if plans_route:
+        names.append("contract_ancient_route")
     if tools:
         names.append("contract_tools")
     return names

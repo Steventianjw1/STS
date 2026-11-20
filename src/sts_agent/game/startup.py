@@ -145,7 +145,12 @@ class RunStartup:
                         abandoning_saved = False
                         raw = self._menu(raw, "singleplayer")
                     else:
-                        raise StartupError("Main menu has no enabled singleplayer option.")
+                        # A game that has just started reports its main menu before the buttons are
+                        # enabled. Wait for them instead of giving up on the first look.
+                        raw = self._wait(self.client.get_state,
+                                         lambda s: s.get("state_type") != "menu" or s.get("menu_screen") != "main"
+                                         or bool({"abandon_run", "singleplayer"} & _options(s)),
+                                         "waiting for the main menu's singleplayer option")
                 elif menu == "singleplayer" and "standard" in options:
                     raw = self._menu(raw, "standard")
                 elif menu == "tutorial_prompt" and "no" in options:

@@ -86,6 +86,7 @@ class CallRecord:
     cache_hit_tokens: int | None = None    # input tokens read from the provider's prompt-prefix cache
     reasoning_tokens: int | None = None    # part of output_tokens spent on reasoning
     first_token_s: float | None = None     # streamed calls: seconds until the first reasoning or answer text
+    longest_quiet_s: float | None = None   # streamed calls: longest wait for more text after the first
     reasoning_effort: str | None = None    # effort this call was sent with
 
     def to_dict(self) -> dict:

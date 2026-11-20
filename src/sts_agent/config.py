@@ -1,6 +1,8 @@
 """Configuration: defaults < TOML file < command-line flags."""
 from __future__ import annotations
 
+import json
+import re
 import tomllib
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
@@ -24,10 +26,20 @@ class Limits:
 
 @dataclass
 class LLMConfig:
-    provider: str = "deepseek"
-    model: str | None = None               # REQUIRED for policy="llm"; no default model is assumed
+    provider: str = "deepseek"             # "deepseek" or "anthropic" ("claude" means the same); the interface's
+                                           # model selector writes its choice here
+    model: str | None = None               # model of the provider named above; unset = DEEPSEEK_MODEL for
+                                           # DeepSeek, anthropic_model for Claude
+    anthropic_model: str = "claude-opus-5-5"   # the model the Claude option calls
+    anthropic_effort: str | None = "medium"    # Claude effort: low, medium, high, xhigh or max; None = its default
     max_output_tokens: int | None = None   # omit DeepSeek max_tokens; use the provider's output limit
     timeout_s: float = 60.0                # SDK timeout: per connect and per wait for data, not a whole-call cap
+    # Streamed calls: end a call (kind "timeout") when no reasoning or answer text arrives for this long. The
+    # SDK timeout does not notice a connection that stays alive without sending text. 0 = no limit. For Claude
+    # the limits apply while its reasoning summary is streamed (the interface with live_thinking).
+    stream_idle_timeout_s: float = 60.0            # after the first text; healthy streams pause a few seconds at most
+    stream_first_token_timeout_s: float = 180.0    # DeepSeek, before the first text: it may hold a request in its queue
+    anthropic_stream_first_token_timeout_s: float = 40.0   # Claude, before the first text (normally 1-17 s)
     provider_retries: int | None = None    # None retries recoverable model failures until recovery or interruption
     corrective_retries: int | None = None # None keeps requesting a valid action without ending the run
     deepseek_reasoning_effort: str | None = "medium"  # DeepSeek maps medium to high; None uses its default
@@ -157,3 +169,34 @@ def _apply(cfg: Config, data: dict, p: Path) -> None:
             raise ValueError(f"{p}: unknown config key {k!r}")
     if cfg.policy not in ("llm", "baseline"):
         raise ValueError(f"{p}: policy must be 'llm' or 'baseline'")
+
+
+_TABLE = re.compile(r"\s*\[")
+
+
+def save_llm_setting(path: str | Path, key: str, value: str) -> None:
+    """Write ``key = "value"`` into the file's ``[llm]`` table, leaving every other line as written.
+
+    Used by the interface's model selector, so the choice is the one every later command reads.
+    Nothing is written unless the result parses and differs from the file only in that key."""
+    p = Path(path)
+    text = p.read_bytes().decode("utf-8") if p.exists() else ""   # as written, so its line endings are kept
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.splitlines()
+    entry = f"{key} = {json.dumps(value)}"
+    head = next((i for i, line in enumerate(lines) if re.fullmatch(r"\s*\[llm\]\s*(#.*)?", line)), None)
+    if head is None:
+        lines += ([""] if lines and lines[-1].strip() else []) + ["[llm]", entry]
+    else:
+        end = next((i for i in range(head + 1, len(lines)) if _TABLE.match(lines[i])), len(lines))
+        at = next((i for i in range(head + 1, end) if re.match(rf"\s*{re.escape(key)}\s*=", lines[i])), None)
+        if at is None:
+            lines.insert(head + 1, entry)
+        else:
+            lines[at] = entry
+    new = newline.join(lines) + newline
+    want = tomllib.loads(text)
+    want.setdefault("llm", {})[key] = value
+    if tomllib.loads(new) != want:
+        raise ValueError(f"{p}: could not place [llm] {key} safely; set it in the file by hand")
+    p.write_text(new, encoding="utf-8", newline="")

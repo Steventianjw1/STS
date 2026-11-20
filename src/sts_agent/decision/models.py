@@ -148,6 +148,24 @@ class Choice:
     rest_option: str | None = None  # stable campfire option ID, chosen with immediate map travel
 
 
+def route_plan_mode(frame: "DecisionFrame") -> str | None:
+    """Whether this frame's choice carries a route_plan: "optional" on a map screen, "required"
+    at an ancient whose act map came with route candidates, None anywhere else.
+
+    The ancient's relic and the act's route are one decision: the relic decides how hard a route
+    the act can carry, and the route decides what the relic is worth."""
+    screen = frame.screen or {}
+    if screen.get("during_combat"):
+        return None
+    if screen.get("kind") == "map":
+        return "optional"
+    paths = (frame.decision_support or {}).get("paths")
+    if (screen.get("kind") == "event" and (frame.facts.get("screen_details") or {}).get("is_ancient") is True
+            and isinstance(paths, dict) and paths.get("candidates")):
+        return "required"
+    return None
+
+
 def is_rest_destination(candidate: dict | None) -> bool:
     if not candidate or candidate.get("kind") != "choose_map_node":
         return False
@@ -189,7 +207,8 @@ def parse_choice(text: Any, frame: DecisionFrame, *, require_rest_option: bool =
     at_fire = is_map and is_rest_destination(frame.candidate(data.get("action_id")))
     if at_fire and (require_rest_option or "rest_option" in data):
         want = want | {"rest_option"}
-    if is_map and "route_plan" in data:
+    plan_mode = route_plan_mode(frame)
+    if plan_mode == "required" or (plan_mode == "optional" and "route_plan" in data):
         want = want | {"route_plan"}
     if (frame.screen or {}).get("kind") == "shop" and "shop_plan" in data:
         want = want | {"shop_plan"}
@@ -277,7 +296,8 @@ def _route_plan(plan, frame, action_id):
         path = next((p for p in paths if p.get("path_id") == plan["path_id"]), None)
         if path is None:
             raise ChoiceError("route_plan.path_id must be one of decision_support.paths.candidates, or empty")
-        if path.get("first_action_id") != action_id:
+        # A path seen from an ancient has no travel action yet: its first node is chosen on the map that follows.
+        if path.get("first_action_id") not in (None, action_id):
             raise ChoiceError(f"route_plan.path_id starts with {path.get('first_action_id')}, "
                               f"but action_id is {action_id}")
     return plan
