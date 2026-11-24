@@ -26,7 +26,7 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
-from ..evidence import boss_demands, enemy_patterns
+from ..evidence import boss_demands, deck_balance, enemy_patterns
 from ..evidence.potion_odds import drop_state
 from ..game.client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
 from ..config import Limits
@@ -137,6 +137,8 @@ _OPP_KIND = {"select_card_reward": "card_reward", "choose_map_node": "route", "c
              "choose_rest_option": "rest_site", "select_relic": "relic_reward", "claim_treasure_relic": "relic_reward"}
 _REWARD_KIND = {"gold": "gold_reward", "potion": "potion_reward", "relic": "relic_reward", "card": "card_reward",
                 "special_card": "card_reward", "card_removal": "card_removal"}
+# Screens that add, remove or change deck cards: they carry deck_balance and the prompt module that reads it.
+_DECK_CHOICE_KINDS = ("card_reward", "shop", "event", "card_select")
 
 
 class RunCoordinator:
@@ -821,6 +823,12 @@ class RunCoordinator:
                                              "(not a choice on this screen)."),
                         "details": _clip(boss_demands.demand_text(b.get("deck_demands")))})
             extra = extra[:8]
+            state = deck_balance.balance(f.get("deck"))
+            if state:   # not a choice either: what the deck holds too little and too much of
+                extra.insert(0, {"id": "deck_balance", "kind": "other",
+                                 "description": "Balance of the current deck over damage, Block and the scaling of "
+                                                "each (not a choice on this screen).",
+                                 "details": _clip(deck_balance.summary_text(state))})
             items = items[:40 - len(extra)] + extra
             opps = {"items": items[:40]}
         glossary = f.get("keyword_glossary")
@@ -975,6 +983,16 @@ class RunCoordinator:
             support = {**(support or {}), "shop_budget": _shop_packages(v, self.shop_entry["gold"])}
         if boss:   # every screen between fights, the map included
             facts = {**facts, "act_boss": boss}
+        if v.kind in _DECK_CHOICE_KINDS and not v.in_combat and not overlay:
+            state = deck_balance.balance(v.facts.get("deck"))
+            if state:   # the deck as it stands, then what each card offered here would do to it
+                facts = {**facts, "deck_balance": state}
+                offered = deck_balance.offer_effects(state, [
+                    (c["action_id"], c["details"]) for c in cands
+                    if c["kind"] == "select_card_reward"
+                    or (c["kind"] == "shop_purchase" and c["details"].get("category") == "card")])
+                if offered:
+                    facts = {**facts, "deck_balance_offers": offered}
         if self._handoff:
             lims.append("AUTOBATTLE HANDOFF: an enemy's action opened this offer during its turn. Spire Mentor is "
                         "playing this fight and is holding it for this one choice, because it has no fight search for "

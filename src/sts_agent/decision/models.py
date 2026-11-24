@@ -21,8 +21,8 @@ MAX_HISTORY = 8
 FACT_SOURCES = ("observed", "manual", "synthetic")
 # Facts that seldom change from one decision to the next, most durable first. ``public()`` lists
 # them before the rest so consecutive prompts share the longest possible prefix.
-STABLE_FACTS_FIRST = ("act_boss", "relics", "deck", "max_potion_slots", "keyword_glossary", "potions",
-                      "energy_observation")
+STABLE_FACTS_FIRST = ("act_boss", "relics", "deck", "deck_balance", "max_potion_slots", "keyword_glossary",
+                      "potions", "energy_observation")
 
 
 class ChoiceError(ValueError):

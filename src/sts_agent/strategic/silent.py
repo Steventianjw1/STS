@@ -1,6 +1,6 @@
 """The Silent's initial strategy, shared by planning and individual decisions."""
 
-PROMPT_VERSION = "silent-strategic-planner-prompt-1"
+PROMPT_VERSION = "silent-strategic-planner-prompt-2"
 
 DECK_GUIDANCE = """\
 THE SILENT'S DECK. In Act 1, secure immediate damage for hallway fights and reliable Block before loading up on setup. Build stability with Block, well-timed Weak, and enough draw to find the right answers. Count what a draw card can find, what energy remains to play it, and whether a discard outlet and its Sly payoff can be drawn and used together. Treat Sly as a payoff for explicit discard during the turn. Balance draw and discard enablers with Sly payoffs, Block, and enough damage to finish the fight. An opening draw bonus helps turn one; check later hands separately.

@@ -20,7 +20,7 @@ from ..game.characters import is_silent
 from ..strategic import silent
 from .models import DecisionFrame, route_plan_mode
 
-DECISION_PROMPT_VERSION = "decision-prompt-31"
+DECISION_PROMPT_VERSION = "decision-prompt-32"
 DEFAULT_MAX_INPUT_BYTES = None
 MENTOR_PILOT, OWN_PILOT = "spire_mentor_autobattle", "sts_agent_pilot"   # screen.combat_pilot: whose search plays the fights
 DEFAULT_OBJECTIVE = ("Win the run (ordinary victory) with the current character at the current difficulty. "
@@ -81,8 +81,20 @@ In combat, consider sequencing, setup, targets, draw, resource costs, and future
 _FIGHT_PICKER = """\
 This picker opened during a fight that is still in progress and carries combat_context: choose for that fight. A choose-a-card offer here exists only in this fight (a card generated into it, or an effect an enemy forces you to take; screen.autobattle_handoff marks one that Spire Mentor is holding for you), so deck-building value is irrelevant. Judge each option by what it does to the rest of this fight: the enemy's remaining HP and the turns the fight will plausibly still last, your HP and how much Block you can make per turn, your draw and energy, and what the option costs every turn or every time it triggers. For a forced choice between harmful effects, compare their total cost over those remaining turns, including effects that stack if the same one is chosen again, and say which numbers you used."""
 
+_BALANCE = """\
+A BALANCED DECK COMES FIRST. A deck that wins this run has four things at once and not too much of any one: damage, Block, something that makes its damage grow during a fight, and something that makes its Block grow or repeat. Judge every change to the deck (a card reward, a purchase, a card an event or relic adds, a transform, a removal) by what it does to that balance before anything else: ahead of deck_needs, boss demands, elite gaps, pick rates and how strong the card is by itself.
+
+current_facts.deck_balance counts the cards added beyond the starter by rules over their text: damage (Attacks), block (cards that gain Block), damage_scaling (lasting Strength, and Powers or cards that make damage grow or repeat) and block_scaling (Dexterity, Plating, and Powers that gain, keep or multiply Block). status gives each role one word: missing (no card yet) and short (well behind the other of damage and Block) are what the deck needs; over_supplied (damage or Block with at least 4 added cards and 2 more than the other) and full (2 lasting sources of that scaling) are what another card would make worse; balanced and covered need nothing more. lighter_side says whether the damage side (damage plus its scaling) or the block side holds fewer added cards. current_facts.deck_balance_offers (when present) applies this to each card offered here, for the deck as it would be after taking it: roles, fills_short, adds_to_over_supplied, and effect (improves, worsens, mixed or neutral).
+- effect worsens: skip the card, or leave it in the shop. The deck already has that, and one more card of a role it is full of delays the cards of the roles it lacks. A deck_needs entry, a boss demand, an elite gap, a held relic that likes the card or a high pick rate does not change this. The one exception: you can name the fight on the route ahead that this deck loses without the card, and say why the cards already held in that role do not win it.
+- effect improves: these are the candidates to take, ahead of a neutral card of similar quality. It marks a role the deck lacks, not a good card: a card that supplies the role only on paper (a condition this deck does not meet, a Power too slow or too small to matter in the fights ahead) is still a skip. When several offers improve, prefer the one on the lighter_side, then a missing role over a short one; after that use deck_needs, boss demands and elite gaps to choose among them.
+- effect mixed or neutral: the balance does not decide. Judge the card by the standing plan as before, with skipping as the default for a card that fills nothing. A clearly strong neutral card still beats a weak card that improves.
+- When no offer improves the balance, skipping or keeping the gold is usually right. Never take the least bad card of an over-supplied role only because the reward would otherwise go unused.
+- Boss demands and elite gaps say WHICH card should fill a role (fast scaling rather than slow, an attack that hits ALL enemies rather than one more single-target hit). They never raise HOW MANY cards a role holds: a boss that rewards scaling is answered by the first one or two scaling sources, not by a third.
+- At a removal or transform, give up a card of an over-supplied or full role (or a starter Strike or Defend on that side) before one of a missing or short role.
+The counts are of cards, not strength, and ignore relics and upgrades. You may overrule a status only by naming the card or relic and what it does (a relic that gives Strength every fight covers damage_scaling; a Block card that needs a condition this deck rarely meets is not full Block). State the balance effect of your choice in one clause of the reason."""
+
 _CARD_REWARD = """\
-At a card reward compare every offered card with skipping. Prefer a card that fills a deck_needs entry now over one that is merely strong in general, and treat anything matching the standing plan's avoid list as a skip unless you can name the concrete fights it wins. Conditional synergy counts only when the other half is already held: a card in the deck that is drawn often enough to matter, or a relic, which is active in every fight and so always counts. A card that supplies an act-boss deck demand the deck does not yet cover (boss_readiness marks it under answers_boss_demands) fills a need in the same way as a deck_needs entry."""
+At a card reward compare every offered card with skipping. Read deck_balance_offers first: it decides before the standing plan does. Among the offers it leaves open, prefer a card that fills a deck_needs entry now over one that is merely strong in general, and treat anything matching the standing plan's avoid list as a skip unless you can name the concrete fights it wins. Conditional synergy counts only when the other half is already held: a card in the deck that is drawn often enough to matter, or a relic, which is active in every fight and so always counts. A card that supplies an act-boss deck demand the deck does not yet cover (boss_readiness marks it under answers_boss_demands) fills a need in the same way as a deck_needs entry."""
 
 _SHOP = """\
 At shops compare affordable purchase packages against leaving with gold, not just the next attractive item. decision_support.shop_budget gives feasible remaining-stock combinations and remaining gold; it is partial and unranked. Include purchases already made this visit in your judgment using entry_gold, current_gold and recent_history. Compare the complete expenditure's effect on damage, defense, draw, energy, HP costs and potion protection; account for using up the removal/future-shop budget. Decide the whole visit in one response using shop_plan: list every intended purchase in execution order and then proceed to leave. The total must fit current gold and free potion slots. You may choose more than three purchases and are not limited to the listed comparison packages. Explain why the complete expenditure beats saving. Put card removal last and end the plan there, because its picker needs a new decision. Any other purchase that opens a picker also stops execution for a new decision; changed prices, stock, gold or an unavailable action cause replanning. A permanent card is not automatically better than a potion or keeping gold. Read an effect's frequency literally: "the first time each combat" is one trigger per fight, not a repeatable engine."""
@@ -96,12 +108,12 @@ At rest sites, first read current_facts.route_context for what follows this room
 _ELITE_ACT1 = """\
 ACT 1: TAKE ELITES AND SOLVE THEM. An elite pays a relic on top of gold and a card reward, a relic keeps paying for the rest of the run, and act 1 elites are the cheapest elites in the game to beat, most of all for Ironclad with his strong starting deck and the healing his starting relic gives after every fight. So in act 1 a route with elites is the default and routing around them is the exception:
 - A deck gap in elite_readiness (aoe, block, damage_or_scaling) is not a reason to avoid an act 1 elite. It is the shopping list for the rooms before it. On the map prefer a route that puts hallway fights, a shop or ? rooms before its first elite (each path's elite_preparation; the most_preparation_before_first_elite and most_elites_expected_alive paths) over a route with fewer elites, and say in route_plan which elites you accept and what the deck must pick up before each one.
-- At card rewards, shops and events before a planned elite, a card that solves the elite fight (an attack that hits ALL enemies for elites with several enemies or summons, a non-starter Block card for the big attack turns, a big or scaling damage card to end the fight sooner; elite_readiness fills_gaps marks them) passes the skip rule even when it is not otherwise the strongest offer. Buying such a card or a removal is a better use of act 1 gold than saving it.
+- At card rewards, shops and events before a planned elite, a card that solves the elite fight (an attack that hits ALL enemies for elites with several enemies or summons, a non-starter Block card for the big attack turns, a big or scaling damage card to end the fight sooner; elite_readiness fills_gaps marks them) passes the skip rule even when it is not otherwise the strongest offer, unless deck_balance_offers marks it worsens: a gap is filled by the first card of that kind, not by more of a role the deck is already full of. Buying such a card or a removal is a better use of act 1 gold than saving it.
 - Leave an act 1 elite out only for a survival reason you can state in numbers: HP too low for the fight with no rest site before it (the path's death_risk_before_next_rest_pct, your HP against the elite's largest attack turn), or this run's own elite fights having cost far more than projected. A gap by itself is not such a reason while rooms that can fill it still come first.
 An elite is still a fight you can lose: a rest site before or after it is part of the plan, not a reason to skip it."""
 
 _ELITE_LATER = """\
-ACTS 2 AND 3: STILL TAKE ELITES, MORE SELECTIVELY. Elite relics and elite card rewards are what scale the deck for this act's boss, so a route with no elite is the exception here too. Plan for usually at least one elite in the act and ideally two; lean to two when you have HP to spare and the route has several rest sites (the one_or_two_elites_most_rest_sites path, each path's elite_steps and rest_steps), and take more than two when the deck handles this act's elites and the extra relics would scale it better for the boss. As in act 1, solve the elite instead of dodging it: a gap in elite_readiness is the shopping list for the rooms before the elite, and a card that fills it passes the skip rule.
+ACTS 2 AND 3: STILL TAKE ELITES, MORE SELECTIVELY. Elite relics and elite card rewards are what scale the deck for this act's boss, so a route with no elite is the exception here too. Plan for usually at least one elite in the act and ideally two; lean to two when you have HP to spare and the route has several rest sites (the one_or_two_elites_most_rest_sites path, each path's elite_steps and rest_steps), and take more than two when the deck handles this act's elites and the extra relics would scale it better for the boss. As in act 1, solve the elite instead of dodging it: a gap in elite_readiness is the shopping list for the rooms before the elite, and a card that fills it passes the skip rule unless deck_balance_offers marks it worsens.
 What changes from act 1 is how much risk to accept, because these elites hit harder and a lost fight ends the run:
 - Place an elite after a rest site, or with one right behind it, when the map allows, and do not chain two elites without a rest between them unless HP is high.
 - Drop to one elite, and to none only in the worst case, when the numbers say so: low HP with no rest site before the elite (the path's death_risk_before_next_rest_pct and p10 HP), this run's own elite and boss fights costing well more than projected (agent_loss_scale, recent_combat_outcomes), or a gap that no room before the elite can fill.
@@ -291,7 +303,8 @@ WHAT-IF TOOLS. available_tools in the user message lists read-only calculations 
 _MODULES = {
     "core": _CORE, "noncombat": _NONCOMBAT, "autobattle_pilot": _AUTOBATTLE, "autobattle_own_pilot": _AUTOBATTLE_PILOT,
     "combat_state": _COMBAT_STATE, "combat_play": _COMBAT_PLAY,
-    "fight_picker": _FIGHT_PICKER, "card_reward": _CARD_REWARD, "shop": _SHOP, "map": _MAP, "rest": _REST,
+    "fight_picker": _FIGHT_PICKER, "deck_balance": _BALANCE, "card_reward": _CARD_REWARD, "shop": _SHOP, "map": _MAP,
+    "rest": _REST,
     "grid": _GRID, "ancient_route": _ANCIENT_ROUTE,
     "elite_stance_act1": _ELITE_ACT1, "elite_stance_later": _ELITE_LATER,
     "silent_deck": silent.DECK_GUIDANCE, "silent_elites": silent.ELITE_GUIDANCE,
@@ -307,14 +320,14 @@ _MODULES = {
 _BY_KIND = {
     "combat": ("combat_play", "combat_state"),
     "hand_select": ("combat_play", "combat_state"),
-    "card_reward": ("noncombat", "card_reward", "evidence_profile", "evidence_duplicate", "evidence_upgrade_pick",
-                    "evidence_elite_pick", "evidence_boss_pick"),
-    "shop": ("noncombat", "shop", "evidence_profile", "evidence_upgrade_pick", "evidence_elite_pick",
+    "card_reward": ("noncombat", "deck_balance", "card_reward", "evidence_profile", "evidence_duplicate",
+                    "evidence_upgrade_pick", "evidence_elite_pick", "evidence_boss_pick"),
+    "shop": ("noncombat", "deck_balance", "shop", "evidence_profile", "evidence_upgrade_pick", "evidence_elite_pick",
              "evidence_boss_pick"),
     "map": ("noncombat", "map", "evidence_map", "evidence_upgrade_choice"),
     "rest_site": ("noncombat", "rest", "evidence_upgrade_choice"),
-    "card_select": ("noncombat", "grid", "evidence_upgrade_choice"),
-    "event": ("noncombat", "evidence_profile", "evidence_upgrade_choice"),
+    "card_select": ("noncombat", "deck_balance", "grid", "evidence_upgrade_choice"),
+    "event": ("noncombat", "deck_balance", "evidence_profile", "evidence_upgrade_choice"),
     "rewards": ("noncombat",),
 }
 _DEFAULT = ("noncombat", "evidence_profile")   # relic picks, treasure and anything new
@@ -331,7 +344,7 @@ def prompt_modules(frame: DecisionFrame, *, tools: bool = False) -> list[str]:
     if screen.get("during_combat"):
         body = ("fight_picker", "combat_state")
     elif kind == "event" and (frame.facts.get("screen_details") or {}).get("is_ancient") is True:
-        body = ("noncombat", "evidence_ancient", "evidence_upgrade_choice")
+        body = ("noncombat", "deck_balance", "evidence_ancient", "evidence_upgrade_choice")
     else:
         body = _BY_KIND.get(kind, _DEFAULT)
     # An ancient that shows the act map, in any act: its relic and the act's route are one decision.
