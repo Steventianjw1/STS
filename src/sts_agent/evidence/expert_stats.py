@@ -790,7 +790,8 @@ class ExpertDecisionStats:
         for b in act_boss["bosses"]:
             eid = _id(b.get("id"))
             row = {"id": b.get("id"), "name": b.get("name"),
-                   "demands": coverage(b.get("deck_demands"), deck, cards) if cards is not None else None}
+                   "demands": coverage(b.get("deck_demands"), deck, cards, character=character)
+                   if cards is not None else None}
             if eid:
                 row["fight_stats"] = self._boss_fight_stats(eid, character, version, deadline=deadline)
                 try:
@@ -809,7 +810,7 @@ class ExpertDecisionStats:
         if deck is None:
             result["deck_status"] = "unknown: demands are not compared with the deck"
         if offered and cards is not None:
-            result["offered_cards"] = offered_answers(offered, cards, bosses)
+            result["offered_cards"] = offered_answers(offered, cards, bosses, character=character)
         return result
 
     def _ancient_view(self, view, *, deadline, route_state=None):
@@ -989,6 +990,7 @@ class ExpertDecisionStats:
         def project(hp, max_hp, gold, candidates=0):
             return plan_paths(amap, hp=hp, max_hp=max_hp, gold=gold, risk=risk, profile=profile, candidates=candidates,
                               max_routes=self.config.route_max_routes, elite_pool=pool, outcomes=outcomes, act=act,
+                              character=character,
                               **_potion_inputs(view, route_state))
         base = project(player.get("hp"), player.get("max_hp"), player.get("gold"),
                        self.config.route_candidates if self.config.route_planning_enabled else 0)
@@ -1199,7 +1201,8 @@ class ExpertDecisionStats:
                                       candidates=self.config.route_candidates, max_routes=self.config.route_max_routes,
                                       previous_nodes=previous, elite_pool=pool,
                                       outcomes=(route_state or {}).get("outcomes"),
-                                      act=view.facts["run"].get("act"), **_potion_inputs(view, route_state))
+                                      act=view.facts["run"].get("act"), character=character,
+                                      **_potion_inputs(view, route_state))
         support["paths"]["limitations"] = [
             "Projections assume current max HP, pooled class damage and independent fights; deck, relics "
             "and event effects beyond recorded HP loss are not modeled.",
@@ -1225,7 +1228,7 @@ class ExpertDecisionStats:
                 potions=[str(p.get("id") or p.get("name")) for p in view.facts.get("potions") or []],
                 outcomes=route_state.get("outcomes") or [], risk=risk,
                 hp_tolerance=self.config.replan_hp_tolerance_pct, gold_tolerance=self.config.replan_gold_tolerance,
-                elite_pool=pool, elite_steps=self.config.elite_trigger_steps)
+                elite_pool=pool, elite_steps=self.config.elite_trigger_steps, character=character)
         if support["status"] == "unavailable" and support["paths"].get("status") == "available":
             support["status"] = "partial"
 

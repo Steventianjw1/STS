@@ -16,6 +16,7 @@ import math
 import random
 import re
 
+from ..game.characters import is_silent
 from .elite_readiness import pool_gap_share
 from .potion_odds import NEXT_FIGHT, drop_chance_pct, potion_model
 from .route_risk import SCALE_GROUPS, agent_loss_scale, loss_draws, node_class
@@ -300,13 +301,15 @@ def _gap_summary(pool):
 
 
 def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_routes, previous_nodes=None,
-               elite_pool=None, outcomes=None, act=None, potions=None, potion_slots=None, combat_delegated=False):
+               elite_pool=None, outcomes=None, act=None, character=None, potions=None, potion_slots=None,
+               combat_delegated=False):
     """Project every route and label the ones worth showing. Python never chooses.
 
     ``act`` 1 lists the elite routes first (most elites expected alive, most rooms to fix the deck
     before the first elite) so the candidate cap cannot drop them, and leaves out the
     fewest-elites-given-gaps label: in act 1 a deck gap is something to fix before the elite.
-    Later acts add the route with one or two elites and the most rest sites.
+    Later acts add the route with one or two elites and the most rest sites. The Silent
+    instead sees safe and elite-light routes first in every act.
 
     ``potions`` (names held, None when not observed) and ``potion_slots`` start the replays'
     potion count; the drop counter comes from ``outcomes``. ``combat_delegated`` says Autobattle
@@ -390,12 +393,14 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
             if best not in picks:
                 picks.append(best)
     alive = [r for r in front if r["expected_min_hp_pct"] > 0]
+    playing_silent = is_silent(character)
     previous = None
     if previous_nodes:
         previous = next((r for r in rows if r["coords"] == previous_nodes), None)
         if previous:
             previous.setdefault("selected_for", []).append("continues_previous_plan")
-            picks.append(previous)
+            if not playing_silent:
+                picks.append(previous)
     gap_share = pool_gap_share(elite_pool) if elite_pool else None
 
     def most_elites():
@@ -406,14 +411,27 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
             e = r["elite_preparation"][0]
             return (e["fights_before"] + e["shops_before"] + e["unknown_before"], -r["death_risk_before_boss_pct"])
         take("most_preparation_before_first_elite", [r for r in alive if r["elite_preparation"]], first_prep)
-    if act == 1:
+    def safest_routes(pool):
+        take("lowest_death_risk_before_boss", pool, lambda r: (-r["death_risk_before_boss_pct"], r["p10_min_hp_pct"]))
+        take("safest_to_next_rest", pool, lambda r: (-r["death_risk_before_next_rest_pct"], -r["fights_before_next_rest"],
+                                                     r["p10_min_hp_pct"]))
+
+    if playing_silent:
+        safest_routes(rows)
+        # Keep a viable elite-light alternative even if the Pareto front favors routes with more elites.
+        surviving = [r for r in rows if r["expected_min_hp_pct"] > 0]
+        take("fewest_elites_expected_alive", surviving,
+             lambda r: (-r["elites"], -r["death_risk_before_boss_pct"], r["p10_min_hp_pct"]))
+        most_preparation()
+        if previous is not None and previous not in picks:
+            picks.append(previous)
+    elif act == 1:
         most_elites()
         most_preparation()
     take("closest_to_expert_profile", front, lambda r: (-r["expert_profile_distance"], -r["death_risk_before_boss_pct"]))
-    take("lowest_death_risk_before_boss", front, lambda r: (-r["death_risk_before_boss_pct"], r["p10_min_hp_pct"]))
-    take("safest_to_next_rest", front, lambda r: (-r["death_risk_before_next_rest_pct"], -r["fights_before_next_rest"],
-                                                  r["p10_min_hp_pct"]))
-    if act != 1:
+    if not playing_silent:
+        safest_routes(front)
+    if act != 1 and not playing_silent:
         # Later acts: usually one elite, ideally two, on the route that gives them the most rest sites.
         take("one_or_two_elites_most_rest_sites", [r for r in alive if 1 <= r["elites"] <= 2],
              lambda r: (r["rest_sites"], r["elites"], -r["death_risk_before_boss_pct"]))
@@ -423,11 +441,13 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
         "boss_margin_with_held_potions_pct") is not None],
          lambda r: (r["potions"]["boss_margin_with_held_potions_pct"], -r["death_risk_before_boss_pct"]))
     take("most_fights_expected_alive", alive, lambda r: (r["fights"], -r["death_risk_before_boss_pct"]))
-    if gap_share and act != 1:  # the deck lacks something some act elites demand: the elite-light and best-prepared routes
+    if gap_share and act != 1 and not playing_silent:
         take("fewest_elites_given_deck_gaps", front, lambda r: (-r["elites"], -r["death_risk_before_boss_pct"]))
         most_preparation()
     shown = picks[:candidates]
     if candidates:  # every legal next node gets at least one detailed path, so openings can be compared
+        if playing_silent and previous is not None and previous not in shown:
+            shown.append(previous)
         for first in dict.fromkeys(r["first_action_id"] or str(r["first_coords"]) for r in rows):
             if not any((r["first_action_id"] or str(r["first_coords"])) == first for r in shown):
                 pool = [r for r in rows if (r["first_action_id"] or str(r["first_coords"])) == first]
@@ -509,7 +529,7 @@ def _ranges(rows):
 
 # ------------------------------------------------------------------ re-planning
 def plan_status(plan, *, act, details, hp, max_hp, gold, relics, potions, outcomes, risk, hp_tolerance, gold_tolerance,
-                elite_pool=None, elite_steps=3):
+                elite_pool=None, elite_steps=3, character=None):
     """Python-detected reasons to revisit a stored route plan. Never changes the plan."""
     if not plan:
         return {"status": "no_previous_plan", "triggers": ["no_plan_yet"], "replan_suggested": True}
@@ -550,12 +570,15 @@ def plan_status(plan, *, act, details, hp, max_hp, gold, relics, potions, outcom
         ahead = [s["type"] for s in plan["trajectory"][start:start + elite_steps]]
         if "elite" in ahead:
             steps, gaps = ahead.index("elite") + 1, ", ".join(_gap_summary(elite_pool))
-            triggers.append(   # act 1: a gap is a shopping list for the rooms before the elite, not a detour sign
-                f"elite_gaps_to_fill: planned elite in {steps} step(s); deck gaps for {share:.0%} of this act's "
-                f"elites: {gaps}. Fill them in the rooms before it; leaving the elite needs an HP reason" if act == 1
-                else f"elite_unprepared: planned elite in {steps} step(s); deck gaps for {share:.0%} of this act's "
-                     f"elites: {gaps}. Fix them in the rooms before it or move the elite later; drop it only if "
-                     "neither is possible")
+            context = f"planned elite in {steps} step(s); deck gaps for {share:.0%} of this act's elites: {gaps}."
+            if is_silent(character):
+                triggers.append(f"elite_unprepared: {context} Compare preparation, delaying the elite, and a safer detour.")
+            elif act == 1:
+                triggers.append(f"elite_gaps_to_fill: {context} Fill them in the rooms before it; "
+                                "leaving the elite needs an HP reason")
+            else:
+                triggers.append(f"elite_unprepared: {context} Fix them in the rooms before it or move the elite later; "
+                                "drop it only if neither is possible")
     expected_gold = at.get("estimated_gold") if at else plan.get("gold")
     if gold is not None and expected_gold is not None and abs(gold - expected_gold) >= gold_tolerance:
         triggers.append(f"gold_off_projection: now {gold} vs about {expected_gold}")

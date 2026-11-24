@@ -39,6 +39,7 @@ from .decision.offline import ScriptedTextModel
 from .decision.policy import LLMDecisionPolicy, model_identity
 from .game.autobattle import MentorAutobattle
 from .pilot import install as pilot_install
+from .pilot.potion_context import context_path as pilot_potion_context_path
 from .decision.prompts import DECISION_PROMPT_VERSION, DEFAULT_OBJECTIVE, MENTOR_PILOT, OWN_PILOT
 from .decision.screens import CAPABILITIES, MOD_REVISION, build_view, capability_table
 from .game.observation import normalize, summarize
@@ -532,6 +533,7 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     scope = {"step": "step", "play-combat": "combat", "play-run": "run"}[command]
     coord = RunCoordinator(client, policy, planner=planner, recorder=rec, limits=cfg.limits, scope=scope, autobattle=autobattle,
                            own_pilot=own_pilot,
+                           pilot_potion_context=pilot_potion_context_path(cfg.pinned_game_dir) if own_pilot else None,
                            offer_handoff=cfg.autobattle.offer_handoff, what_if_tools=cfg.llm.what_if_tools, hooks=hooks,
                            expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build)
                            if facts_source != "synthetic" and not scripted else None,

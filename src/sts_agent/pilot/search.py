@@ -30,6 +30,7 @@ CORES = os.cpu_count() or 1
 EXACT_RULES = {"lost_position", "illegal_fallback"}   # engine picks that are not a judgement between values
 SAFE_WIN = 0.90      # a held potion waits while the best other move wins at least this often...
 DRINK_GAIN = 0.05    # ...unless drinking it adds this much win chance
+REPLACEMENT_DROP_PCT = 80   # above this chance, let the first potion compete in the search
 _pool: ThreadPoolExecutor | None = None
 
 
@@ -96,8 +97,8 @@ def _workers() -> ThreadPoolExecutor:
     return _pool
 
 
-def _is_drink(row) -> bool:
-    return row["action"].get("action") in ("drink_potion", "potion")
+def is_potion_action(action) -> bool:
+    return action.get("action") in ("drink_potion", "potion")
 
 
 def _hold(rows) -> list:
@@ -105,13 +106,13 @@ def _hold(rows) -> list:
 
     A row without a win chance is never held: the hold acts only on what the search measured.
     """
-    others = [r for r in rows if not _is_drink(r)]
+    others = [r for r in rows if not is_potion_action(r["action"])]
     if not others or len(others) == len(rows):
         return []
     ref = min(others, key=lambda r: r.get("pick_rank") if r.get("pick_rank") is not None else 1 << 30)
     if ref.get("p_win") is None or ref["p_win"] < SAFE_WIN:
         return []
-    return [r for r in rows if _is_drink(r) and r.get("p_win") is not None and r["p_win"] - ref["p_win"] < DRINK_GAIN]
+    return [r for r in rows if is_potion_action(r["action"]) and r.get("p_win") is not None and r["p_win"] - ref["p_win"] < DRINK_GAIN]
 
 
 def _relic_gain(rs, state, rows) -> list:
@@ -140,11 +141,12 @@ def _relic_gain(rs, state, rows) -> list:
     return out
 
 
-def decide(rs, state, profile: Profile, seed=0, carry=(None, None), hold=False) -> Decision:
+def decide(rs, state, profile: Profile, seed=0, carry=(None, None), hold=False, *,
+           drop_chance_pct: int | None = None, potion_used: bool = False) -> Decision:
     """Choose the action to play in ``state`` (an engine ``CombatState`` with a decision open).
 
     ``hold`` is the fight's potion rule (``profiles.holds_potions`` of its tier); a profile that
-    sets ``hold_potions`` wins.
+    sets ``hold_potions`` wins. High drop odds waive the hold until a potion has been used.
     """
     started = time.perf_counter()
     threads = max(1, min(profile.threads, CORES))
@@ -163,7 +165,9 @@ def decide(rs, state, profile: Profile, seed=0, carry=(None, None), hold=False) 
                    p_win=best.get("p_win"), hp=best.get("mean_final_hp"), result=result)
     if engine_rule not in EXACT_RULES:
         open_rows = rows
-        if profile.hold_potions if profile.hold_potions is not None else hold:
+        hold_enabled = profile.hold_potions if profile.hold_potions is not None else hold
+        likely_replacement = drop_chance_pct is not None and drop_chance_pct > REPLACEMENT_DROP_PCT
+        if hold_enabled and (potion_used or not likely_replacement):
             held = _hold(rows)
             if held:
                 open_rows = [r for r in rows if all(r is not h for h in held)]

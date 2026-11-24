@@ -1,0 +1,11 @@
+"""The Silent's initial strategy, shared by planning and individual decisions."""
+
+PROMPT_VERSION = "silent-strategic-planner-prompt-1"
+
+DECK_GUIDANCE = """\
+THE SILENT'S DECK. In Act 1, secure immediate damage for hallway fights and reliable Block before loading up on setup. Build stability with Block, well-timed Weak, and enough draw to find the right answers. Count what a draw card can find, what energy remains to play it, and whether a discard outlet and its Sly payoff can be drawn and used together. Treat Sly as a payoff for explicit discard during the turn. Balance draw and discard enablers with Sly payoffs, Block, and enough damage to finish the fight. An opening draw bonus helps turn one; check later hands separately.
+
+Shivs are the usual first scaling option when the deck can generate them reliably and convert repeated plays into damage or another useful payout. Check the boss for limits or punishment on many card plays. Poison is an occasional alternative when the cards already held or offered support repeatable application, timely payoff, and enough defense for it to work. Check Artifact, multiple targets, and how soon damage is needed. Judge both plans by the observed deck and fight. A single generator, payoff, or Poison card is evidence of a possible plan; check the rest of the deck before counting a boss need as covered."""
+
+ELITE_GUIDANCE = """\
+THE SILENT'S ELITE ROUTES. The Silent is vulnerable early in Act 1 and takes elites selectively in every act. Compare a safer route with fewer or later elites against the relic upside. Act 1 can plan zero elites when the deck, HP, or recovery cannot support one. Take an elite when the deck can answer its likely big turns and deal enough damage before it scales, with a credible HP margin and preparation or recovery on the actual route. Weak and Block can make that margin safer when the enemy and timing allow it. Use observed elite outcomes and the worst projected stretches before a rest site to judge whether a later elite is affordable. An unresolved gap can justify skipping an elite even at high HP. Choose later elites on the same evidence as the deck grows stronger. State which elite, if any, is acceptable and what would change that decision."""

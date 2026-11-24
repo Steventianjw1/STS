@@ -23,7 +23,7 @@ from pathlib import Path
 
 from . import engine
 from .profiles import Profile, default_profile, holds_potions, hp_carry, load_tuned, mentor_profile, profile_for, save_tuned
-from .search import CORES, decide
+from .search import CORES, decide, is_potion_action
 
 # What a fight's outcome is worth to the run. A win is 1, plus the engine's own default
 # worth of the HP it keeps (full HP = 2/7) scaled by how much of that HP survives to the next
@@ -54,6 +54,7 @@ class Scenario:
     hp: int
     max_hp: int
     ascension: int
+    drop_chance_pct: int | None = None
 
     def build(self, rs, world_seed):
         return rs.build_scenario_state(world_seed, "Ironclad", list(self.deck), self.hp, self.max_hp,
@@ -154,6 +155,7 @@ def play(rs, scenario: Scenario, profile: Profile, world_seed: int) -> dict:
     _, potions_start = _board(rs, state)
     decisions = raced = changed = 0
     thinking = 0.0
+    potion_used = False
     started = time.perf_counter()
     for step in range(MAX_ACTIONS):
         if state.terminal_value()[0]:
@@ -164,13 +166,15 @@ def play(rs, scenario: Scenario, profile: Profile, world_seed: int) -> dict:
         if len(legal) == 1:
             action = legal[0]
         else:
-            d = decide(rs, state, profile, seed=(world_seed * 7919 + step) & 0x7FFFFFFF, hold=holds_potions(scenario.tier))
+            d = decide(rs, state, profile, seed=(world_seed * 7919 + step) & 0x7FFFFFFF, hold=holds_potions(scenario.tier),
+                       drop_chance_pct=scenario.drop_chance_pct, potion_used=potion_used)
             action = d.action
             decisions += 1
             thinking += d.seconds
             raced += bool(d.raced)
             changed += d.rule in ("race", "relic")
         state.apply_step(action)
+        potion_used |= is_potion_action(action)
     terminal, value = state.terminal_value()
     hp, potions = _board(rs, state)
     won = bool(terminal and value > 0)
