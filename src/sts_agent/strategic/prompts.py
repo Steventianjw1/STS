@@ -9,7 +9,7 @@ import json
 
 from .models import DIMENSIONS, PLAN_LISTS, PLAN_TEXTS, StrategicAssessment, StrategicSnapshot
 
-PROMPT_VERSION = "strategic-planner-prompt-11"
+PROMPT_VERSION = "strategic-planner-prompt-12"
 _FACTS_STABLE_FIRST = ("deck", "relics", "glossary", "potions", "resources", "run", "recent_outcomes", "opportunities")
 
 _BEHAVIOR = """\
@@ -34,10 +34,21 @@ BUILD THE DECK FOR THIS ACT'S BOSS. An "act_boss:" opportunity whose id ends in 
 ELITES BY ACT (current_facts.run.act). In act 1 the run routes toward elites: an elite pays a relic on top of gold and a card reward, a relic keeps paying for the rest of the run, and act 1 elites are the cheapest elites in the game to beat, most of all for Ironclad with his strong starting deck and the healing his starting relic gives after every fight. So in act 1 never advise avoiding elites because the deck lacks something. Solve them instead: put what act 1 elites test at the top of deck_needs (an attack that hits ALL enemies for elites with several enemies or summons, non-starter Block for their big attack turns, big or scaling damage to end the fight sooner) as things to pick up from the hallway rewards, shops and events before the first elite, let skip_rule pass cards that supply them, and treat gold as there to be spent on them. Advise leaving an act 1 elite out only for HP: too low for the fight with no rest site before it. From act 2 on still plan for elites, because their relics and card rewards are what scale the deck for the boss: usually at least one in the act and ideally two, leaning to two with HP to spare and several rest sites ahead, and more than two when the deck handles the act's elites and the extra relics would scale it better for the boss. Keep solving them through deck_needs as in act 1. Be more reserved than in act 1 only about risk, because these elites hit harder: advise one elite instead of two, and none only in the worst case, when HP is low with no rest site before the elite, when recent elite or boss outcomes were clearly worse than expected, or when a need that no coming room can fill is still open; then say what would restore the second elite.
 """
 
+_BEHAVIOR += """
+PLAN AROUND THE RELICS HELD. current_facts.relics lists every relic with the game's own text and, where it has one, its counter. A relic whose effect depends on the cards played is part of the deck's engine in every fight: one that counts a kind of card or event (Attacks, Skills, Powers, cards played in a turn, cards exhausted, HP lost), one that adds to something each time it happens (every hit, every Block gain, every card drawn), one that pays out once a turn or once a combat on a condition, one that changes energy, draw or costs. For each such relic say in the relevant dimension what it adds with the current deck, and carry it into standing_plan: put under deck_needs the kind of card that makes it pay out more often or that it multiplies (an effect added to every repetition favours cards that repeat it several times in one play; a relic that counts a card type favours cheap cards of that type), put under avoid what breaks the condition it needs, and word skip_rule so that an offered card a held relic clearly strengthens can pass on that ground. Re-read the relics whenever one is gained; the reference statistics and the act boss's needs ignore them.
+"""
+
+_POTIONS_SPENT = """\
+- Potions cannot be held for a later fight. In observed runs Autobattle used nearly every potion in the first round of the first fight after it was obtained, easy fights included; recent_outcomes notes say which held potions a delegated fight used. potion_needs should therefore say whether the NEXT fight warrants taking or buying one, never that potions are being reserved for an elite or boss, and boss_prep must not count on potions unless the boss is the next fight.
+"""
+
+_POTIONS_HELD = """\
+- Potions are kept for the fights that need them. The agent's own combat pilot decides inside Autobattle: it holds every potion through hallway fights and elites while the fight is being won without it, drinks when a fight turns dangerous, and spends the belt freely in a boss fight. Simulated fights against the hardest bosses were won 27% of the time with no potion and 44% with two. So potion_needs should say which potions are worth carrying to the next fight that will be in doubt (usually the act boss; in those simulations effects that last the whole fight, such as Strength, Dexterity or a Power, helped most) and whether the belt has room, and boss_prep may count the potions held. The hallway fights and elites on the way are then fought without them and in simulation cost about 5 more HP per hallway fight and about 9 per elite. recent_outcomes notes say which held potions a delegated fight used.
+"""
+
 _AUTOBATTLE = """\
 COMBAT IS DELEGATED IN THIS RUN. Spire Mentor's Autobattle plays every fight; neither you nor the decision model chooses a card play, a target or the moment a potion is used. Write the assessment for that pilot:
-- Potions cannot be held for a later fight. In observed runs Autobattle used nearly every potion in the first round of the first fight after it was obtained, easy fights included; recent_outcomes notes say which held potions a delegated fight used. potion_needs should therefore say whether the NEXT fight warrants taking or buying one, never that potions are being reserved for an elite or boss, and boss_prep must not count on potions unless the boss is the next fight.
-- A card with a lasting cost per play (Max HP, gold, a permanent stat) is played in almost every fight. Judge it by cost per play times the fights remaining.
+{potions}- A card with a lasting cost per play (Max HP, gold, a permanent stat) is played in almost every fight. Judge it by cost per play times the fights remaining.
 - Do not rest a judgment on a particular order of plays, a chosen exhaust target or a card being held for the right turn; credit only what a card does when played whenever it is drawn and affordable.
 - Never put card-play, targeting or potion-timing instructions in the plan: nothing executes them."""
 
@@ -62,11 +73,15 @@ If a correction object is present in the user message, its rejected_output is un
 SYSTEM_INSTRUCTION = f"[{PROMPT_VERSION}]\n{_BEHAVIOR}\n\n{_CONTRACT}"
 
 
-def system_instruction(*, combat_delegated: bool = False) -> str:
-    """The planner's system prompt; ``combat_delegated`` adds the Autobattle pilot rules before the contract."""
+def system_instruction(*, combat_delegated: bool = False, potions_held: bool = False) -> str:
+    """The planner's system prompt; ``combat_delegated`` adds the Autobattle pilot rules before the contract.
+
+    ``potions_held`` says the agent's own pilot decides the fights, which keeps potions for the fights in doubt.
+    """
     if not combat_delegated:
         return SYSTEM_INSTRUCTION
-    return f"[{PROMPT_VERSION}]\n{_BEHAVIOR}\n{_AUTOBATTLE}\n\n{_CONTRACT}"
+    rules = _AUTOBATTLE.replace("{potions}", _POTIONS_HELD if potions_held else _POTIONS_SPENT)
+    return f"[{PROMPT_VERSION}]\n{_BEHAVIOR}\n{rules}\n\n{_CONTRACT}"
 
 
 def build_user_message(snapshot: StrategicSnapshot, previous: StrategicAssessment | None, *,

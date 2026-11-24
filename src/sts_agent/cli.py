@@ -39,7 +39,7 @@ from .decision.offline import ScriptedTextModel
 from .decision.policy import LLMDecisionPolicy, model_identity
 from .game.autobattle import MentorAutobattle
 from .pilot import install as pilot_install
-from .decision.prompts import DECISION_PROMPT_VERSION, DEFAULT_OBJECTIVE
+from .decision.prompts import DECISION_PROMPT_VERSION, DEFAULT_OBJECTIVE, MENTOR_PILOT, OWN_PILOT
 from .decision.screens import CAPABILITIES, MOD_REVISION, build_view, capability_table
 from .game.observation import normalize, summarize
 from .baseline.policy import BaselinePolicy
@@ -139,13 +139,13 @@ def _objective(cfg) -> str:
 
 
 def _frame_from_view(view, *, run_id, run_id_source, facts_source, objective, expert_stats=None,
-                     combat_delegated=False) -> DecisionFrame:
+                     combat_delegated=False, own_pilot=False) -> DecisionFrame:
     cap = CAPABILITIES.get(view.kind, {})
     return DecisionFrame(
         run_id=run_id, run_id_source=run_id_source, objective=objective,
         screen={"kind": view.kind, "state_type": view.state_type, "encounter_key": view.encounter_key,
                 # Same marker a session sets, so a preview gets the prompt a session would send.
-                **({"combat_pilot": "spire_mentor_autobattle"} if combat_delegated and not view.in_combat else {}),
+                **({"combat_pilot": OWN_PILOT if own_pilot else MENTOR_PILOT} if combat_delegated and not view.in_combat else {}),
                 "capability": {"status": cap.get("status"), "live_validated": False, "mod_revision": MOD_REVISION}},
         observation_fingerprint=view.fingerprint, facts_source=facts_source, facts=view.facts,
         candidates=view.candidates, bindings=view.bindings, limitations=view.limitations,
@@ -312,7 +312,7 @@ def cmd_observe(args) -> int:
         _, run_id = _versions(client)
         frame = _frame_from_view(view, run_id=run_id or "preview", run_id_source="mod_compendium" if run_id else
                                  "preview_only", facts_source="observed", objective=_objective(cfg),
-                                 combat_delegated=cfg.autobattle.enabled,
+                                 combat_delegated=cfg.autobattle.enabled, own_pilot=pilot_install.status(cfg)[0],
                                  expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build))
         if args.save_frame:
             Path(args.save_frame).parent.mkdir(parents=True, exist_ok=True)
@@ -463,7 +463,9 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
         log("combat: native Spire Mentor Autobattle; the model controls non-combat decisions"
             + (" and in-fight offers an enemy opens ([autobattle] offer_handoff)"
                if cfg.autobattle.offer_handoff else ""))
-    planner = (StrategicPlanner(model, progress=progress, combat_delegated=autobattle is not None,
+    # Whether this session's fights are decided by the agent's pilot: it keeps potions, which the prompts must know.
+    own_pilot = autobattle is not None and pilot_install.status(cfg)[0]
+    planner = (StrategicPlanner(model, progress=progress, combat_delegated=autobattle is not None, potions_held=own_pilot,
                                 reasoning_effort=_strategy_effort(cfg))
                if cfg.llm.strategic_planner else None)
     ident = model_identity(model)
@@ -482,6 +484,7 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     progress.record = rec.event
     scope = {"step": "step", "play-combat": "combat", "play-run": "run"}[command]
     coord = RunCoordinator(client, policy, planner=planner, recorder=rec, limits=cfg.limits, scope=scope, autobattle=autobattle,
+                           own_pilot=own_pilot,
                            offer_handoff=cfg.autobattle.offer_handoff, what_if_tools=cfg.llm.what_if_tools, hooks=hooks,
                            expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build)
                            if facts_source != "synthetic" and not scripted else None,

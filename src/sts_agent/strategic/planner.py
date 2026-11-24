@@ -27,6 +27,7 @@ class TextModel(Protocol):
 class StrategicPlanner:
     def __init__(self, model: TextModel, *, transcript_path: str | Path | None = None,
                  progress: ModelProgress | None = None, combat_delegated: bool = False,
+                 potions_held: bool = False,
                  reasoning_effort: str | None = None):
         """``transcript_path``: optional local JSONL log of model calls. Keep it
         under the Git-ignored ``traces/`` directory. ``reasoning_effort`` replaces the
@@ -38,7 +39,8 @@ class StrategicPlanner:
         self._transcript = Path(transcript_path) if transcript_path else None
         self.progress = progress or ModelProgress()
         # True when native Autobattle plays the fights: the prompt then prices potions and per-play costs for it.
-        self._system = system_instruction(combat_delegated=combat_delegated)
+        # potions_held: the agent's own pilot decides inside Autobattle and keeps potions for the fights in doubt.
+        self._system = system_instruction(combat_delegated=combat_delegated, potions_held=potions_held)
         self.reset()
 
     # -- state -----------------------------------------------------------------
