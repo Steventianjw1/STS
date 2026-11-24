@@ -5,6 +5,7 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 # (src/sts_agent/game/game_pin.py) when no game is running, inside one window with the panels around it.
 # Runs are started from its control bar. `./start run ...` (sts-agent start-run) opens the same
 # window and begins a new run in it; `./start run --console ...` plays without the interface.
+# Use `./start run --pin-only` to save the frozen copy and check its mod without launching it.
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 
 command=ui

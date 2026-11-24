@@ -243,6 +243,16 @@ def cmd_doctor(args) -> int:
 
     if cfg.game_dir:
         _doctor_game_dir(Path(cfg.game_dir), line)
+    copy = game_pin.frozen_copy(cfg.pinned_game_dir)
+    if not game_pin.is_pinned(game_pin.read_build(copy)):
+        line("WARN", f"no saved {game_pin.PINNED_GAME_BUILD} copy at {copy}; run ./start run --pin-only before Steam "
+                     f"updates the game")
+    else:
+        try:
+            line("ok", f"saved {game_pin.PINNED_GAME_BUILD} copy at {copy}: {game_pin.require_mod(copy)}")
+        except game_pin.GamePinError as e:
+            line("FAIL", str(e))
+            ok = False
     if cfg.policy == "llm" and cfg.autobattle.enabled:
         ok = _doctor_autobattle(cfg, line, client) and ok
 
@@ -561,6 +571,7 @@ def cmd_start_run(args) -> int:
             copy = game_pin.frozen_copy(cfg.pinned_game_dir)
             game_pin.save_copy(copy, game_pin.verify_running(), cfg.game_dir)
             print(f"pin: {game_pin.PINNED_GAME_BUILD} is saved at {copy}")
+            print(f"pin: {game_pin.require_mod(copy)}")   # exit 2 when the copy would start without the mod
             return 0
         character, ascension = prompt_settings(args.character, args.ascension)
         if cfg.policy != "llm":
@@ -721,7 +732,7 @@ def main(argv=None) -> int:
     s.add_argument("--console", action="store_true",
                    help="play in this console without opening the interface")
     s.add_argument("--pin-only", action="store_true",
-                   help=f"only save the frozen {game_pin.PINNED_GAME_BUILD} game copy, then exit")
+                   help=f"only save the frozen {game_pin.PINNED_GAME_BUILD} game copy and check its mod, then exit")
     s.add_argument("--trace-dir")
     s.add_argument("--no-raw", action="store_true")
     s.add_argument("--max-actions", type=int)
