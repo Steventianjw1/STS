@@ -169,7 +169,7 @@ def play(rs, scenario: Scenario, profile: Profile, world_seed: int) -> dict:
             decisions += 1
             thinking += d.seconds
             raced += bool(d.raced)
-            changed += d.rule in ("race", "relic")
+            changed += d.rule in ("race", "relic", "choice")
         state.apply_step(action)
     terminal, value = state.terminal_value()
     hp, potions = _board(rs, state)
@@ -326,6 +326,7 @@ KNOBS = {
     "potions-free": {"win_potion_carry": 0.0},
     "potions-half": {"win_potion_carry": 0.5},
     "deep-race": {"race_band": 0.05, "race_width": 6, "race_reps": 3},
+    "matched-luck": {"matched_luck": True},
 }
 
 
@@ -352,7 +353,7 @@ def tune(rs, encounter: dict, pool: list[Scenario], fights=8, rounds=3, progress
     candidate plays the same fights each round, the better half by mean run value stays, and
     the fight count doubles; ``default`` and ``mentor`` always stay, as the two references.
     The encounter keeps the default knobs unless a candidate beats them on the last round by
-    more than ``ACCEPT_SE`` standard errors of the paired difference. With ten candidates the
+    more than ``ACCEPT_SE`` standard errors of the paired difference. With eleven candidates the
     best of them is ahead by one standard error from luck alone more often than not (a 16-fight
     trial on one elite "found" such a winner), hence two, and hence enough fights to reach it.
     """

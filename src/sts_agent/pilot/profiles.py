@@ -2,8 +2,8 @@
 
 A ``Profile`` is the whole tailoring surface: the search budget, the engine's search
 knobs, what a win is worth by the HP and potions it keeps, how the root move is picked,
-whether potions are kept for the fights that need them, and whether the relics held
-decide between moves the search scores alike. ``MENTOR`` reproduces Spire Mentor's
+whether potions are kept for the fights that need them, and what decides between moves
+the search scores alike (the relics held, the least useful card to give up). ``MENTOR`` reproduces Spire Mentor's
 deployed advisor and is the baseline every other profile is measured against. Profiles
 tuned per encounter by ``sim.tune`` are kept in ``tuned/`` beside this file, one
 ``<ENCOUNTER_ID>.json`` each, and override the tier defaults. One file per encounter lets
@@ -37,6 +37,8 @@ class Profile:
     race_sims: int = 2000                   # simulations of each re-search, all through one option
     race_reps: int = 2                      # independent re-searches per raced option
     relic_tie: float = 0.0                  # raced moves this close count as equal and the relics held decide (0 = off)
+    choice_tie: float = 0.01                # cards to give up that score this close are equal; the least useful goes (0 = off)
+    matched_luck: bool = False              # the engine's common random numbers: one decision's options meet the same luck
     hold_potions: bool | None = None        # keep potions while the fight is not in doubt; None = the tier's rule
 
     def to_dict(self) -> dict:
@@ -69,6 +71,32 @@ DEFAULTS = {
 # 64.3% of boss fights won against 71.4% (84 paired simulated fights, -7.1 +-3.3 points). HP in
 # hand is also the margin that absorbs the search's own misjudgements, so no default lowers it.
 HEALED_BOSS_HP_CARRY = 0.2
+
+# Which card to exhaust. In boss fights the race scores two copies of the same card as far apart as
+# two different cards (a quarter of such pairs by more than 0.0125 and 0.0084), so below about 0.01
+# the search does not tell cards apart and its pick among them is chance: Mentor's search made 130
+# of 211 such picks by its "most searched of the equal moves" rule, and 57 gave up a real card while
+# a Strike, a Defend, a Status or a Curse was offered. ``choice_tie`` 0.01 gives up the least useful
+# of the cards that close (``search._keep_worth``). Against the saved tuning fights it left 237 of
+# 264 boss fights unchanged and the rest no worse (+0.8 +-0.8 points of wins, +0.1 +-0.1 HP); on 85
+# logged choices it cut those odd picks from 21 to 12 and the same card came back from a second
+# search 71% of the time instead of 65%.
+
+# Matched luck (the engine's ``common_random_numbers``: the options of one decision are searched on
+# the same draws and enemy rolls). With Mentor's search a second search of the same boss decision
+# gave the same pick 80% of the time instead of 70%, but under the pilot's race it changed nothing
+# (77% against 79%), and against the saved tuning fights it won +1.1 +-1.7 points over 264 boss
+# fights and +0.9 +-2.1 over 216 fresh act-3 ones. One boss stood out, Aeonglass at +9.4 +-2.7 over
+# 96 fights, so it is a candidate for ``sim.tune`` to take per encounter and no default sets it.
+
+# The engine's price of the HP a won fight keeps, as a multiple of its own (its STS2_RUNAI_HP_WEIGHT).
+# The engine reads it once per process, so it prices every search of the process alike, Mentor's
+# baseline arm included; ``engine.load`` sets it when this is not 1. Measured in boss fights against
+# the saved tuning fights (same deck, same world): at 2 the pilot's default won +0.4 +-2.0 points
+# more and ended 1.1 +-0.6 HP higher (264 fights); at 4 Mentor's search won -4.1 +-4.6 points
+# (73 fights). One HP a boss fight does not pay for a baseline that no longer is Mentor's, so it
+# stays at the engine's own price. Hallway fights and elites were not measured.
+HP_WEIGHT = 1.0
 
 # Relics in the card play. The engine simulates every relic inside the fight, so a move that is
 # better for a relic already scores better, and two ways of pushing relics further were measured on

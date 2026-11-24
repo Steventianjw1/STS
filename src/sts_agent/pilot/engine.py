@@ -20,11 +20,13 @@ from collections import Counter
 from pathlib import Path
 
 from ..game.game_pin import frozen_copy
+from .profiles import HP_WEIGHT
 
 ENGINE_SUBDIR = Path("mods") / "SpireMentor" / "SimAdvisor" / "_internal" / "sts2_rs"
 ENGINE_PYTHON = (3, 13)                 # what the mod's own sts2_rs.pyd is built for
 ENGINE_ENV = "STS_AGENT_ENGINE_DIR"     # a folder holding the sts2_rs module, used instead of the installed mod's
 BUILT_DIR = Path("data") / "engine"     # where a build from Mentor's source is kept
+HP_WEIGHT_ENV = "STS2_RUNAI_HP_WEIGHT"   # the engine's own setting; read once, at its first search
 ROOM_TIERS = {"Monster": ("Weak", "Normal"), "Elite": ("Elite",), "Boss": ("Boss",)}
 
 _engine = None
@@ -51,6 +53,8 @@ def load(pinned_game_dir="data/game"):
         if (folder / "sts2_rs.pyd").is_file() and sys.version_info[:2] != ENGINE_PYTHON:   # an untagged file: Python cannot tell
             raise EngineError(f"the mod's simulator is built for Python {ENGINE_PYTHON[0]}.{ENGINE_PYTHON[1]}, "
                               f"this is {sys.version_info[0]}.{sys.version_info[1]}")
+        if HP_WEIGHT != 1.0:                   # a value already in the environment wins
+            os.environ.setdefault(HP_WEIGHT_ENV, str(HP_WEIGHT))
         sys.path.insert(0, str(folder))
         try:
             _engine = importlib.import_module("sts2_rs")

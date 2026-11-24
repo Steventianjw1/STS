@@ -6,9 +6,12 @@ the free card, spend the energy, take the most visited. The pilot spends search 
 each close option gets independent searches with every simulation forced through it,
 and the best average wins. A decision the search already resolves costs nothing extra.
 
-One thing the engine's pick leaves to chance is decided here as well: a potion is kept
+Two things the engine's pick leaves to chance are decided here as well. A potion is kept
 while the fight is not in doubt (``_hold``), because the engine's price of a kept potion
-is smaller than the noise of its estimates.
+is smaller than the noise of its estimates. And when a fight asks for one card to give up
+(an exhaust target) and the race scores several within ``Profile.choice_tie``, the least
+useful of them goes (``_keep_worth``): the search scores two copies of one card as far
+apart as that, so among such cards its own pick is chance.
 
 Relics need no rule of their own inside a fight: the engine simulates each of them, so a
 move that is better for a relic already scores better. ``Profile.relic_tie`` is the one
@@ -30,6 +33,7 @@ CORES = os.cpu_count() or 1
 EXACT_RULES = {"lost_position", "illegal_fallback"}   # engine picks that are not a judgement between values
 SAFE_WIN = 0.90      # a held potion waits while the best other move wins at least this often...
 DRINK_GAIN = 0.05    # ...unless drinking it adds this much win chance
+GIVE_UP = ("exhaust_from_hand",)   # card choices that take the chosen card out of the fight
 _pool: ThreadPoolExecutor | None = None
 
 
@@ -37,7 +41,8 @@ _pool: ThreadPoolExecutor | None = None
 class Decision:
     action: dict                 # the engine-dialect action to apply
     rule: str                    # "engine:<its rule>", "race" (the race changed the pick), "race=engine", "relic" (a relic
-                                 # decided between equal moves) or "hold" (a potion was kept)
+                                 # decided between equal moves), "choice" (the least useful of equal cards was given up)
+                                 # or "hold" (a potion was kept)
     rows: list = field(default_factory=list)       # the main search's per-option rows
     raced: list = field(default_factory=list)      # [{"action", "score", "visits"}] when a race ran
     sims: int = 0                # simulations spent
@@ -140,6 +145,30 @@ def _relic_gain(rs, state, rows) -> list:
     return out
 
 
+def _keep_worth(state, rows) -> list | None:
+    """For a choice of one card to give up (``GIVE_UP``): how much each option's card is worth keeping.
+
+    0 for a Status or Curse, 1 for a starter Strike or Defend, 2 for an upgraded one, 3 for any other
+    card. ``None`` when the open decision is not such a choice or an option does not name one card.
+    """
+    try:
+        choice = state.pending_choice()
+    except Exception:
+        return None
+    if not choice or choice.get("kind") not in GIVE_UP or (choice.get("max_select") or 1) != 1:
+        return None
+    cards = {c.get("index"): c for c in choice.get("cards") or []}
+    out = []
+    for row in rows:
+        picked = row["action"].get("selection") or [row["action"].get("index")]
+        card = cards.get(picked[0]) if len(picked) == 1 else None
+        if card is None:
+            return None
+        starter = str(card.get("id") or "").startswith(("STRIKE_", "DEFEND_"))
+        out.append(0 if card.get("type") in ("Status", "Curse") else (2 if card.get("upgraded") else 1) if starter else 3)
+    return out
+
+
 def decide(rs, state, profile: Profile, seed=0, carry=(None, None), hold=False) -> Decision:
     """Choose the action to play in ``state`` (an engine ``CombatState`` with a decision open).
 
@@ -153,6 +182,8 @@ def decide(rs, state, profile: Profile, seed=0, carry=(None, None), hold=False) 
                 c_puct=profile.c_puct if profile.c_puct is not None else c_puct_for(profile.sims, threads))
     if profile.leaf_playouts is not None:
         main["leaf_playouts"] = profile.leaf_playouts
+    if profile.matched_luck:
+        main["common_random_numbers"] = True
     result = rs.mcts_recommend(state, **main)
     rows = result.get("actions") or []
     if not rows:
@@ -176,6 +207,8 @@ def decide(rs, state, profile: Profile, seed=0, carry=(None, None), hold=False) 
             crown(result, out.action, "pilot_race", "the best of the close moves after searching each on its own")
         elif out.rule == "relic":
             crown(result, out.action, "pilot_relic", "of the moves the search holds equal, the one a held relic gains from")
+        elif out.rule == "choice":
+            crown(result, out.action, "pilot_choice", "of the cards the search holds equal, the least useful is given up")
         elif out.rule == "hold":
             crown(result, out.action, "pilot_hold", "the potion is kept: the fight is not in doubt without it")
     out.seconds = time.perf_counter() - started
@@ -210,15 +243,23 @@ def _race(rs, state, profile, knobs, seed, rows, best, out: Decision) -> None:
                 hp_n[i] += extra.get("hp_n") or 0
     score = [v / n if n else float("-inf") for v, n in zip(value, visits)]
     win = max(range(len(close)), key=lambda i: (score[i], close[i] is best))
-    by_relic = False
+    by_relic = by_worth = False
     near = [i for i in range(len(close)) if score[i] >= score[win] - profile.relic_tie]
     if profile.relic_tie > 0 and len(near) > 1:        # equal as far as the search can tell: the relics decide
         gain = dict(zip(near, _relic_gain(rs, state, [close[i] for i in near])))
         fed = max(near, key=lambda i: (gain[i], score[i], close[i] is best))
         by_relic, win = gain[fed] > gain[win], fed if gain[fed] > gain[win] else win
+    near = [i for i in range(len(close)) if score[i] >= score[win] - profile.choice_tie]
+    if profile.choice_tie > 0 and len(near) > 1:       # cards the search holds equal: give up the least useful
+        worth = _keep_worth(state, [close[i] for i in near])
+        if worth is not None:
+            worth = dict(zip(near, worth))
+            least = min(near, key=lambda i: (worth[i], -score[i], close[i] is not best))
+            by_worth, win = worth[least] < worth[win], least if worth[least] < worth[win] else win
     out.raced = [{"action": row["action"], "score": round(score[i], 4), "visits": visits[i]} for i, row in enumerate(close)]
     out.action = close[win]["action"]
-    out.rule = ("relic" if by_relic else "race") if close[win] is not best else "hold" if out.rule == "hold" else "race=engine"
+    out.rule = (("choice" if by_worth else "relic" if by_relic else "race") if close[win] is not best
+                else "hold" if out.rule == "hold" else "race=engine")
     out.sims += len(jobs) * profile.race_sims
     out.p_win = close[win].get("p_win")
     out.hp = hp_sum[win] / hp_n[win] if hp_n[win] else close[win].get("mean_final_hp")

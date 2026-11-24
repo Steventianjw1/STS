@@ -3,10 +3,11 @@
 The mod starts its advisor through ``SimAdvisor.cmd`` when that file sits next to
 SpireMentor.dll (its own developer hook, ahead of the packaged exe). ``install.sync``
 writes that file to start this module, which runs Mentor's advisor from its published
-source (bridge, state mirror, card selections, coach and logs all unchanged) against the
-installed engine and replaces one thing: the combat search behind each recommendation.
-Mentor's Autobattle then plays the pilot's pick, so the agent's own Autobattle bridge
-needs no change.
+source (bridge, state mirror, coach and logs all unchanged) against the installed engine
+and replaces one thing: the combat search behind each recommendation, and behind each
+card choice a fight opens (which card to exhaust, which generated card to take), which
+Mentor answers with that same search. Mentor's Autobattle then plays the pilot's pick,
+so the agent's own Autobattle bridge needs no change.
 
 Any failure inside the pilot falls back to Mentor's own search for that decision; a
 fight is never left without advice.
@@ -32,13 +33,13 @@ logger = logging.getLogger("sts_agent.pilot")
 
 
 def install(advisor, rs) -> None:
-    """Route the advisor's main combat search through the pilot."""
+    """Route the advisor's combat search, for a move and for a card choice inside a fight, through the pilot."""
     table, tuned = engine.encounters(rs), load_tuned()
     core = types.SimpleNamespace(mcts_recommend=rs.mcts_recommend, mcts_score_action_forced=rs.mcts_score_action_forced,
                                  state_to_dict=rs.state_to_dict)
     turn = threading.local()
     fights: dict = {}
-    mentor_advice = advisor.compute_combat_advice
+    mentor_advice, mentor_screen = advisor.compute_combat_advice, advisor.compute_screen_advice
 
     def profile_of(state):
         wire = rs.state_to_dict(state)
@@ -53,18 +54,31 @@ def install(advisor, rs) -> None:
         act = entry["act"] if entry else key[0]
         return encounter, tier, tuned.get(encounter) or default_profile(tier, act)
 
-    def combat_advice(state, cfg, sims, mirror=None):
+    def enter(state):
         run = state.get("run_state") or {}
         turn.room = state.get("room_type")
         turn.fight = (state.get("act") or run.get("act"), state.get("floor") or run.get("floor"), turn.room)
+
+    def combat_advice(state, cfg, sims, mirror=None):
+        enter(state)
         turn.main = True                      # the next search is this decision's; later ones only draw the turn plan
         try:
             return mentor_advice(state, cfg, sims, mirror)
         finally:
             turn.main = False
 
+    def screen_advice(state, *args, **kwargs):
+        if state.get("combat") is None:       # a deck screen between fights: not the pilot's
+            return mentor_screen(state, *args, **kwargs)
+        enter(state)
+        turn.choice = True                    # every search in here ranks a card choice of this fight, one per card picked
+        try:
+            return mentor_screen(state, *args, **kwargs)
+        finally:
+            turn.choice = False
+
     def recommend(state, **kwargs):
-        if not getattr(turn, "main", False):
+        if not getattr(turn, "main", False) and not getattr(turn, "choice", False):
             return core.mcts_recommend(state, **kwargs)
         turn.main = False
         try:
@@ -78,6 +92,7 @@ def install(advisor, rs) -> None:
             return core.mcts_recommend(state, **kwargs)
 
     advisor.compute_combat_advice = combat_advice
+    advisor.compute_screen_advice = screen_advice
     rs.mcts_recommend = recommend
 
 
