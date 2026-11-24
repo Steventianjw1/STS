@@ -527,7 +527,7 @@ function renderRoute(route) {
   svg.append(edges, marks);
   $("mapmeta").textContent = "Act " + (route.act ?? "?") + ((route.bosses || []).length ? " · boss " + route.bosses.map(b => b.name).join(" + ") : "");
   if (!p) { plan.append(el("p", "muted", "The model has not stored a route plan for this act yet.")); return; }
-  if (!samePlan) plan.append(el("p", "muted", "The stored plan is from act " + p.act + "; a new one is made on this act's first map screen."));
+  if (!samePlan) plan.append(el("p", "muted", "The stored plan is from act " + p.act + "; a new one is made with this act's ancient choice, or on its first map screen."));
   plan.append(el("span", "label", "Plan" + (p.set_at_floor != null ? " · set on floor " + p.set_at_floor : "")), el("p", null, p.text || "—"));
   if ((p.trajectory || []).length) {
     plan.append(el("span", "label", "Rooms ahead · projected HP"));

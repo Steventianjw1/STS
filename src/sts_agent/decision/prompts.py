@@ -20,7 +20,7 @@ from ..game.characters import is_silent
 from ..strategic import silent
 from .models import DecisionFrame, route_plan_mode
 
-DECISION_PROMPT_VERSION = "decision-prompt-30"
+DECISION_PROMPT_VERSION = "decision-prompt-31"
 DEFAULT_MAX_INPUT_BYTES = None
 MENTOR_PILOT, OWN_PILOT = "spire_mentor_autobattle", "sts_agent_pilot"   # screen.combat_pilot: whose search plays the fights
 DEFAULT_OBJECTIVE = ("Win the run (ordinary victory) with the current character at the current difficulty. "
@@ -91,7 +91,7 @@ _MAP = """\
 On maps ground every route claim in the SAME path_id you select. Do not borrow a different path's boss HP, risk or rest count. Distinguish death_risk_before_next_rest_pct from death_risk_before_boss_pct and expected_boss_arrival_hp_pct; describe these as rough pooled simulations, never calibrated survival probabilities. If choosing safety to the next rest over better boss projections, say so. Steps are relative to this path, not absolute floors. Check rest_steps and elite_steps before promising a rest before an elite. Explain material changes from the previous route in terms of current deck, HP, preparations or the explicit risk tradeoff. Your route_plan is shown back on every later reward, shop, rest and event screen of this act, so make it concrete about the next rest site, the elites you accept and what the boss requires."""
 
 _REST = """\
-At rest sites, first read current_facts.route_context for what follows this room (the boss next, an elite or several fights before another rest site, or easier rooms), then compare the best smith upgrade against the survival value of resting for exactly those rooms. An upgrade is the better use of the site only when your HP already covers what comes before the next chance to heal; without route_context the coming rooms are unknown and resting at low HP is the cautious reading. Prefer the standing plan's upgrade_targets when smithing unless the offered grid shows a better legal target."""
+At rest sites, first read current_facts.route_context for what follows this room (the boss next, an elite or several fights before another rest site, or easier rooms), then compare the best smith upgrade against the survival value of resting for exactly those rooms. An upgrade is the better use of the site only when your HP already covers what comes before the next chance to heal; without route_context the coming rooms are unknown and resting at low HP is the cautious reading. Smith and the card it upgrades are one decision: weigh resting against the upgrade you would actually make, and name that card as smith_card. Prefer the standing plan's upgrade_targets unless another card in your deck is the better upgrade now."""
 
 _ELITE_ACT1 = """\
 ACT 1: TAKE ELITES AND SOLVE THEM. An elite pays a relic on top of gold and a card reward, a relic keeps paying for the rest of the run, and act 1 elites are the cheapest elites in the game to beat, most of all for Ironclad with his strong starting deck and the healing his starting relic gives after every fight. So in act 1 a route with elites is the default and routing around them is the exception:
@@ -109,11 +109,12 @@ What changes from act 1 is how much risk to accept, because these elites hit har
 Say in route_plan how many elites you accept, where the rest sites fall around them, and what would remove or add one."""
 
 _ANCIENT_ROUTE = """\
-CHOOSE THE RELIC AND THE ROUTE TOGETHER. The act map is readable on this screen, before its first map screen. The relic you take decides how hard a route this act can carry, and the map decides what each relic is worth, so settle both in this one decision and return the route as route_plan.
+CHOOSE THE RELIC AND THE ROUTE TOGETHER. This holds at the ancient of every act, not only the first. The act map is readable on this screen, before the map screen on which you travel. The relic you take decides how hard a route this act can carry, and the map decides what each relic is worth, so settle both in this one decision and return the route as route_plan.
 - Read the map first: decision_support.paths.candidates lists routes from the act's first row to the boss, with the fields a map screen gives (nodes in order, elite_steps and rest_steps counted along that route, next_rest, death_risk_before_next_rest_pct, death_risk_before_boss_pct, expected_boss_arrival_hp_pct, p10 values for the worst tenth of replays, elite_preparation for the rooms before each elite that can fix the deck, selected_for for what the route is best at). map_outlook summarises every route, and each option's route_outlook re-projects the map from that option's HP, max HP and gold. All of these are rough pooled simulations of other players' fights from your current state; none includes what a relic does, so add that yourself.
 - A relic that makes the deck stronger from the first fights (upgraded or better card rewards, a strong card or relic now, energy, draw, damage or Block every fight, a bonus in elite fights) pays for an aggressive route: more elites, an earlier first elite, more fights before a rest site. Take such a relic FOR such a route, and plan the route that cashes it in.
 - A relic whose value arrives late, depends on rooms this map may not give, or costs HP, max HP or deck quality now calls for a reserved route: fewer and later elites, hallway fights and a shop or rest site before the first elite, a rest site close behind it.
 - Read the map the other way round as well: a relic that pays per elite, shop, ? room, rest site or treasure chest is worth what the routes actually contain (paths, map_outlook.route_ranges), and a map that forces an early elite or offers few rest sites raises the value of a relic that makes the early act safer.
+- When decision_support has no paths (the route statistics could not be loaded), the map is still on this screen as current_facts.screen_details.map: nodes with their type and children, next_options as the act's first row, and the bosses. Trace the routes from it yourself, count their elites, rest sites and shops, and plan the route all the same, with an empty path_id and no projected numbers.
 - Choose the pair that gives the best run, not the best relic in isolation. Say in reason which route the relic is taken for. The elite stance for this act, below, says which way to lean when the relic leaves it open; the deck gaps it speaks of are listed here under elite_gaps_by_act and map_outlook.elite_gaps."""
 
 _GRID = """\
@@ -270,10 +271,13 @@ You choose one candidate per response; after it resolves you will see the new st
 _C_MAP = f"""\
 On this map screen you may add a key "route_plan": {{"path_id": "<a decision_support.paths.candidates path_id whose first_action_id is your action_id, or empty>", "plan": "<the route you intend for the rest of this act and why>", "change_course_if": "<observable conditions that would make you change route>"}}. Include it when route_plan_status shows no plan or any trigger; omit it to keep the previous plan.
 
-If your chosen immediate destination is a RestSite/campfire, you MUST also include "rest_option": "HEAL" to rest or "rest_option": "SMITH" to upgrade. For another campfire activity, use its stable uppercase game option ID only when supported by observed relic/game text. Omit rest_option for other destinations and for fires farther along your route. Travel and this option execute as ONE decision, even when the fire is the only path: there is no second call to reconsider an unchanged rest-versus-smith choice on arrival. Compare healing against the best upgrade using current HP, deck, standing_plan.upgrade_targets and the rooms AFTER this fire on the chosen path. Do not claim this fire still lies ahead of those rooms. Full option availability is checked on arrival; an unavailable option or changed player facts causes reconsideration there. Smith opens a card picker, where you choose among the actual legal targets."""
+If your chosen immediate destination is a RestSite/campfire, you MUST also include "rest_option": "HEAL" to rest or "rest_option": "SMITH" to upgrade. For another campfire activity, use its stable uppercase game option ID only when supported by observed relic/game text. Omit rest_option for other destinations and for fires farther along your route. With "rest_option": "SMITH" you MUST also include "smith_card": "<id of the card in current_facts.deck to upgrade>"; omit smith_card with any other rest_option. Travel, this option and the upgraded card execute as ONE decision, even when the fire is the only path: there is no second call to reconsider an unchanged rest-versus-smith choice on arrival, and none to pick the card. Compare healing against the best upgrade using current HP, deck, standing_plan.upgrade_targets and the rooms AFTER this fire on the chosen path. Do not claim this fire still lies ahead of those rooms. Choose smith_card now among the deck cards that are not yet upgraded, from each card's text, decision_support.upgrade_priority and standing_plan.upgrade_targets, and say in reason what its upgrade does for the fights ahead. Full option availability is checked on arrival; an unavailable option or changed player facts causes reconsideration there. The card picker Smith opens is answered with smith_card; only if it does not offer that card do you choose again among its legal targets."""
 
 _C_ANCIENT_ROUTE = """\
-On this ancient screen you MUST add a key "route_plan": {"path_id": "<a decision_support.paths.candidates path_id, or empty if you plan a route that is not listed>", "plan": "<the route you intend for this act with the relic you chose: the first node, the elites you accept and what the deck must pick up before each, where the rest sites and shops fall, and why this relic supports that route>", "change_course_if": "<observable conditions that would make you change route>"}. It is the act's first route plan. The choice here only takes the relic; you travel to the first node on the map screen that follows, where this plan is shown back to you as your own hypothesis."""
+On this ancient screen you MUST add a key "route_plan": {"path_id": "<a decision_support.paths.candidates path_id, or empty if you plan a route that is not listed or no routes are listed>", "plan": "<the route you intend for this act with the relic you chose: the first node, the elites you accept and what the deck must pick up before each, where the rest sites and shops fall, and why this relic supports that route>", "change_course_if": "<observable conditions that would make you change route>"}. It is the act's first route plan. The choice here only takes the relic; you travel to the first node on the map screen that follows, where this plan is shown back to you as your own hypothesis."""
+
+_C_REST = """\
+On this rest site screen, if your action_id is the Smith option you MUST add a key "smith_card": "<id of the card in current_facts.deck to upgrade>". Smith and its card are ONE decision: the card picker that opens is answered with smith_card without another call, so choose the card now, among the deck cards that are not yet upgraded, from each card's text, decision_support.upgrade_priority and standing_plan.upgrade_targets. Only if the picker does not offer that card do you choose again among its legal targets. Omit smith_card for every other action."""
 
 _C_SHOP = """\
 On this shop screen, include a fourth key "shop_plan": ["<first action_id>", "<next action_id>", "proceed"]. This is the complete ordered list of intended actions, with action_id as its first entry and no repeats. Use only offered shop_purchase/proceed ids. Include proceed last to finish shopping, or end with card removal to choose its target in the picker. If saving all gold, use action_id="proceed" and shop_plan=["proceed"]. Purchases execute sequentially with state checks between them, without another model call unless the plan stops. Omission retains single-action behavior for compatibility."""
@@ -296,7 +300,7 @@ _MODULES = {
     "evidence_elite_pick": _E_ELITE_PICK, "evidence_boss_pick": _E_BOSS_PICK, "evidence_map": _E_MAP,
     "evidence_ancient": _E_ANCIENT,
     "contract": _C_BASE, "contract_map": _C_MAP, "contract_ancient_route": _C_ANCIENT_ROUTE,
-    "contract_shop": _C_SHOP, "contract_rewards": _C_REWARDS,
+    "contract_shop": _C_SHOP, "contract_rewards": _C_REWARDS, "contract_rest": _C_REST,
     "contract_tools": _C_TOOLS,
 }
 
@@ -314,7 +318,8 @@ _BY_KIND = {
     "rewards": ("noncombat",),
 }
 _DEFAULT = ("noncombat", "evidence_profile")   # relic picks, treasure and anything new
-_CONTRACT_BY_KIND = {"map": "contract_map", "shop": "contract_shop", "rewards": "contract_rewards"}
+_CONTRACT_BY_KIND = {"map": "contract_map", "shop": "contract_shop", "rewards": "contract_rewards",
+                     "rest_site": "contract_rest"}
 # Screens where the act's elite stance changes the choice: the route, and the cards bought or taken for it.
 _ELITE_STANCE_KINDS = ("map", "card_reward", "shop", "rest_site")
 
@@ -329,7 +334,7 @@ def prompt_modules(frame: DecisionFrame, *, tools: bool = False) -> list[str]:
         body = ("noncombat", "evidence_ancient", "evidence_upgrade_choice")
     else:
         body = _BY_KIND.get(kind, _DEFAULT)
-    # An ancient whose act map came with route candidates: its relic and the act's route are one decision.
+    # An ancient that shows the act map, in any act: its relic and the act's route are one decision.
     plans_route = route_plan_mode(frame) == "required"
     if plans_route:
         body = (*body, "ancient_route")

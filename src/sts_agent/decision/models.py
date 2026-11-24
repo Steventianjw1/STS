@@ -146,24 +146,53 @@ class Choice:
     route_plan: dict | None = None   # map screens only: {"path_id", "plan", "change_course_if"}
     shop_plan: tuple[str, ...] | None = None  # ordered offered actions, including action_id first
     rest_option: str | None = None  # stable campfire option ID, chosen with immediate map travel
+    smith_card: str | None = None   # deck card to upgrade, chosen in the same decision that smiths
 
 
 def route_plan_mode(frame: "DecisionFrame") -> str | None:
     """Whether this frame's choice carries a route_plan: "optional" on a map screen, "required"
-    at an ancient whose act map came with route candidates, None anywhere else.
+    at an ancient that shows the act map, None anywhere else.
 
     The ancient's relic and the act's route are one decision: the relic decides how hard a route
-    the act can carry, and the route decides what the relic is worth."""
+    the act can carry, and the route decides what the relic is worth. That holds in every act and
+    whether or not projected route candidates could be loaded: the map on the screen is enough to
+    plan from, so the plan does not come and go with the statistics service."""
     screen = frame.screen or {}
     if screen.get("during_combat"):
         return None
     if screen.get("kind") == "map":
         return "optional"
-    paths = (frame.decision_support or {}).get("paths")
-    if (screen.get("kind") == "event" and (frame.facts.get("screen_details") or {}).get("is_ancient") is True
-            and isinstance(paths, dict) and paths.get("candidates")):
-        return "required"
+    details = frame.facts.get("screen_details") or {}
+    if screen.get("kind") == "event" and details.get("is_ancient") is True:
+        paths = (frame.decision_support or {}).get("paths")
+        shown = details.get("map") if isinstance(details.get("map"), dict) else {}
+        if (isinstance(paths, dict) and paths.get("candidates")) or shown.get("next_options"):
+            return "required"
     return None
+
+
+SMITH = "SMITH"
+
+
+def smiths(frame: "DecisionFrame", action_id: Any, rest_option: Any = None) -> bool:
+    """Whether a choice smiths at a fire: Smith taken at the fire itself, or travel to a fire
+    with rest_option SMITH. Either way the card to upgrade belongs to the same decision."""
+    candidate = frame.candidate(action_id) if isinstance(action_id, str) else None
+    if not candidate or (frame.screen or {}).get("during_combat"):
+        return False
+    if candidate.get("kind") == "choose_rest_option":
+        return (candidate.get("details") or {}).get("id") == SMITH
+    return is_rest_destination(candidate) and isinstance(rest_option, str) and rest_option.strip() == SMITH
+
+
+def _card_key(text: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(text or "").lower()).strip("_")
+
+
+def names_card(text: Any, card: dict) -> bool:
+    """Whether ``text`` names this card by its ID or its display name (case, spacing and a trailing + ignored)."""
+    key = _card_key(text)
+    return bool(key) and key in (_card_key(card.get("id")), _card_key(card.get("name")))
 
 
 def is_rest_destination(candidate: dict | None) -> bool:
@@ -187,7 +216,8 @@ def _no_const(name):
     raise ChoiceError(f"nonfinite number {name}")
 
 
-def parse_choice(text: Any, frame: DecisionFrame, *, require_rest_option: bool = True) -> Choice:
+def parse_choice(text: Any, frame: DecisionFrame, *, require_rest_option: bool = True,
+                 require_smith_card: bool = True) -> Choice:
     if not isinstance(text, str):
         raise ChoiceError(f"expected text, got {type(text).__name__}")
     body = text.strip()
@@ -207,6 +237,8 @@ def parse_choice(text: Any, frame: DecisionFrame, *, require_rest_option: bool =
     at_fire = is_map and is_rest_destination(frame.candidate(data.get("action_id")))
     if at_fire and (require_rest_option or "rest_option" in data):
         want = want | {"rest_option"}
+    if smiths(frame, data.get("action_id"), data.get("rest_option")) and (require_smith_card or "smith_card" in data):
+        want = want | {"smith_card"}
     plan_mode = route_plan_mode(frame)
     if plan_mode == "required" or (plan_mode == "optional" and "route_plan" in data):
         want = want | {"route_plan"}
@@ -232,7 +264,26 @@ def parse_choice(text: Any, frame: DecisionFrame, *, require_rest_option: bool =
     return Choice(frame.frame_id, data["action_id"], reason, intent,
                   _route_plan(data["route_plan"], frame, data["action_id"]) if "route_plan" in want else None,
                   _shop_plan(data["shop_plan"], frame, data["action_id"]) if "shop_plan" in want else None,
-                  rest_option)
+                  rest_option, _smith_card(data["smith_card"], frame) if "smith_card" in want else None)
+
+
+def _smith_card(value: str, frame: DecisionFrame) -> str:
+    """The deck card named for the upgrade, as its card ID.
+
+    Checked against the observed deck only: which cards the fire accepts is known when its picker
+    opens, and a card it does not offer is chosen again there. An unobserved deck (unpatched mod)
+    leaves the name as written."""
+    name = value.strip()
+    if not name:
+        raise ChoiceError("smith_card must name the deck card to upgrade")
+    deck = frame.facts.get("deck")
+    if not isinstance(deck, list):
+        return name[:120]
+    held = [c for c in deck if isinstance(c, dict) and names_card(name, c)]
+    if not held:
+        raise ChoiceError(f"smith_card {name[:80]!r} is not a card in current_facts.deck; use the id of a deck card")
+    card = next((c for c in held if c.get("upgraded") is False), held[0])   # a copy still to upgrade, if any
+    return str(card.get("id") or card.get("name"))
 
 
 def parse_tool_request(text: Any) -> dict | None:

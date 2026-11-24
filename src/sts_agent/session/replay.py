@@ -116,7 +116,8 @@ def _validate_llm_decision(rec: dict, line_no: int) -> dict:
         last = (rec.get("attempts") or [{}])[-1].get("response_text")
         try:
             # Older traces chose travel alone; live decisions always require the merged contract.
-            c = parse_choice(last, frame, require_rest_option="rest_option" in (rec.get("choice") or {}))
+            c = parse_choice(last, frame, require_rest_option="rest_option" in (rec.get("choice") or {}),
+                             require_smith_card=(rec.get("choice") or {}).get("smith_card") is not None)
             if c.action_id != chosen:
                 problems.append(f"recorded response selects {c.action_id!r}, trace says {chosen!r}")
             plan = list(c.shop_plan) if c.shop_plan is not None else None

@@ -428,7 +428,8 @@ class ExpertDecisionStats:
                 and self.config.ancient_advisor_enabled):
             if not self.config.enabled:
                 return None
-            support = self._ancient_view(view, deadline=deadline, route_state=route_state)
+            support = self._ancient_view(view, deadline=deadline, route_state=route_state,
+                                         route_reserve_s=budget / 2)
             self._add_upgrade_evidence(view, support, deadline=deadline)
             return support
         if self.config.enabled and (view.kind == "rest_site" or
@@ -813,8 +814,10 @@ class ExpertDecisionStats:
             result["offered_cards"] = offered_answers(offered, cards, bosses, character=character)
         return result
 
-    def _ancient_view(self, view, *, deadline, route_state=None):
-        """Ancient offers vs. the observed deck and state, plus Spire Codex expert and community evidence."""
+    def _ancient_view(self, view, *, deadline, route_state=None, route_reserve_s=0.0):
+        """Ancient offers vs. the observed deck and state, plus Spire Codex expert and community evidence.
+
+        ``route_reserve_s`` is fetch time kept for the act's routes after ``deadline`` has passed."""
         from .ancient_advisor import (archetype_fit, deck_facts, expert_offer_stats, labels, relic_effects,
                                       state_comparison)
         from .route_profile import build_route_profile
@@ -880,19 +883,29 @@ class ExpertDecisionStats:
         if not amap:
             support["limitations"].append("No map on this screen (needs the patched mod's ancient-screen map); "
                                           "routes are not projected and the act variant may be unresolved.")
-        cohort, scope = [], self._scope(character, ascension, version)
-        try:
-            cohort = self._cohort(character, {}, deadline=deadline)
-            support["cohort"] = [m["username"] for m in cohort]
-            support["history_index"] = self.history.sync(self.client, cohort, scope, deadline=deadline, clock=self.clock)
-            rows = self.history.ancient_rows(cohort, scope)
-            if amap:  # the act map is readable at the ancient: its boss names the act variant
+        cohort, scope, rows = [], self._scope(character, ascension, version), []
+        if amap:  # the act map is readable at the ancient: its boss names the act variant
+            # Resolved before the history sync: on a cold index (a run's first screen) the sync can use up
+            # the whole fetch budget, and this act's routes must not be lost with it.
+            try:
                 boss_rows = [b for b in amap.get("bosses") or [] if isinstance(b, dict)]
                 map_act, method, _ = self.resolve_act(run.get("act"), [b.get("name") for b in boss_rows],
                                                       deadline=deadline, boss_ids=[b.get("id") for b in boss_rows])
                 support["scope"].update({"act_id": map_act, "act_resolution": method})
                 if map_act:
                     self._act_ids[(character, run.get("act"))] = map_act
+            except StatsUnavailable as exc:
+                support["scope"]["act_resolution"] = "unavailable:" + str(exc)
+        try:
+            cohort = self._cohort(character, {}, deadline=deadline)
+            support["cohort"] = [m["username"] for m in cohort]
+            support["history_index"] = self.history.sync(self.client, cohort, scope, deadline=deadline, clock=self.clock)
+            rows = self.history.ancient_rows(cohort, scope)
+        except StatsUnavailable as exc:
+            support["history_reason"] = str(exc)
+        except (OSError, sqlite3.Error) as exc:
+            support["history_reason"] = "history_index_" + type(exc).__name__
+        try:   # route rows are read from the local index, as far as the sync above got
             act_ids = [self._act_ids.get((character, run.get("act")))]
             if act_ids[0] is None:
                 _, _, act_ids = self.resolve_act(run.get("act"), [], deadline=deadline)
@@ -908,9 +921,9 @@ class ExpertDecisionStats:
                     marks.setdefault("gold", {})[act_id] = {"group": group, "shop_arrival_gold":
                                                             prof["shops"][group]["arrival_gold_per_visit"]}
         except StatsUnavailable as exc:
-            rows, support["history_reason"] = [], str(exc)
+            support.setdefault("history_reason", str(exc))
         except (OSError, sqlite3.Error) as exc:
-            rows, support["history_reason"] = [], "history_index_" + type(exc).__name__
+            support.setdefault("history_reason", "history_index_" + type(exc).__name__)
         hp_pct = player.get("hp") / player["max_hp"] * 100 if player.get("hp") is not None and player.get("max_hp") else None
         experts = expert_offer_stats(rows, offered, hp_pct=hp_pct, act=run.get("act"), floor=run.get("floor"),
                                      deck_ids=deck_copies,
@@ -946,8 +959,11 @@ class ExpertDecisionStats:
             o["community"] = community.get(rid)
             o["archetype_fit"] = archetype_fit(rid, archetypes, deck_ids)
         if amap and map_act:
+            # The routes keep fetch time of their own when the offers' evidence used the budget up, so the
+            # act is planned with the relic whether the statistics were cached (later acts) or not (a run's start).
             self._ancient_map_outlook(support, options, amap, map_act, runs_by_act.get(map_act) or [],
-                                      profiles.get(map_act), view, character, version, deadline=deadline,
+                                      profiles.get(map_act), view, character, version,
+                                      deadline=max(deadline, self.clock() + route_reserve_s),
                                       route_state=route_state)
         labels([o for o in options if o["relic_id"]])
         support["options"] = options

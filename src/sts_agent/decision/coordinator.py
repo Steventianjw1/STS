@@ -35,7 +35,7 @@ from ..evidence.route_paths import enumerate_routes, map_type
 from ..evidence.route_risk import agent_loss_scale, node_class
 from ..pilot.potion_context import publish as publish_potion_context
 from ..strategic import StrategicSnapshot
-from .models import Choice, DecisionFrame, is_rest_destination
+from .models import SMITH, Choice, DecisionFrame, is_rest_destination, names_card
 from .policy import LLMDecisionPolicy, model_identity
 from .prompts import MENTOR_PILOT, OWN_PILOT
 from .screens import CAPABILITIES, MOD_REVISION, ScreenView, automatic_action, build_view
@@ -159,6 +159,8 @@ class RunCoordinator:
         self._offers_answered: dict = {}             # held offer id -> clock time one answer was sent
         # Fingerprint of a card grid on which this agent's own toggle just made Confirm available.
         self._selection_complete: str | None = None
+        # The card named with the decision to smith, until the fire's upgrade grid opens: card and room.
+        self._smith_plan: dict | None = None
         self._handoff = False                        # True only while deciding a held offer
         self.whatif = WhatIfTools(self) if what_if_tools else None
         self.lim = limits or Limits()
@@ -1053,12 +1055,18 @@ class RunCoordinator:
         self._selection_complete = None
         if completed:
             cand = next((c for c in v.candidates if c["kind"] == "confirm_selection"), None)
+        # The card to upgrade was chosen together with Smith; the grid that Smith opens is not a new decision.
+        smith = self._smith_target(v)
+        if cand is None:
+            cand = smith
         if cand is not None:
             aid = cand["action_id"]
             if (v.fingerprint, aid) in self.stats.blocked:
                 raise _Stop(STOP_REPEATED_REJECTIONS, "forced progress action was rejected in this state", v)
-            source = "single_map_destination" if v.kind == "map" else "forced_progress"
-            reason = ("Only one map destination is available." if v.kind == "map"
+            source = ("smith_plan" if cand is smith else
+                      "single_map_destination" if v.kind == "map" else "forced_progress")
+            reason = ("Chosen together with the decision to smith." if cand is smith
+                      else "Only one map destination is available." if v.kind == "map"
                       else "Confirm the selected cards." if v.kind == "card_select" and
                       v.facts["screen_details"].get("preview_showing")
                       else "The card just selected completed the selection; confirm it." if completed
@@ -1103,7 +1111,8 @@ class RunCoordinator:
                                                                "turn_intent": result.choice.turn_intent,
                                                                "route_plan": result.choice.route_plan,
                                                                "shop_plan": result.choice.shop_plan,
-                                                               "rest_option": result.choice.rest_option},
+                                                               "rest_option": result.choice.rest_option,
+                                                               "smith_card": result.choice.smith_card},
                             attempts=result.attempts, error_kind=result.error_kind, diagnostic=result.diagnostic,
                             history_dropped=result.history_dropped, support_trim=result.support_trim,
                             provider_retries=result.provider_retries, tool_calls=result.tool_calls,
@@ -1135,6 +1144,34 @@ class RunCoordinator:
             self._execute_reward_batch(seq, ch, binding, v)
         else:
             return self._execute_action(seq, cand, ch, binding, v)
+
+    def _smith_target(self, v: ScreenView) -> dict | None:
+        """The upgrade grid's card that was named with the decision to smith, or None.
+
+        The plan holds only for the grid that Smith opens at the same fire. It is spent on the first
+        screen that is not that fire, so a grid without the named card (not upgradable, already
+        upgraded) is decided by the model among the legal targets, as any other grid."""
+        plan = self._smith_plan
+        if plan is None:
+            return None
+        same_room = v.encounter_key == plan["encounter_key"]
+        if same_room and v.kind == "rest_site":
+            return None   # Smith is sent but its grid is not open yet
+        self._smith_plan = None
+        details = v.facts.get("screen_details") or {}
+        if (not same_room or v.kind != "card_select" or details.get("screen_type") != "upgrade"
+                or details.get("preview_showing") or v.facts.get("combat_context")):
+            return None
+        offered = [c for c in v.candidates if c["kind"] == "select_card" and names_card(plan["card"], c["details"])
+                   and (v.fingerprint, c["action_id"]) not in self.stats.blocked]
+        offered.sort(key=lambda c: c["details"].get("is_upgraded") is True)   # a copy still to upgrade first
+        if self.rec:
+            self.rec.event("smith_plan_step", {"card": plan["card"], "offered": len(offered),
+                                               "action_id": offered[0]["action_id"] if offered else None})
+        if not offered:
+            self.log(f"card_select: the fire does not offer {plan['card']} for an upgrade; choosing among its targets")
+            return None
+        return offered[0]
 
     def _execute_rest_plan(self, seq, cand, ch, binding, view):
         """Travel and select the already-decided campfire option with fresh bindings."""
@@ -1344,6 +1381,8 @@ class RunCoordinator:
                 self._selection_complete = post.fingerprint   # the next decision on this exact grid is Confirm
         if cand["kind"] == "use_potion" and self.combat:
             self.combat.potions_used += 1
+        if cand["kind"] == "choose_rest_option" and cand["details"].get("id") == SMITH and ch.smith_card:
+            self._smith_plan = {"card": ch.smith_card, "encounter_key": post.encounter_key}
         if cand["kind"] == "choose_map_node" and self.map_memory is not None:
             d = cand["details"]
             self.map_memory["chosen"] = {"col": d.get("col"), "row": d.get("row"), "type": map_type(d.get("type"))}
