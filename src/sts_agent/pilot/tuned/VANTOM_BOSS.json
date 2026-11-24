@@ -1,0 +1,101 @@
+{
+ "evidence": {
+  "chosen": "default",
+  "kind": "simulator, candidates at Mentor's search budget",
+  "last_round": {
+   "fights": 96,
+   "ranked": [
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 18.64,
+     "hp_lost": 42.2,
+     "name": "default",
+     "potions_used": 0.68,
+     "race_changed_per_fight": 2.96,
+     "seconds_per_decision": 0.258,
+     "value": 0.5472,
+     "win_rate": 0.7917
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 18.94,
+     "hp_lost": 41.9,
+     "name": "dominance",
+     "potions_used": 0.7,
+     "race_changed_per_fight": 3.2,
+     "seconds_per_decision": 0.283,
+     "value": 0.5467,
+     "win_rate": 0.7917
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 19.5,
+     "hp_lost": 41.33,
+     "name": "wide-turns",
+     "potions_used": 0.72,
+     "race_changed_per_fight": 3.42,
+     "seconds_per_decision": 0.253,
+     "value": 0.5465,
+     "win_rate": 0.7917
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 19.45,
+     "hp_lost": 41.39,
+     "name": "potions-half",
+     "potions_used": 0.72,
+     "race_changed_per_fight": 3.43,
+     "seconds_per_decision": 0.254,
+     "value": 0.5465,
+     "win_rate": 0.7917
+    },
+    {
+     "errors": 0,
+     "fights": 96,
+     "hp_end": 17.83,
+     "hp_lost": 43.0,
+     "name": "mentor",
+     "potions_used": 0.71,
+     "race_changed_per_fight": 0.0,
+     "seconds_per_decision": 0.211,
+     "value": 0.5457,
+     "win_rate": 0.7917
+    }
+   ],
+   "round": 3
+  },
+  "snapshots": 12,
+  "versus_default": {},
+  "versus_mentor": {
+   "fights": 96,
+   "hp_end": 0.8021,
+   "hp_end_se": 0.6488,
+   "value": 0.0015,
+   "value_se": 0.0336,
+   "won": 0.0,
+   "won_se": 0.0148
+  }
+ },
+ "profile": {
+  "c_puct": null,
+  "dominance_pruning": false,
+  "draw_widening_c": null,
+  "endturn_widening_alpha": null,
+  "endturn_widening_c": null,
+  "leaf_playouts": null,
+  "pick": "race",
+  "race_band": 0.03,
+  "race_reps": 2,
+  "race_sims": 4000,
+  "race_width": 4,
+  "rollout_policy": null,
+  "sims": 32000,
+  "threads": 8,
+  "win_hp_carry": null,
+  "win_potion_carry": null
+ }
+}
