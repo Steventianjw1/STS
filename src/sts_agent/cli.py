@@ -30,7 +30,7 @@ from pathlib import Path
 
 from . import AGENT_VERSION, STS2MCP_SOURCE_DESCRIBE
 from .game.client import GameClient, GameClientError, parse_mod_version
-from .config import load_config
+from .config import DEFAULT_CONFIG_FILE, load_config
 from .evidence import enemy_patterns
 from .game import game_pin
 from .decision.coordinator import LLM_PROVENANCE_LIVE, LLM_PROVENANCE_SCRIPTED, RunCoordinator
@@ -39,6 +39,7 @@ from .decision.offline import ScriptedTextModel
 from .decision.policy import LLMDecisionPolicy, model_identity
 from .game.autobattle import MentorAutobattle
 from .pilot import install as pilot_install
+from .pilot.potion_context import context_path as pilot_potion_context_path
 from .decision.prompts import DECISION_PROMPT_VERSION, DEFAULT_OBJECTIVE, MENTOR_PILOT, OWN_PILOT
 from .decision.screens import CAPABILITIES, MOD_REVISION, build_view, capability_table
 from .game.observation import normalize, summarize
@@ -57,11 +58,38 @@ from .session.trace import LLM_TRACE_FORMAT_VERSION, TraceRecorder, new_session_
 SOURCE_VERIFIED_MOD = "0.4.0 + commits through 55e0648 (STS2 v0.107 compatibility fix)"
 
 
+PROVIDERS = {"deepseek": DeepSeekTextModel, "anthropic": AnthropicTextModel}
+PROVIDER_LABELS = {"deepseek": "DeepSeek", "anthropic": "Claude"}
+
+
+def provider_id(name) -> str:
+    """The provider a configured or typed name means; "claude" is the Anthropic one."""
+    key = str(name or "").strip().lower()
+    return "anthropic" if key == "claude" else key
+
+
+def default_model(cfg, provider: str) -> str | None:
+    """The model a provider calls when none is named for it."""
+    if provider == "deepseek":
+        return os.environ.get("DEEPSEEK_MODEL") or None
+    return (cfg.llm.anthropic_model or None) if provider == "anthropic" else None
+
+
+def provider_effort(cfg, provider: str) -> str | None:
+    return cfg.llm.anthropic_effort if provider == "anthropic" else cfg.llm.deepseek_reasoning_effort
+
+
+def _env_path(args) -> Path:
+    return Path(args.config).resolve().parent / ".env" if args.config else Path(".env")
+
+
 def _build(args):
-    load_env(Path(args.config).resolve().parent / ".env" if args.config else ".env")
+    load_env(_env_path(args))
     cfg, used = load_config(args.config)
-    if cfg.llm.provider == "deepseek" and not cfg.llm.model:
-        cfg.llm.model = os.environ.get("DEEPSEEK_MODEL") or None
+    cfg.llm.provider = provider_id(cfg.llm.provider)
+    chosen = provider_id(getattr(args, "provider", None))
+    if chosen and chosen != cfg.llm.provider:
+        cfg.llm.provider, cfg.llm.model = chosen, None   # [llm] model belongs to the provider the file names
     if args.base_url:
         cfg.base_url = args.base_url
     if getattr(args, "trace_dir", None):
@@ -77,6 +105,7 @@ def _build(args):
         cfg.policy = args.policy
     if getattr(args, "model", None):
         cfg.llm.model = args.model
+    cfg.llm.model = cfg.llm.model or default_model(cfg, cfg.llm.provider)
     enemy_patterns.configure(cfg.monster_data_path, game_build=cfg.game_build)
     client = GameClient(cfg.base_url, cfg.read_timeout_s, cfg.action_timeout_s)
     return cfg, used, client
@@ -88,7 +117,7 @@ class SetupError(Exception):
 
 def _build_model(cfg):
     """The single configured provider instance shared by decisions and the strategic planner."""
-    providers = {"anthropic": AnthropicTextModel, "deepseek": DeepSeekTextModel}
+    providers = PROVIDERS
     if cfg.llm.provider not in providers:
         raise SetupError(f"unknown LLM provider {cfg.llm.provider!r} (supported: deepseek, anthropic)")
     budget = UsageBudget(max_calls=cfg.llm.max_calls_per_run, max_input_tokens=cfg.llm.max_input_tokens_per_run,
@@ -99,6 +128,13 @@ def _build_model(cfg):
         options = {}
         if cfg.llm.provider == "deepseek" and cfg.llm.deepseek_reasoning_effort is not None:
             options["reasoning_effort"] = cfg.llm.deepseek_reasoning_effort
+        if cfg.llm.provider == "deepseek":
+            options.update(stream_idle_timeout_s=cfg.llm.stream_idle_timeout_s,
+                           stream_first_token_timeout_s=cfg.llm.stream_first_token_timeout_s)
+        if cfg.llm.provider == "anthropic":
+            options["effort"] = cfg.llm.anthropic_effort
+            options.update(stream_idle_timeout_s=cfg.llm.stream_idle_timeout_s,
+                           stream_first_token_timeout_s=cfg.llm.anthropic_stream_first_token_timeout_s)
         _strategy_effort(cfg)   # a mistyped planner effort fails here, before the game is touched
         return providers[cfg.llm.provider](cfg.llm.model, max_output_tokens=cfg.llm.max_output_tokens,
                                   timeout_s=cfg.llm.timeout_s, budget=budget, **options)
@@ -208,6 +244,16 @@ def cmd_doctor(args) -> int:
 
     if cfg.game_dir:
         _doctor_game_dir(Path(cfg.game_dir), line)
+    copy = game_pin.frozen_copy(cfg.pinned_game_dir)
+    if not game_pin.is_pinned(game_pin.read_build(copy)):
+        line("WARN", f"no saved {game_pin.PINNED_GAME_BUILD} copy at {copy}; run ./start run --pin-only before Steam "
+                     f"updates the game")
+    else:
+        try:
+            line("ok", f"saved {game_pin.PINNED_GAME_BUILD} copy at {copy}: {game_pin.require_mod(copy)}")
+        except game_pin.GamePinError as e:
+            line("FAIL", str(e))
+            ok = False
     if cfg.policy == "llm" and cfg.autobattle.enabled:
         ok = _doctor_autobattle(cfg, line, client) and ok
 
@@ -442,6 +488,8 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     progress = ModelProgress(log=log, listener=hooks.model_event if hooks is not None else None)
     if hooks is not None and cfg.ui.live_thinking and hasattr(model, "stream_listener"):
         model.stream_listener = hooks.thinking   # reasoning goes to the Thinking panel only, never to traces
+    if hooks is not None and hasattr(model, "should_stop"):
+        model.should_stop = hooks.stop_requested   # a requested stop ends a streamed call that is in flight
     mod_version, run_id = _versions(client)
     session_id = new_session_id()
     run_id_source = "mod_compendium"
@@ -485,6 +533,7 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
     scope = {"step": "step", "play-combat": "combat", "play-run": "run"}[command]
     coord = RunCoordinator(client, policy, planner=planner, recorder=rec, limits=cfg.limits, scope=scope, autobattle=autobattle,
                            own_pilot=own_pilot,
+                           pilot_potion_context=pilot_potion_context_path(cfg.pinned_game_dir) if own_pilot else None,
                            offer_handoff=cfg.autobattle.offer_handoff, what_if_tools=cfg.llm.what_if_tools, hooks=hooks,
                            expert_stats=ExpertDecisionStats(cfg.expert_stats, game_build=cfg.game_build)
                            if facts_source != "synthetic" and not scripted else None,
@@ -522,11 +571,12 @@ def cmd_play_run(args) -> int:
 
 def cmd_start_run(args) -> int:
     try:
-        cfg, _, client = _build(args)
+        cfg, used, client = _build(args)
         if args.pin_only:
             copy = game_pin.frozen_copy(cfg.pinned_game_dir)
             game_pin.save_copy(copy, game_pin.verify_running(), cfg.game_dir)
             print(f"pin: {game_pin.PINNED_GAME_BUILD} is saved at {copy}")
+            print(f"pin: {game_pin.require_mod(copy)}")   # exit 2 when the copy would start without the mod
             return 0
         character, ascension = prompt_settings(args.character, args.ascension)
         if cfg.policy != "llm":
@@ -536,7 +586,8 @@ def cmd_start_run(args) -> int:
             # Same run, shown: the interface launches or adopts the game, sets the run up and plays it.
             from .ui.app import UiApp
             return UiApp(cfg, client, autostart=("new", character, ascension),
-                         setup_timeout_s=args.setup_timeout_s).run()
+                         setup_timeout_s=args.setup_timeout_s, config_path=used or DEFAULT_CONFIG_FILE,
+                         env_path=_env_path(args)).run()
         # Pinned build only: launches the saved copy when no game runs, refuses any other build.
         pilot_install.sync(cfg)
         game_pin.start_pinned(client, game_dir=cfg.game_dir, copy_root=cfg.pinned_game_dir)
@@ -572,7 +623,8 @@ def cmd_ui(args) -> int:
         cfg.ui.port = args.port
     if args.game_fraction is not None:
         cfg.ui.game_fraction = args.game_fraction
-    return UiApp(cfg, client, launch_game=not args.no_launch, open_panels=not args.no_browser).run()
+    return UiApp(cfg, client, launch_game=not args.no_launch, open_panels=not args.no_browser,
+                 config_path=used or DEFAULT_CONFIG_FILE, env_path=_env_path(args)).run()
 
 
 # -- replay ----------------------------------------------------------------------
@@ -629,7 +681,9 @@ def main(argv=None) -> int:
     ap.add_argument("--base-url", help="mod API address, e.g. http://127.0.0.1:15526")
     ap.add_argument("--policy", choices=["llm", "baseline"],
                     help="gameplay policy (default from config: llm). baseline = explicit heuristic comparison mode")
-    ap.add_argument("--model", help="provider model ID (overrides [llm] model and DEEPSEEK_MODEL)")
+    ap.add_argument("--model", help="provider model ID (overrides [llm] model and the provider's default)")
+    ap.add_argument("--provider", choices=["deepseek", "claude", "anthropic"],
+                    help="model provider for this launch (default from config: [llm] provider)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("doctor", help="check config, connectivity, versions and LLM setup (no model calls)").set_defaults(fn=cmd_doctor)
@@ -676,13 +730,14 @@ def main(argv=None) -> int:
     s = sub.add_parser("start-run", help="replace the current run and automatically set up a new run through Neow dialogue")
     for flag in ("config", "base-url", "model"):
         s.add_argument("--" + flag, default=argparse.SUPPRESS)
+    s.add_argument("--provider", choices=["deepseek", "claude", "anthropic"], default=argparse.SUPPRESS)
     s.add_argument("--character", type=character_id, help="character name or number (default: prompt)")
     s.add_argument("--ascension", type=ascension_level, help="0-10 (default: prompt)")
     s.add_argument("--setup-timeout-s", type=float, default=120.0)
     s.add_argument("--console", action="store_true",
                    help="play in this console without opening the interface")
     s.add_argument("--pin-only", action="store_true",
-                   help=f"only save the frozen {game_pin.PINNED_GAME_BUILD} game copy, then exit")
+                   help=f"only save the frozen {game_pin.PINNED_GAME_BUILD} game copy and check its mod, then exit")
     s.add_argument("--trace-dir")
     s.add_argument("--no-raw", action="store_true")
     s.add_argument("--max-actions", type=int)
@@ -693,6 +748,7 @@ def main(argv=None) -> int:
                                   "status, thinking")
     for flag in ("config", "base-url", "model"):
         u.add_argument("--" + flag, default=argparse.SUPPRESS)
+    u.add_argument("--provider", choices=["deepseek", "claude", "anthropic"], default=argparse.SUPPRESS)
     u.add_argument("--no-launch", action="store_true", help="do not start the game; only attach to one that is running")
     u.add_argument("--no-browser", action="store_true", help="do not open any window; print the page's address instead")
     u.add_argument("--port", type=int, help="localhost port of the interface (default: a free one)")

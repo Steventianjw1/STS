@@ -27,11 +27,13 @@ from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from ..evidence import boss_demands, enemy_patterns
+from ..evidence.potion_odds import drop_state
 from ..game.client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
 from ..config import Limits
 from ..session.hooks import SessionHooks
 from ..evidence.route_paths import enumerate_routes, map_type
 from ..evidence.route_risk import agent_loss_scale, node_class
+from ..pilot.potion_context import publish as publish_potion_context
 from ..strategic import StrategicSnapshot
 from .models import Choice, DecisionFrame, is_rest_destination
 from .policy import LLMDecisionPolicy, model_identity
@@ -141,7 +143,8 @@ class RunCoordinator:
     def __init__(self, client, policy: LLMDecisionPolicy, *, planner=None, recorder=None, expert_stats=None, autobattle=None,
                  own_pilot: bool = False, offer_handoff: bool = False, limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
                  facts_source: str = "observed", objective: str, what_if_tools: bool = True,
-                 state_path=None, clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
+                 state_path=None, pilot_potion_context=None, clock: Callable[[], float] = time.monotonic,
+                 sleep: Callable[[float], None] = time.sleep,
                  log: Callable[[str], None] = print, hooks: SessionHooks | None = None):
         if scope not in ("run", "combat", "step"):
             raise ValueError("scope must be run, combat or step")
@@ -150,6 +153,7 @@ class RunCoordinator:
         self.expert_stats = expert_stats
         self.autobattle = autobattle
         self.own_pilot = own_pilot                   # the agent's pilot decides inside Autobattle (it keeps potions)
+        self.pilot_potion_context = pilot_potion_context
         self.offer_handoff = offer_handoff and autobattle is not None
         self._offer_hold: bool | None = None         # Mentor's answer to the last hold request (None: not asked)
         self._offers_answered: dict = {}             # held offer id -> clock time one answer was sent
@@ -290,11 +294,23 @@ class RunCoordinator:
             self._load_state(view)
         if view.in_combat:
             self._track_encounter(view)
+        if self.pilot_potion_context is None or self.combat is None:
+            return self._play_autobattle(view)
+        combat = self.combat
+        starting_potions = combat.potions_held
+        with publish_potion_context(
+            self.pilot_potion_context, act=combat.act, floor=combat.floor,
+            drop_chance_pct=drop_state(self.route_outcomes)["next_fight_drop_chance_pct"],
+            starting_potion_count=len(starting_potions) if starting_potions is not None else None,
+        ):
+            return self._play_autobattle(view)
+
+    def _play_autobattle(self, view):
         hold = self._request_offer_hold()
         self._offers_answered.clear()
         self._autobattle_control("on", view)
         self.log("combat: handing the fight to Spire Mentor Autobattle (no LLM combat actions"
-                 + ("; offers an enemy opens come back to DeepSeek)" if hold else ")"))
+                 + ("; offers an enemy opens come back to the model)" if hold else ")"))
         if self.rec:
             self.rec.event("autobattle_started", {"source": "spire_mentor_autobattle", "encounter": view.encounter_key})
         self.hooks.step("autobattle", "Autobattle is playing this fight")
@@ -324,7 +340,7 @@ class RunCoordinator:
                 self._save_state()
                 if self.rec:
                     self.rec.event("autobattle_finished", {"source": "spire_mentor_autobattle", "screen": after.kind})
-                self.log(f"combat: Autobattle finished; DeepSeek resumes on {after.kind}")
+                self.log(f"combat: Autobattle finished; the model resumes on {after.kind}")
                 if self.scope in ("combat", "step"):
                     raise _Stop(STOP_COMBAT_ENDED, "Spire Mentor Autobattle finished", after)
                 return
@@ -450,7 +466,7 @@ class RunCoordinator:
             self.stats.offer_ai_picks += 1
             self.log(f"combat: held offer {cards} (turn side {side}) -> Mentor's own pick")
             return
-        self.log(f"combat: held offer {cards} opened in the enemy's turn -> DeepSeek decides this one choice")
+        self.log(f"combat: held offer {cards} opened in the enemy's turn -> the model decides this one choice")
         self._handoff = True
         try:
             if self._decide(v):
@@ -499,6 +515,18 @@ class RunCoordinator:
                                                                   "turn_outlook")}
         elif v.kind == "rest_site":
             self._rest_checkpoint(v)
+        elif v.kind == "rewards":
+            self._note_potion_drop(v)
+
+    def _note_potion_drop(self, v: ScreenView):
+        """Whether the fight just won dropped a potion, read from its first rewards screen (the drop counter)."""
+        last = self.route_outcomes[-1] if self.route_outcomes else None
+        run = v.facts.get("run") or {}
+        if (last is None or "potion_reward" not in last or last["potion_reward"] is not None
+                or last.get("result") == "defeat" or (last.get("act"), last.get("floor")) != (run.get("act"), run.get("floor"))):
+            return
+        items = (v.facts.get("screen_details") or {}).get("items") or []
+        last["potion_reward"] = any(x.get("type") == "potion" for x in items)
 
     def _finish_combat(self, after: ScreenView, result: str, note: str | None = None):
         """``note`` leads the recorded notes, ahead of the HP and potion accounting, so the length cap keeps it."""
@@ -523,7 +551,8 @@ class RunCoordinator:
                    "hp_damage": damage, "hp_healed": healed,
                    "hp_damage_pct": round(damage / max_hp * 100, 1) if damage is not None and max_hp else None,
                    "node_class": cls, "expected_pct": (ref["classes"].get(cls) or {}).get("mean_pct") if cls else None,
-                   "expected_p90_pct": (ref["classes"].get(cls) or {}).get("p90_pct") if cls else None}
+                   "expected_p90_pct": (ref["classes"].get(cls) or {}).get("p90_pct") if cls else None,
+                   "potion_reward": None}   # set from the rewards screen that follows (potion drop counter)
         # What the pilot did with the potions is visible only as slots that emptied during the fight.
         left = _potion_names(after.facts) if after.facts else None
         if c.potions_held is None or left is None:
@@ -574,10 +603,19 @@ class RunCoordinator:
 
     # ---------------------------------------------------------- map memory
     def _remember_map(self, v: ScreenView):
-        """Keep the act graph of the latest map screen; rooms do not show it."""
+        """Keep the act graph of the latest map screen; rooms do not show it.
+
+        An ancient shows the same graph read-only before the act's first map screen, so the map (and the
+        route planned with the ancient's choice) is known from the act's opening screen on."""
         d, run = v.facts.get("screen_details") or {}, v.facts.get("run") or {}
+        if v.kind != "map":
+            d = d.get("map") if isinstance(d.get("map"), dict) else {}
+            known = self.map_memory
+            if known and known.get("act") == run.get("act") and known.get("nodes"):
+                return   # this act's map is already held; only a map screen refreshes it and its travel state
         if not d.get("nodes"):
             return
+        self._settle_ancient_plan(v)
         self.map_memory = {"act": run.get("act"), "floor": run.get("floor"),
                            "nodes": [{"col": n["col"], "row": n["row"], "type": n["type"], "children": n["children"]}
                                      for n in d["nodes"]],
@@ -586,6 +624,22 @@ class RunCoordinator:
                            "visited": [p for p in d.get("visited") or [] if p],
                            "current": d.get("current_position")}
         self._publish_route()
+
+    def _settle_ancient_plan(self, v: ScreenView):
+        """A route planned with an ancient's choice was stored before that relic existed. On the map
+        screen that follows, the state the relic left becomes the plan's baseline, so the relic it
+        was made for (and that relic's HP or gold cost) is not read back as a reason to re-plan."""
+        plan = self.route_plan
+        if v.kind != "map" or not plan or not plan.get("made_with_ancient_choice"):
+            return
+        del plan["made_with_ancient_choice"]
+        player = v.facts.get("player") or {}
+        if plan.get("act") != (v.facts.get("run") or {}).get("act"):
+            return
+        hp, max_hp = player.get("hp"), player.get("max_hp")
+        plan.update(relics=sorted(str(r.get("id") or r.get("name")) for r in v.facts.get("relics") or []),
+                    potions=[str(p.get("id") or p.get("name")) for p in v.facts.get("potions") or []],
+                    gold=player.get("gold"), hp_pct=hp / max_hp * 100 if hp is not None and max_hp else None)
 
     def _act_boss(self, v: ScreenView) -> dict | None:
         """This act's boss as the act map shows it, with its static reference data.
@@ -789,6 +843,7 @@ class RunCoordinator:
             return  # ordinary card plays never trigger a refresh; refresh after the combat ends
         if (self.planner.assessment is not None and self.strat_facts is not None
                 and v.kind in ("rewards", "card_reward", "card_select")
+                and (v.facts.get("run") or {}).get("character") == self.strat_facts["run"]["character"]
                 and (v.facts.get("run") or {}).get("act") == self.strat_facts["run"]["act"]):
             # Fold the fight outcome, reward claims and drafted/changed cards into
             # one refresh at the next strategic choice. Preserve the old facts and
@@ -804,6 +859,7 @@ class RunCoordinator:
             relics = lambda f: [(r["id"], r["description"]) for r in (f.get("relics") or {}).get("items", [])]
             meaningful = ((facts["deck"] is not None and facts["deck"] != old["deck"])
                           or (facts["relics"] is not None and relics(facts) != relics(old))
+                          or facts["run"]["character"] != old["run"]["character"]
                           or facts["run"]["act"] != old["run"]["act"]
                           or facts["resources"]["max_hp"] != old["resources"]["max_hp"]
                           or (facts["resources"]["max_energy"] is not None and
@@ -889,7 +945,9 @@ class RunCoordinator:
             started = self.clock()
             self.hooks.step("evidence", f"Collecting expert evidence for the {v.kind} screen")
             support = self.expert_stats.for_view(
-                v, route_state={"plan": self.route_plan, "outcomes": self.route_outcomes}, act_boss=boss)
+                v, route_state={"plan": self.route_plan, "outcomes": self.route_outcomes,
+                                # The route model spends early only for Mentor's packaged advisor.
+                                "combat_delegated": self.autobattle is not None and not self.own_pilot}, act_boss=boss)
             self.last_progress += self.clock() - started  # evidence latency is not a game stall
             self._note_support(v, support)
             self.hooks.evidence(v.kind, support)
@@ -977,8 +1035,9 @@ class RunCoordinator:
             self._restore_pending = False
             self._load_state(v)
         self._track_encounter(v)
-        if v.kind == "map":
-            self._remember_map(v)
+        if v.kind == "map" or (v.kind == "event" and not v.in_combat
+                               and isinstance((v.facts.get("screen_details") or {}).get("map"), dict)):
+            self._remember_map(v)   # an ancient shows the act map read-only, before the first map screen
         self._decide(v)
 
     def _decide(self, v: ScreenView) -> bool | None:
@@ -1062,7 +1121,7 @@ class RunCoordinator:
         cand = frame.candidate(ch.action_id)
         binding = frame.bindings[ch.action_id]
         self.turn_intent = ch.turn_intent or None
-        if v.kind == "map" and ch.route_plan is not None:
+        if ch.route_plan is not None:   # a map screen, or an ancient that planned the act with its choice
             self.route_plan = _stored_route_plan(ch.route_plan, frame, v, len(self.route_outcomes))
             self._publish_route()
         self.log(f"[{seq}] {v.kind}: {cand['description']} - {ch.reason}")
@@ -1684,11 +1743,18 @@ def _stored_route_plan(plan: dict, frame, v: ScreenView, outcomes_seen: int) -> 
     path = next((p for p in (support.get("paths") or {}).get("candidates") or []
                  if plan["path_id"] and p.get("path_id") == plan["path_id"]), None)
     run, player = v.facts.get("run") or {}, v.facts.get("player") or {}
-    here = (v.facts.get("screen_details") or {}).get("current_position") or {}
+    details = v.facts.get("screen_details") or {}
+    ancient_map = details.get("map") if v.kind != "map" and isinstance(details.get("map"), dict) else None
+    here = (ancient_map if ancient_map is not None else details).get("current_position") or {}
+    start = [here.get("col"), here.get("row")]
+    if ancient_map is not None and None in start and ancient_map.get("preview_from"):
+        start = list(ancient_map["preview_from"])   # the node the act's first row hangs from
     hp, max_hp = player.get("hp"), player.get("max_hp")
     return {**plan, "act": run.get("act"), "floor": run.get("floor"),
             "coords": path["coords"] if path else None, "trajectory": path["trajectory"] if path else None,
-            "start": [here.get("col"), here.get("row")],
+            "start": start,
+            # Planned before the ancient's relic was taken: _settle_ancient_plan rebases it on the next map screen.
+            **({"made_with_ancient_choice": True} if ancient_map is not None else {}),
             "hp_pct": hp / max_hp * 100 if hp is not None and max_hp else None, "gold": player.get("gold"),
             "relics": sorted(str(r.get("id") or r.get("name")) for r in v.facts.get("relics") or []),
             "potions": [str(p.get("id") or p.get("name")) for p in v.facts.get("potions") or []],

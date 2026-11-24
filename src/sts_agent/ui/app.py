@@ -26,6 +26,8 @@ import webbrowser
 from pathlib import Path
 
 from .. import cli
+from ..config import save_llm_setting
+from ..env import load_env
 from ..game import game_pin
 from ..game.autobattle import MentorAutobattle
 from ..game.client import GameClient, GameClientError, parse_mod_version
@@ -41,11 +43,15 @@ TITLES = {"controls": "STS Agent · Controls", "log": "STS Agent · Combat log",
 
 class UiApp:
     def __init__(self, cfg, client, *, launch_game: bool = True, open_panels: bool = True, autostart=None,
-                 setup_timeout_s: float | None = None):
+                 setup_timeout_s: float | None = None, config_path=None, env_path=".env"):
         self.cfg, self.client = cfg, client
         self.launch_game, self.open_panels = launch_game, open_panels
         # ``sts-agent start-run``: ("new", character, ascension) begins that run once the game is up.
         self.autostart, self.setup_timeout_s = autostart, setup_timeout_s
+        # Where the model selector saves its choice, and the file a key added while the window is open is read from.
+        self.config_path, self.env_path = config_path, env_path
+        self._models = {cfg.llm.provider: cfg.llm.model}   # the model each provider was last given
+        self._replacing = None         # build of a game being closed to make room for the pinned one
         self.hub = UiHub()
         # Health checks use their own client so they never share a connection with the session.
         self.probe = GameClient(cfg.base_url, cfg.read_timeout_s, cfg.action_timeout_s)
@@ -75,10 +81,10 @@ class UiApp:
                       "using separate panel windows")
         area = None if self.frame_exe else windows.work_area()
         self.layout = windows.compute_layout(area, self.cfg.ui.game_fraction) if area else None
-        llm = self.cfg.llm
-        self.hub.info = {"provider": llm.provider, "model": llm.model, "autobattle": self.cfg.autobattle.enabled,
+        self.hub.info = {**self._model_info(), "autobattle": self.cfg.autobattle.enabled,
+                         "providers": [{"id": key, "label": label} for key, label in cli.PROVIDER_LABELS.items()],
                          "characters": list(CHARACTERS), "build": game_pin.PINNED_GAME_BUILD,
-                         "live_thinking": bool(self.cfg.ui.live_thinking and llm.provider == "deepseek"),
+                         "live_thinking": bool(self.cfg.ui.live_thinking),
                          "tiled": self.layout is not None, "single_window": self.frame_exe is not None}
         self._check_model()
         if not self.cfg.autobattle.enabled:
@@ -133,6 +139,8 @@ class UiApp:
         """Open the single window; adopt a game that is already open, else start the game inside it."""
         try:
             hwnd = windows.game_window()
+            if hwnd and self._other_build(hwnd):
+                hwnd = None   # never taken into the window: the mod does not load on it (see _replace_other_build)
             self._open_frame((windows.window_pid(hwnd), hwnd) if hwnd else None)
         except OSError as exc:
             self.hub.log(f"interface: could not open the window ({exc})")
@@ -205,6 +213,15 @@ class UiApp:
             self._outside_since = None
             self.hub.set_health("game", "down", "Starting the game…" if self._booting else "The game is not running")
             return
+        other = self._other_build(outside)
+        if other:   # another build stays outside; starting the pinned game closes it
+            self._outside_since = None
+            pinned = game_pin.PINNED_GAME_BUILD
+            closing = self._replacing or self._booting
+            self.hub.set_health("game", "warn" if closing else "down",
+                                f"Closing {other[1]} to start {pinned}…" if closing else
+                                f"{other[1]} is open, not {pinned}. New run closes it and starts the saved {pinned} copy")
+            return
         now = time.monotonic()
         self._outside_since = self._outside_since or now
         self.hub.set_health("game", "warn", "Bringing the game into this window…")
@@ -265,10 +282,40 @@ class UiApp:
             windows.place(windows.find_window(marker), self.layout[name])
         return ok, message
 
+    def _other_build(self, hwnd):
+        """(install folder, build) when the game showing ``hwnd`` is not the pinned build, else None."""
+        exe = windows.window_exe(hwnd)
+        folder = game_pin.install_of(exe) if exe else None
+        build = game_pin.read_build(folder) if folder else None
+        return None if folder is None or game_pin.is_pinned(build) else (folder, build or "an unreadable build")
+
+    def _replace_other_build(self, wait_s: float = 45.0):
+        """Close an open game that is not the pinned build, so the saved copy can start in its place.
+
+        Steam starts whatever it last updated to, and the mod does not load there: left open, that game
+        blocks every start. Closing its window is the game's own quit, so it saves as it always does."""
+        hwnd = windows.game_window()
+        other = self._other_build(hwnd) if hwnd else None
+        if other is None:
+            return
+        folder, build = other
+        pinned = game_pin.PINNED_GAME_BUILD
+        self._replacing = build
+        try:
+            self.hub.log(f"game: {build} is open from {folder}, but the mod only works on {pinned}; "
+                         f"closing it to start the saved {pinned} copy")
+            pid = windows.window_pid(hwnd)
+            windows.close(hwnd)
+            if not windows.wait_exit(pid, wait_s):
+                self.hub.log(f"game: {build} did not close. Close it yourself, then start the run again")
+        finally:
+            self._replacing = None
+
     def _boot_game(self):
         """Launch the pinned game copy when no game is running, as ``./start`` always did."""
         self._booting = True
         try:
+            self._replace_other_build()
             pilot_install.sync(self.cfg, self.hub.log)
             game_pin.start_pinned(self.client, game_dir=self.cfg.game_dir, copy_root=self.cfg.pinned_game_dir,
                                   log=self.hub.log, launcher=self._launcher())
@@ -291,16 +338,58 @@ class UiApp:
         return self._launch_in_frame if self.frame_exe else game_pin.launch
 
     # ------------------------------------------------------------------ health
-    def _check_model(self):
+    def _model_info(self) -> dict:
+        llm = self.cfg.llm
+        return {"provider": llm.provider, "model": llm.model, "effort": cli.provider_effort(self.cfg, llm.provider)}
+
+    def _load_env(self):
+        """Read .env again, so a key added while the window is open counts without a restart."""
+        try:
+            load_env(self.env_path)
+        except (OSError, ValueError) as exc:
+            self.hub.log(f"interface: {exc}")
+        llm = self.cfg.llm
+        llm.model = llm.model or cli.default_model(self.cfg, llm.provider)
+
+    def _check_model(self) -> str | None:
+        """Set the Model status row; returns what is missing, or None when the model can be called."""
         llm = self.cfg.llm
         key_env = "DEEPSEEK_API_KEY" if llm.provider == "deepseek" else API_KEY_ENV
         sdk = "openai" if llm.provider == "deepseek" else "anthropic"
-        problem = (f"unknown provider {llm.provider!r}" if llm.provider not in ("deepseek", "anthropic") else
-                   "no model configured (DEEPSEEK_MODEL or [llm] model)" if not llm.model else
-                   f"{key_env} is not set" if not os.environ.get(key_env) else
-                   f"the {sdk} package is not installed" if importlib.util.find_spec(sdk) is None else None)
+        problem = (f"unknown provider {llm.provider!r}" if llm.provider not in cli.PROVIDERS else
+                   "no model configured (DEEPSEEK_MODEL in .env, or [llm] model)" if not llm.model else
+                   f"{key_env} is not set: add it to .env" if not (os.environ.get(key_env) or "").strip() else
+                   f"the {sdk} package is not installed (pip install {sdk})"
+                   if importlib.util.find_spec(sdk) is None else None)
         self.hub.set_health("model", "down" if problem else "ok",
                             problem or f"{llm.provider}:{llm.model} configured; not called yet")
+        return problem
+
+    def _set_provider(self, name) -> tuple[bool, str]:
+        """The model selector: the chosen provider plays the next run, and the choice is saved to the config."""
+        provider = cli.provider_id(name)
+        if provider not in cli.PROVIDERS:
+            return False, f"unknown model provider {name!r}"
+        llm = self.cfg.llm
+        with self._lock:
+            if self.hub.session_active() or (self._session is not None and self._session.is_alive()):
+                return False, "Stop the session before changing the model"
+            self._models[llm.provider] = llm.model
+            llm.provider, llm.model = provider, self._models.get(provider)
+            self._load_env()
+        self.hub.set_info(**self._model_info())
+        problem = self._check_model()
+        label = f"{cli.PROVIDER_LABELS[provider]} ({llm.model or 'no model'})"
+        saved = ""
+        try:
+            if self.config_path:
+                save_llm_setting(self.config_path, "provider", provider)
+        except (OSError, ValueError) as exc:
+            self.hub.log(f"interface: the model choice was not saved ({exc})")
+            saved = " (this launch only: the choice could not be saved)"
+        if problem:
+            return False, f"{label} selected, but {problem}"
+        return True, f"{label} plays the next run{saved}"
 
     def _health_loop(self):
         last_autobattle = 0.0
@@ -392,6 +481,8 @@ class UiApp:
             except ValueError as exc:
                 return False, str(exc)
             return self._start_session("new", character, ascension)
+        if cmd == "provider":
+            return self._set_provider(body.get("provider"))
         if cmd == "snap":
             return self.snap()
         if cmd == "launch":
@@ -424,8 +515,10 @@ class UiApp:
     def _run_session(self, mode, character, ascension):
         hub, cfg, client = self.hub, self.cfg, self.client
         try:
+            self._load_env()
             model = cli._build_model(cfg)   # fails before anything touches the game
             if mode == "new":
+                self._replace_other_build()
                 pilot_install.sync(cfg, hub.log)
                 game_pin.start_pinned(client, game_dir=cfg.game_dir, copy_root=cfg.pinned_game_dir, log=hub.log,
                                       launcher=self._launcher())

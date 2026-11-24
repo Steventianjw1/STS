@@ -17,7 +17,7 @@ from .models import (
     FAILED, INVALID_INPUT, UNCHANGED, UPDATED, InputError, OutputError,
     PlannerResult, StrategicAssessment, StrategicSnapshot, parse_assessment,
 )
-from .prompts import PROMPT_VERSION, build_user_message, system_instruction
+from .prompts import build_user_message, prompt_version_for, system_instruction
 
 
 class TextModel(Protocol):
@@ -38,9 +38,8 @@ class StrategicPlanner:
                          else {})
         self._transcript = Path(transcript_path) if transcript_path else None
         self.progress = progress or ModelProgress()
-        # True when native Autobattle plays the fights: the prompt then prices potions and per-play costs for it.
-        # potions_held: the agent's own pilot decides inside Autobattle and keeps potions for the fights in doubt.
-        self._system = system_instruction(combat_delegated=combat_delegated, potions_held=potions_held)
+        self._combat_delegated = combat_delegated
+        self._potions_held = potions_held
         self.reset()
 
     # -- state -----------------------------------------------------------------
@@ -82,6 +81,10 @@ class StrategicPlanner:
         if latest is not None and snapshot.revision < latest:
             return self._invalid(f"revision {snapshot.revision} is older than the latest checked revision {latest}")
 
+        character = (snapshot.facts.get("run") or {}).get("character")
+        version = prompt_version_for(character)
+        if self._assessment is not None and self._assessment.prompt_version != version:
+            self._assessment = self._assessed = None
         self._revisions[snapshot.revision] = snapshot.snapshot_id
         self._latest_checked = snapshot
 
@@ -90,7 +93,7 @@ class StrategicPlanner:
             return self._result(UNCHANGED, snapshot, model_called=False,
                                 diagnostic=None if self._assessed.snapshot_id == snapshot.snapshot_id else
                                 f"facts unchanged; reusing assessment of revision {self._assessment.input_revision}")
-        return self._call_model(snapshot, reason)
+        return self._call_model(snapshot, reason, character, version)
 
     def _refresh_reason(self, snap: StrategicSnapshot, force: bool) -> str | None:
         if self._assessment is None:
@@ -105,7 +108,9 @@ class StrategicPlanner:
             return "new combat_finished revision"
         return None
 
-    def _call_model(self, snap: StrategicSnapshot, reason: str) -> PlannerResult:
+    def _call_model(self, snap: StrategicSnapshot, reason: str, character: str | None, version: str) -> PlannerResult:
+        system = system_instruction(character=character, combat_delegated=self._combat_delegated,
+                                    potions_held=self._potions_held)
         self.last_attempts = []
         correction = None
         for attempt in (1, 2):
@@ -116,13 +121,13 @@ class StrategicPlanner:
             self.last_attempts.append(record)
             try:
                 with self.progress.call("strategy", attempt, revision=snap.revision, retry_kind=retry_kind):
-                    text = self._model.complete(system=self._system, user=user, **self._options)
+                    text = self._model.complete(system=system, user=user, **self._options)
             except Exception as e:  # provider failures are never retried
                 diag = f"model call failed ({reason}): {type(e).__name__}: {e}"
                 record["error"] = diag
                 call = getattr(self._model, "last_call", None)
                 record["call"] = call.to_dict() if hasattr(call, "to_dict") else None
-                self._log(snap, user, None, FAILED, diag)
+                self._log(snap, version, user, None, FAILED, diag)
                 return self._result(FAILED, snap, model_called=True, diagnostic=diag)
             call = getattr(self._model, "last_call", None)
             record["call"] = call.to_dict() if hasattr(call, "to_dict") else None
@@ -136,7 +141,7 @@ class StrategicPlanner:
                 self.progress.emit("reply_rejected", "strategy", attempt, error=str(e), revision=snap.revision)
                 record["error"] = str(e)
                 diag = f"model output rejected ({reason}): {e}"
-                self._log(snap, user, text, FAILED, diag)
+                self._log(snap, version, user, text, FAILED, diag)
                 if attempt == 2:
                     return self._result(FAILED, snap, model_called=True,
                                         diagnostic=f"invalid after one corrective retry: {diag}")
@@ -147,9 +152,9 @@ class StrategicPlanner:
         self._assessment = StrategicAssessment(
             run_id=snap.run_id, input_revision=snap.revision, snapshot_id=snap.snapshot_id,
             facts_hash=snap.facts_hash, data_source=snap.data_source, live_validated=snap.live_validated,
-            prompt_version=PROMPT_VERSION, content=content)
+            prompt_version=version, content=content)
         self._assessed = snap
-        self._log(snap, user, text, UPDATED, reason)
+        self._log(snap, version, user, text, UPDATED, reason)
         return self._result(UPDATED, snap, model_called=True, diagnostic=reason)
 
     # -- results -----------------------------------------------------------------
@@ -174,13 +179,13 @@ class StrategicPlanner:
                              model_called=False, diagnostic=diagnostic)
 
     # -- local transcript ----------------------------------------------------------
-    def _log(self, snap, user, text, status, diagnostic) -> None:
+    def _log(self, snap, version, user, text, status, diagnostic) -> None:
         if self._transcript is None:
             return
         rec = {
             "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             "note": "Recorded model call. Model outputs are not reproducible by resampling.",
-            "prompt_version": PROMPT_VERSION, "run_id": snap.run_id, "revision": snap.revision,
+            "prompt_version": version, "run_id": snap.run_id, "revision": snap.revision,
             "snapshot_id": snap.snapshot_id, "data_source": snap.data_source,
             "live_validated": snap.live_validated, "status": status, "diagnostic": diagnostic,
             "user_message": user,

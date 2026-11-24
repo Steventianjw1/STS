@@ -101,7 +101,8 @@ class ModelProgress:
         try:
             yield
         except BaseException as exc:
-            status = "interrupted" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "failed"
+            stopped = isinstance(exc, (KeyboardInterrupt, SystemExit)) or getattr(exc, "kind", None) == "interrupted"
+            status = "interrupted" if stopped else "failed"   # a call ended by a requested stop did not fail
             # Categories only: raw provider exceptions may contain credentials.
             error = getattr(exc, "kind", type(exc).__name__)
             raise

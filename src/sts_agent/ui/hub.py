@@ -198,6 +198,12 @@ class UiHub(SessionHooks):
         with self._cv:
             return self._stop
 
+    def set_info(self, **values):
+        """Change facts the page shows (the model in use) while the interface is open."""
+        with self._cv:
+            self.info = {**self.info, **values}
+            self._bump()
+
     # ------------------------------------------------------------------ health
     def set_health(self, key: str, state: str, detail: str):
         with self._cv:
@@ -246,7 +252,8 @@ class UiHub(SessionHooks):
                 self._live = {"id": self._live["id"] + 1, "purpose": purpose, "text": "", "dropped": 0,
                               "answer_chars": 0, "active": True}
             elif phase == "call_finished":
-                ok = data.get("status") == "response received"
+                stopped = data.get("status") == "interrupted"   # ended by a requested stop: not a model failure
+                ok = stopped or data.get("status") == "response received"
                 elapsed = float(data.get("elapsed_s") or 0)
                 row = self._calls.setdefault(purpose, {"calls": 0, "total_s": 0.0, "last_s": None, "failed": 0})
                 row["calls"] += 1
@@ -261,10 +268,11 @@ class UiHub(SessionHooks):
                                         "text": live["text"][-_REASONING_KEEP:],
                                         "clipped": live["dropped"] > 0 or len(live["text"]) > _REASONING_KEEP})
                 live["active"] = False
-                self._health["model"] = ({"state": "ok", "detail": f"last {purpose} call answered in {elapsed:.1f}s"}
-                                         if ok else
-                                         {"state": "warn", "detail": f"last {purpose} call failed "
-                                                                     f"({data.get('error') or 'unknown'})"})
+                if not stopped:
+                    self._health["model"] = ({"state": "ok", "detail": f"last {purpose} call answered in {elapsed:.1f}s"}
+                                             if ok else
+                                             {"state": "warn", "detail": f"last {purpose} call failed "
+                                                                         f"({data.get('error') or 'unknown'})"})
             elif phase in ("retry_scheduled", "reply_rejected"):
                 self._model.update(status="retrying", error=_clip(data.get("error"), 160),
                                    retry_kind=data.get("retry_kind") or self._model.get("retry_kind"))
