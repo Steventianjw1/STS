@@ -126,8 +126,9 @@ offer_handoff = true              # Mentor holds in-fight "choose a card" offers
                                   # debuff choice) is decided by the LLM, because Mentor would score it as a
                                   # deck pick; any other goes back to Mentor's own pick. false: Mentor answers them all.
 pilot = false                     # true: the agent's own combat search (src/sts_agent/pilot) picks every combat
-                                  # move, tailored per encounter; Mentor's Autobattle still plays it. Needs
-                                  # `python tools/fetch_mentor_source.py` once; applies from the next fight.
+                                  # move, tailored per encounter; Mentor's Autobattle still plays it. It keeps
+                                  # potions for the fights that are in doubt (hallway fights and elites hold them).
+                                  # Needs `python tools/fetch_mentor_source.py` once; applies from the next fight.
 # pilot_source = "data/mentor_source"
 
 # Interface (`./start` or `sts-agent ui`). One window holds the game and the panels around it: control bar

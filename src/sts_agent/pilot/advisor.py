@@ -21,7 +21,7 @@ import types
 from pathlib import Path
 
 from . import engine
-from .profiles import default_profile, load_tuned
+from .profiles import default_profile, holds_potions, load_tuned
 from .search import decide
 
 SOURCE_ENV = "STS_AGENT_MENTOR_SOURCE"      # folder holding Mentor's realgame_advisor.py
@@ -34,7 +34,8 @@ logger = logging.getLogger("sts_agent.pilot")
 def install(advisor, rs) -> None:
     """Route the advisor's main combat search through the pilot."""
     table, tuned = engine.encounters(rs), load_tuned()
-    core = types.SimpleNamespace(mcts_recommend=rs.mcts_recommend, mcts_score_action_forced=rs.mcts_score_action_forced)
+    core = types.SimpleNamespace(mcts_recommend=rs.mcts_recommend, mcts_score_action_forced=rs.mcts_score_action_forced,
+                                 state_to_dict=rs.state_to_dict)
     turn = threading.local()
     fights: dict = {}
     mentor_advice = advisor.compute_combat_advice
@@ -50,7 +51,7 @@ def install(advisor, rs) -> None:
         entry = next((e for e in table if e["id"] == encounter), None)
         tier = ROOM_TIER.get(turn.room) or (entry["tier"] if entry else "Normal")
         act = entry["act"] if entry else key[0]
-        return encounter, tuned.get(encounter) or default_profile(tier, act)
+        return encounter, tier, tuned.get(encounter) or default_profile(tier, act)
 
     def combat_advice(state, cfg, sims, mirror=None):
         run = state.get("run_state") or {}
@@ -67,9 +68,9 @@ def install(advisor, rs) -> None:
             return core.mcts_recommend(state, **kwargs)
         turn.main = False
         try:
-            encounter, profile = profile_of(state)
+            encounter, tier, profile = profile_of(state)
             d = decide(core, state, profile, seed=kwargs.get("seed") or 0,
-                       carry=(kwargs.get("win_hp_carry"), kwargs.get("win_potion_carry")))
+                       carry=(kwargs.get("win_hp_carry"), kwargs.get("win_potion_carry")), hold=holds_potions(tier))
             logger.info("pilot %s: %s %s  (%d sims, %.2fs)", encounter or turn.room, d.rule, d.action, d.sims, d.seconds)
             return d.result
         except Exception:

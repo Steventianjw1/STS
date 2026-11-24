@@ -35,6 +35,7 @@ from ..evidence.route_risk import agent_loss_scale, node_class
 from ..strategic import StrategicSnapshot
 from .models import Choice, DecisionFrame, is_rest_destination
 from .policy import LLMDecisionPolicy, model_identity
+from .prompts import MENTOR_PILOT, OWN_PILOT
 from .screens import CAPABILITIES, MOD_REVISION, ScreenView, automatic_action, build_view
 from .whatif import WhatIfTools
 
@@ -138,7 +139,7 @@ _REWARD_KIND = {"gold": "gold_reward", "potion": "potion_reward", "relic": "reli
 
 class RunCoordinator:
     def __init__(self, client, policy: LLMDecisionPolicy, *, planner=None, recorder=None, expert_stats=None, autobattle=None,
-                 offer_handoff: bool = False, limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
+                 own_pilot: bool = False, offer_handoff: bool = False, limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
                  facts_source: str = "observed", objective: str, what_if_tools: bool = True,
                  state_path=None, clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
                  log: Callable[[str], None] = print, hooks: SessionHooks | None = None):
@@ -148,6 +149,7 @@ class RunCoordinator:
         self.client, self.policy, self.planner, self.rec = client, policy, planner, recorder
         self.expert_stats = expert_stats
         self.autobattle = autobattle
+        self.own_pilot = own_pilot                   # the agent's pilot decides inside Autobattle (it keeps potions)
         self.offer_handoff = offer_handoff and autobattle is not None
         self._offer_hold: bool | None = None         # Mentor's answer to the last hold request (None: not asked)
         self._offers_answered: dict = {}             # held offer id -> clock time one answer was sent
@@ -926,7 +928,8 @@ class RunCoordinator:
             self.hooks.step("evidence", f"Collecting expert evidence for the {v.kind} screen")
             support = self.expert_stats.for_view(
                 v, route_state={"plan": self.route_plan, "outcomes": self.route_outcomes,
-                                "combat_delegated": self.autobattle is not None}, act_boss=boss)
+                                # The route model spends early only for Mentor's packaged advisor.
+                                "combat_delegated": self.autobattle is not None and not self.own_pilot}, act_boss=boss)
             self.last_progress += self.clock() - started  # evidence latency is not a game stall
             self._note_support(v, support)
             self.hooks.evidence(v.kind, support)
@@ -977,7 +980,7 @@ class RunCoordinator:
                     **({"during_combat": True} if overlay else {}),
                     **({"autobattle_handoff": True} if self._handoff else {}),
                     # Who plays the fights: the prompt prices potions and per-play costs for that pilot.
-                    **({"combat_pilot": "spire_mentor_autobattle"} if self.autobattle is not None and not overlay
+                    **({"combat_pilot": OWN_PILOT if self.own_pilot else MENTOR_PILOT} if self.autobattle is not None and not overlay
                        else {}),
                     "capability": {"status": cap.get("status"), "live_validated": False, "mod_revision": MOD_REVISION}},
             observation_fingerprint=v.fingerprint, facts_source=self.facts_source, facts=facts,

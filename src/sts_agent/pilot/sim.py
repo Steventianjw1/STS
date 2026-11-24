@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from . import engine
-from .profiles import Profile, default_profile, hp_carry, load_tuned, mentor_profile, profile_for, save_tuned
+from .profiles import Profile, default_profile, holds_potions, hp_carry, load_tuned, mentor_profile, profile_for, save_tuned
 from .search import CORES, decide
 
 # What a fight's outcome is worth to the run. A win is 1, plus the engine's own default
@@ -164,12 +164,12 @@ def play(rs, scenario: Scenario, profile: Profile, world_seed: int) -> dict:
         if len(legal) == 1:
             action = legal[0]
         else:
-            d = decide(rs, state, profile, seed=(world_seed * 7919 + step) & 0x7FFFFFFF)
+            d = decide(rs, state, profile, seed=(world_seed * 7919 + step) & 0x7FFFFFFF, hold=holds_potions(scenario.tier))
             action = d.action
             decisions += 1
             thinking += d.seconds
             raced += bool(d.raced)
-            changed += d.rule == "race"
+            changed += d.rule in ("race", "relic")
         state.apply_step(action)
     terminal, value = state.terminal_value()
     hp, potions = _board(rs, state)
