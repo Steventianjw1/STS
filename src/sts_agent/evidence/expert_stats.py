@@ -988,7 +988,8 @@ class ExpertDecisionStats:
 
         def project(hp, max_hp, gold, candidates=0):
             return plan_paths(amap, hp=hp, max_hp=max_hp, gold=gold, risk=risk, profile=profile, candidates=candidates,
-                              max_routes=self.config.route_max_routes, elite_pool=pool, outcomes=outcomes, act=act)
+                              max_routes=self.config.route_max_routes, elite_pool=pool, outcomes=outcomes, act=act,
+                              **_potion_inputs(view, route_state))
         base = project(player.get("hp"), player.get("max_hp"), player.get("gold"),
                        self.config.route_candidates if self.config.route_planning_enabled else 0)
         if base.get("candidates"):
@@ -1198,10 +1199,13 @@ class ExpertDecisionStats:
                                       candidates=self.config.route_candidates, max_routes=self.config.route_max_routes,
                                       previous_nodes=previous, elite_pool=pool,
                                       outcomes=(route_state or {}).get("outcomes"),
-                                      act=view.facts["run"].get("act"))
+                                      act=view.facts["run"].get("act"), **_potion_inputs(view, route_state))
         support["paths"]["limitations"] = [
-            "Projections assume current max HP, pooled class damage and independent fights; deck, relics, potions "
+            "Projections assume current max HP, pooled class damage and independent fights; deck, relics "
             "and event effects beyond recorded HP loss are not modeled.",
+            "Potions (start.potions) enter the replays only: each held potion saves its average HP when drunk and "
+            "each survived fight rolls the drop chance. The pooled losses already include the potions those "
+            "players drank, so potion figures lean optimistic; a potion bought at a shop is not projected.",
             "Fight losses are HP removed on the floor (the run files' damage_taken, before healing). After a "
             "survived fight the projection adds that class's recovery_pct, the HP the pooled players regained on "
             "the same floor; your own healing relics and potions are not read.",
@@ -1375,3 +1379,11 @@ class ExpertDecisionStats:
         support["status"] = ("available" if available == len(candidates) and len(profiles) == len(cohort)
                              else "partial" if available else "unavailable")
         return support
+
+
+def _potion_inputs(view, route_state) -> dict:
+    """plan_paths' potion arguments: names held (None when not observed), slots, who drinks them."""
+    held = view.facts.get("potions")
+    return {"potions": None if not isinstance(held, list) else [str(p.get("id") or p.get("name")) for p in held],
+            "potion_slots": view.facts.get("max_potion_slots"),
+            "combat_delegated": bool((route_state or {}).get("combat_delegated"))}

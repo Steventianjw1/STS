@@ -497,6 +497,18 @@ class RunCoordinator:
                                                                   "turn_outlook")}
         elif v.kind == "rest_site":
             self._rest_checkpoint(v)
+        elif v.kind == "rewards":
+            self._note_potion_drop(v)
+
+    def _note_potion_drop(self, v: ScreenView):
+        """Whether the fight just won dropped a potion, read from its first rewards screen (the drop counter)."""
+        last = self.route_outcomes[-1] if self.route_outcomes else None
+        run = v.facts.get("run") or {}
+        if (last is None or "potion_reward" not in last or last["potion_reward"] is not None
+                or last.get("result") == "defeat" or (last.get("act"), last.get("floor")) != (run.get("act"), run.get("floor"))):
+            return
+        items = (v.facts.get("screen_details") or {}).get("items") or []
+        last["potion_reward"] = any(x.get("type") == "potion" for x in items)
 
     def _finish_combat(self, after: ScreenView, result: str, note: str | None = None):
         """``note`` leads the recorded notes, ahead of the HP and potion accounting, so the length cap keeps it."""
@@ -521,7 +533,8 @@ class RunCoordinator:
                    "hp_damage": damage, "hp_healed": healed,
                    "hp_damage_pct": round(damage / max_hp * 100, 1) if damage is not None and max_hp else None,
                    "node_class": cls, "expected_pct": (ref["classes"].get(cls) or {}).get("mean_pct") if cls else None,
-                   "expected_p90_pct": (ref["classes"].get(cls) or {}).get("p90_pct") if cls else None}
+                   "expected_p90_pct": (ref["classes"].get(cls) or {}).get("p90_pct") if cls else None,
+                   "potion_reward": None}   # set from the rewards screen that follows (potion drop counter)
         # What the pilot did with the potions is visible only as slots that emptied during the fight.
         left = _potion_names(after.facts) if after.facts else None
         if c.potions_held is None or left is None:
@@ -912,7 +925,8 @@ class RunCoordinator:
             started = self.clock()
             self.hooks.step("evidence", f"Collecting expert evidence for the {v.kind} screen")
             support = self.expert_stats.for_view(
-                v, route_state={"plan": self.route_plan, "outcomes": self.route_outcomes}, act_boss=boss)
+                v, route_state={"plan": self.route_plan, "outcomes": self.route_outcomes,
+                                "combat_delegated": self.autobattle is not None}, act_boss=boss)
             self.last_progress += self.clock() - started  # evidence latency is not a game stall
             self._note_support(v, support)
             self.hooks.evidence(v.kind, support)

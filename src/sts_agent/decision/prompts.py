@@ -18,7 +18,7 @@ import json
 
 from .models import DecisionFrame, route_plan_mode
 
-DECISION_PROMPT_VERSION = "decision-prompt-26"
+DECISION_PROMPT_VERSION = "decision-prompt-27"
 DEFAULT_MAX_INPUT_BYTES = None
 DEFAULT_OBJECTIVE = ("Win the run (ordinary victory) with the current character at the current difficulty. "
                      "No extra challenge objectives.")
@@ -200,7 +200,15 @@ _E_MAP = ("On map screens, decision_support may be get_expert_route_profile: how
           "discount an elite. Projections already include it. Prefer routes whose risk before the next rest is "
           "low when HP is low or a scale is above 1; several fights and an elite before any rest is a "
           "commitment you cannot undo. death_risk values are rough estimates from other players' fights, not "
-          "calibrated probabilities. selected_for says what a path is best at; it is not a ranking. HP projections use pooled fight "
+          "calibrated probabilities. paths.start.potions is your potion position: potions held and free slots, "
+          "the drop chance after the next won fight (40%, +10% for each fight without a drop, back to 40% after "
+          "one), the chance of at least one drop within the next fights, and the HP a potion saves (6-10 on "
+          "average; read each potion's own text, some save far more). Replays spend potions and roll drops, so "
+          "death_risk and p10 already count them; each path's potions gives expected drops, potions held at the "
+          "boss, how often the first elite is met with a potion in hand, and the boss margin with held potions. "
+          "A high drop chance makes the next fight worth more; full slots waste a drop; potions in hand make an "
+          "elite or a thin HP margin cheaper. "
+          "selected_for says what a path is best at; it is not a ranking. HP projections use pooled fight "
           "statistics; elite_readiness adds your actual deck: it lists each Spire Codex elite of this act and later "
           "acts (enemies, summons, largest attack turn, Strength gain, community builds with low and high death "
           "rates) and rule-based deck gaps (aoe, block, damage_or_scaling). When gaps exist and no fix has appeared, "

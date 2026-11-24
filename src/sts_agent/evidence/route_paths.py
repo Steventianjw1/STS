@@ -5,24 +5,27 @@ non-dominated paths are returned with labels saying what each is best at, plus a
 least one path for every legal next node. No combined score is computed.
 Projections sample layer-B fight losses (scaled by how this run's fights of the same
 group compared with the pooled expectation), add back the pooled HP regained on the
-same floor, and assume the current max HP; they ignore deck, relics, potions and
-events' other effects.
+same floor, and assume the current max HP; they ignore deck, relics and events' other
+effects. Potions held and the combat drop odds (``potion_odds``) enter the sampled replays.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
 import re
 
 from .elite_readiness import pool_gap_share
+from .potion_odds import NEXT_FIGHT, drop_chance_pct, potion_model
 from .route_risk import SCALE_GROUPS, agent_loss_scale, loss_draws, node_class
 
 FIGHTS = ("monster", "elite")
 MEASURES = (  # (key, direction) used for dominance; None values are skipped consistently
     ("expected_boss_arrival_hp_pct", 1), ("p10_min_hp_pct", 1), ("death_risk_before_boss_pct", -1),
     ("death_risk_before_next_rest_pct", -1),
-    ("elites", 1), ("fights", 1), ("rest_sites", 1), ("shops", 1), ("expert_profile_distance", -1))
+    ("elites", 1), ("fights", 1), ("rest_sites", 1), ("shops", 1), ("expert_profile_distance", -1),
+    ("expected_potions_at_boss", 1))
 SIMULATIONS = 200          # replays per path; fewer on very large maps (see plan_paths)
 
 
@@ -114,7 +117,20 @@ def _quantile(values, p):
     return values[lo] + (values[hi] - values[lo]) * (k - lo)
 
 
-def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, scale=1.0, uniforms=None):
+def _potions_spent(held, loss, hp, kind, is_fight, pot):
+    """How many held potions a replay drinks in this fight (see ``potion_odds`` for the two policies)."""
+    if not held:
+        return 0
+    if pot["policy"] == NEXT_FIGHT:
+        return held if is_fight else 0
+    n = 1 if kind == "elite" else 0
+    if hp - loss + n * pot["value_pct"] <= 0:   # otherwise this fight ends the run
+        n = math.floor((loss - hp) / pot["value_pct"]) + 1
+    return min(held, n)
+
+
+def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, scale=1.0, uniforms=None,
+             potions=None, potion_uniforms=None):
     """Projection in % of current max HP; the boss fight itself is not subtracted.
 
     Two views of the same path. The mean trajectory subtracts each fight's class mean
@@ -127,6 +143,11 @@ def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, sca
     ``scale`` is one number or ``{"hallway": x, "elite_boss": y}`` (see SCALE_GROUPS).
     A survived fight then regains the class's pooled same-floor ``recovery_pct``; the
     low point of a step is taken before that, the step's reported HP after it.
+
+    ``potions`` (``potion_odds.potion_model``) applies to the sampled replays only, never to the
+    mean trajectory: held potions cut a fight's loss by ``value_pct`` each, and a survived fight
+    then rolls for a drop with ``potion_uniforms`` (same shape as ``uniforms``). A ? node rolls
+    only in the share of replays where it is a fight.
     """
     classes, early_k = risk["classes"], risk["early_hallway_fights"]
     heal = risk["rest_heal_pct"]["mean"]
@@ -140,7 +161,7 @@ def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, sca
     for i, (kind, col, row) in enumerate(path, 1):
         if kind == "boss":
             steps.append({"step": i, "type": kind, "expected_hp_pct": round(exp, 1)})
-            plan.append(("boss", None, 0.0, 1.0, 0.0))
+            plan.append(("boss", None, 0.0, 1.0, 0.0, kind))
             break
         if kind == "monster":
             ordinal += 1
@@ -152,7 +173,7 @@ def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, sca
             d = (draws or {}).get(cls)
             if d is None:
                 no_shape.add(cls)
-            plan.append(("fight", d, mean, factor, regain))
+            plan.append(("fight", d, mean, factor, regain, kind))
             exp -= mean
             if exp < min_exp[0]:
                 min_exp = (exp, i)
@@ -163,9 +184,9 @@ def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, sca
             rest_choice.append({"step": i, "expected_path": "HEAL" if heal_exp else "SMITH", "basis": why})
             if heal is not None and heal_exp:
                 exp = min(100.0, exp + heal)
-            plan.append(("rest", None, 0.0, 1.0, 0.0))
+            plan.append(("rest", None, 0.0, 1.0, 0.0, kind))
         else:
-            plan.append(("other", None, 0.0, 1.0, 0.0))
+            plan.append(("other", None, 0.0, 1.0, 0.0, kind))
         if kind == "shop":
             shop_gold.append({"step": i, "estimated_arrival_gold": round(g)})
             g = max(0.0, g - (spend or 0))
@@ -175,12 +196,28 @@ def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, sca
             min_exp = (exp, i)
         steps.append({"step": i, "type": kind, "expected_hp_pct": round(exp, 1), "estimated_gold": round(g)})
     mins, arrivals, rest_arrivals, dead, dead_before_rest = [], [], [], 0, 0
-    for us in uniforms or []:
+    pot = potions
+    at_boss, at_elite, dropped, drunk = [], [], 0, 0
+    for r, us in enumerate(uniforms or []):
         hp = low = hp_pct
         died = False
-        for i, (what, d, mean, factor, regain) in enumerate(plan, 1):
+        held, without = (pot["held"], pot["without"]) if pot else (0, 0)
+        first_elite = True
+        for i, (what, d, mean, factor, regain, kind) in enumerate(plan, 1):
+            if what == "boss" and pot:
+                at_boss.append(held)
             if what == "fight":
-                hp -= d[int(us[i - 1] * len(d))] * factor if d else mean
+                loss = d[int(us[i - 1] * len(d))] * factor if d else mean
+                if pot:
+                    pu = potion_uniforms[r][i - 1]
+                    share = pot["unknown_fight_share"]
+                    is_fight = kind != "unknown" or pu < share
+                    if kind == "elite" and first_elite:
+                        at_elite.append(held)
+                        first_elite = False
+                    n = _potions_spent(held, loss, hp, kind, is_fight, pot)
+                    loss, held, drunk = max(0.0, loss - n * pot["value_pct"]), held - n, drunk + n
+                hp -= loss
                 low = min(low, hp)
                 if hp <= 0:
                     died = True
@@ -188,6 +225,13 @@ def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, sca
                     dead_before_rest += first_rest is None or i < first_rest
                     break
                 hp = min(100.0, hp + regain)
+                if pot and is_fight:
+                    roll = pu if kind != "unknown" else pu / share   # uniform again within the fight share
+                    if roll * 100 < drop_chance_pct(without):
+                        held = held + 1 if pot["slots"] is None else min(pot["slots"], held + 1)
+                        without, dropped = 0, dropped + 1
+                    else:
+                        without += 1
             elif what == "rest":
                 if i == first_rest:
                     rest_arrivals.append(hp)
@@ -209,7 +253,12 @@ def simulate(path, *, hp_pct, gold, risk, profile, hallway_done, draws=None, sca
             "death_before_rest": dead_before_rest / n * 100 if n else None,
             "p10_min": _quantile(mins, 0.1) if n else None,
             "p10_boss_arrival": _quantile(arrivals, 0.1) if n else None,
-            "p10_rest_arrival": _quantile(rest_arrivals, 0.1) if rest_arrivals else None}
+            "p10_rest_arrival": _quantile(rest_arrivals, 0.1) if rest_arrivals else None,
+            "potions": None if not pot or not n else {
+                "expected_drops": round(dropped / n, 2), "expected_drunk": round(drunk / n, 2),
+                "expected_held_at_boss": round(sum(at_boss) / len(at_boss), 2) if at_boss else None,
+                "first_elite_with_a_potion_pct": (round(sum(h > 0 for h in at_elite) / len(at_elite) * 100, 1)
+                                                  if at_elite else None)}}
 
 
 def profile_distance(counts, profile):
@@ -251,13 +300,17 @@ def _gap_summary(pool):
 
 
 def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_routes, previous_nodes=None,
-               elite_pool=None, outcomes=None, act=None):
+               elite_pool=None, outcomes=None, act=None, potions=None, potion_slots=None, combat_delegated=False):
     """Project every route and label the ones worth showing. Python never chooses.
 
     ``act`` 1 lists the elite routes first (most elites expected alive, most rooms to fix the deck
     before the first elite) so the candidate cap cannot drop them, and leaves out the
     fewest-elites-given-gaps label: in act 1 a deck gap is something to fix before the elite.
     Later acts add the route with one or two elites and the most rest sites.
+
+    ``potions`` (names held, None when not observed) and ``potion_slots`` start the replays'
+    potion count; the drop counter comes from ``outcomes``. ``combat_delegated`` says Autobattle
+    spends the potions (all of them in the next fight) instead of this agent.
     """
     if not max_hp or hp is None:
         return {"status": "unavailable", "reason": "current_hp_unknown"}
@@ -276,16 +329,26 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
     rng = random.Random(20261112)          # fixed: the same map and state always project the same numbers
     longest = max(len(path) for _, path in routes)
     uniforms = [[rng.random() for _ in range(longest)] for _ in range(sims)]   # shared by all paths
+    pot = potion_model(potions, potion_slots, outcomes, max_hp=max_hp, profile=profile,
+                       combat_delegated=combat_delegated)
+    pot_model, pot_facts = pot if pot else (None, None)
+    pot_uniforms = [[rng.random() for _ in range(longest)] for _ in range(sims)] if pot_model else None
     rows = []
     for opt, path in routes:
         sim = simulate(path, hp_pct=hp_pct, gold=gold or 0, risk=risk, profile=profile,
-                       hallway_done=done.get("monster", 0), draws=draws, scale=factors, uniforms=uniforms)
+                       hallway_done=done.get("monster", 0), draws=draws, scale=factors, uniforms=uniforms,
+                       potions=pot_model, potion_uniforms=pot_uniforms)
         counts = dict(done)
         for t, _, _ in path:
             counts[t] = counts.get(t, 0) + 1
         distance, basis = profile_distance(counts, profile)
         coords = [[c, r] for _, c, r in path]
         boss = sim["boss"]
+        margin = None if boss["mean_pct"] is None else round(sim["boss_arrival"] - boss["mean_pct"] * factors["elite_boss"], 1)
+        potion_row = sim["potions"]
+        if potion_row and margin is not None and potion_row["expected_held_at_boss"] is not None:
+            potion_row = {**potion_row, "boss_margin_with_held_potions_pct": round(
+                margin + potion_row["expected_held_at_boss"] * pot_model["value_pct"], 1)}
         rows.append({
             "path_id": "p" + hashlib.sha256(json.dumps(coords).encode()).hexdigest()[:10],
             "first_action_id": f"map_{opt['index']}" if opt.get("index") is not None else None,
@@ -303,8 +366,9 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
             "shop_arrival_gold": sim["shop_gold"], "simulated_rest_choices": sim["rest_choice"],
             "expected_boss_arrival_hp_pct": round(sim["boss_arrival"], 1),
             "p10_boss_arrival_hp_pct": _r(sim["p10_boss_arrival"]),
-            "expected_boss_margin_pct": None if boss["mean_pct"] is None else round(
-                sim["boss_arrival"] - boss["mean_pct"] * factors["elite_boss"], 1),
+            "expected_boss_margin_pct": margin,
+            "potions": potion_row,
+            "expected_potions_at_boss": (potion_row or {}).get("expected_held_at_boss"),
             "expected_min_hp_pct": round(sim["min_exp"][0], 1), "expected_min_at_step": sim["min_exp"][1],
             "p10_min_hp_pct": _r(sim["p10_min"]),
             "death_risk_before_boss_pct": _r(sim["death_before_boss"]),
@@ -355,6 +419,9 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
              lambda r: (r["rest_sites"], r["elites"], -r["death_risk_before_boss_pct"]))
         most_elites()
     take("best_expected_boss_arrival_hp", front, lambda r: (r["expected_boss_arrival_hp_pct"], -r["death_risk_before_boss_pct"]))
+    take("best_boss_margin_with_held_potions", [r for r in front if (r["potions"] or {}).get(
+        "boss_margin_with_held_potions_pct") is not None],
+         lambda r: (r["potions"]["boss_margin_with_held_potions_pct"], -r["death_risk_before_boss_pct"]))
     take("most_fights_expected_alive", alive, lambda r: (r["fights"], -r["death_risk_before_boss_pct"]))
     if gap_share and act != 1:  # the deck lacks something some act elites demand: the elite-light and best-prepared routes
         take("fewest_elites_given_deck_gaps", front, lambda r: (-r["elites"], -r["death_risk_before_boss_pct"]))
@@ -390,14 +457,17 @@ def plan_paths(details, *, hp, max_hp, gold, risk, profile, candidates, max_rout
                 o[key] = r[source] if o[key] is None else pick(o[key], r[source])
     return {
         "status": "available", "start": {"hp_pct": round(hp_pct, 1), "gold": gold, "max_hp": max_hp,
-                                         "act_visited_counts": done},
+                                         "act_visited_counts": done, "potions": pot_facts},
         "distinct_routes": len(rows), "non_dominated": len(front), "truncated": truncated,
         "unmodeled_node_types": unmapped, "dominance_measures": [k for k, _ in keys],
         "profile_distance_basis": basis if rows else None,
         "simulation": {"replays_per_path": sims, "agent_loss_scale": scale,
                        "loss_source": "observed per-class HP removed per fight (hp_risk), resampled and scaled by "
                                       "the fight's group; a survived fight then regains that class's recovery_pct",
-                       "negative_values": "HP below 0 is kept: it says how far short the path falls"},
+                       "negative_values": "HP below 0 is kept: it says how far short the path falls",
+                       "potions": ("replays only (death risk, p10 and each path's potions); the mean trajectory "
+                                   "and expected_* HP leave potions out" if pot_model else
+                                   "not modeled: potions held were not observed")},
         "candidates": shown, "by_next_option": list(options.values()),
         "outlook": _outlook(rows), "route_ranges": _ranges(rows),
         "current_act_elite_gap_share": gap_share,
