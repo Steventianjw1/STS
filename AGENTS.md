@@ -1,6 +1,7 @@
 # Project constraints
 
 - Scope: these instructions apply project-wide to every chat and all future chats working in this repository.
+- Ownership: this is the agent's codebase. The agent has full and complete control and may edit the code structure however it likes (refactor, reorganize, rename, rewrite) to achieve the best results, without asking first. After any such change, document it and inform the user what changed and why.
 - Write tests only when absolutely necessary. If a test file needs changes for a task, make those edits in one pass; do not repeatedly revise tests. Prefer the smallest necessary change to an existing relevant test and avoid redundant tests or new test files.
 - Create or update Markdown documents only when explicitly instructed by the user or when providing instructions to another agent. Do not generate unsolicited documentation or reports.
 - After each code implementation, briefly summarize every changed file: what changed and how its functionality is implemented.
