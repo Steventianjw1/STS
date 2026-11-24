@@ -1,12 +1,13 @@
 """How the pilot searches and picks in one fight.
 
 A ``Profile`` is the whole tailoring surface: the search budget, the engine's search
-knobs, what a win is worth by the HP and potions it keeps, and how the root move is
-picked. ``MENTOR`` reproduces Spire Mentor's deployed advisor and is the baseline every
-other profile is measured against. Profiles tuned per encounter by ``sim.tune`` are
-kept in ``tuned/`` beside this file, one ``<ENCOUNTER_ID>.json`` each, and override the
-tier defaults. One file per encounter lets machines tune different encounters and merge
-their results through Git without a conflict.
+knobs, what a win is worth by the HP and potions it keeps, how the root move is picked,
+whether potions are kept for the fights that need them, and whether the relics held
+decide between moves the search scores alike. ``MENTOR`` reproduces Spire Mentor's
+deployed advisor and is the baseline every other profile is measured against. Profiles
+tuned per encounter by ``sim.tune`` are kept in ``tuned/`` beside this file, one
+``<ENCOUNTER_ID>.json`` each, and override the tier defaults. One file per encounter lets
+machines tune different encounters and merge their results through Git without a conflict.
 """
 from __future__ import annotations
 
@@ -35,6 +36,8 @@ class Profile:
     race_width: int = 4                     # at most this many options raced
     race_sims: int = 2000                   # simulations of each re-search, all through one option
     race_reps: int = 2                      # independent re-searches per raced option
+    relic_tie: float = 0.0                  # raced moves this close count as equal and the relics held decide (0 = off)
+    hold_potions: bool | None = None        # keep potions while the fight is not in doubt; None = the tier's rule
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -46,7 +49,7 @@ class Profile:
 
 
 # Spire Mentor's advisor as launched by the mod: 4000 simulations (16000 at bosses) on 4 trees, its own pick.
-MENTOR = Profile(sims=4000, threads=4, pick="engine")
+MENTOR = Profile(sims=4000, threads=4, pick="engine", hold_potions=False)
 MENTOR_BOSS = replace(MENTOR, sims=16000)
 
 # Untuned starting points: twice Mentor's thinking on twice the trees (the same simulations per
@@ -67,10 +70,43 @@ DEFAULTS = {
 # hand is also the margin that absorbs the search's own misjudgements, so no default lowers it.
 HEALED_BOSS_HP_CARRY = 0.2
 
+# Relics in the card play. The engine simulates every relic inside the fight, so a move that is
+# better for a relic already scores better, and two ways of pushing relics further were measured on
+# logged decks given three of Nunchaku, Tuning Fork, Iron Club, Mummified Hand, Permafrost, Pen Nib,
+# Joss Paper, Pocket Watch and Pael's Legion (elites and hallway fights, the tier default otherwise):
+#   - racing the best move of every other relic outcome from twice as far (0.06): 69 paired fights,
+#     +0.4 +-0.3 HP, -1.4 +-1.5 points of wins, 12% more thinking. Such a move scored 0.03 to 0.16
+#     worse once searched on its own, never better. Removed.
+#   - ``relic_tie`` 0.005 (the relics decide between raced moves that close): 72 paired fights, all
+#     won either way, -1.6 +-0.8 HP a fight; it decided 7% of the decisions and fed the relics 4% more
+#     often (+1.2 +-0.6 counter steps and freed cards a fight). The race tells such moves apart
+#     better than the rule does, so no default sets it; what it buys is only the counter a relic
+#     carries into the next fight, which the search cannot see.
+
 
 def hp_carry(tier, act) -> float:
     """How much of the HP a win keeps is still there for the next fight."""
     return HEALED_BOSS_HP_CARRY if tier == "Boss" and act in (1, 2) else 1.0
+
+
+# The search drinks a potion as soon as it sees any gain, and the engine's price of a kept potion
+# (8 HP) is below the noise of its own estimates. Simulated on logged fight starts:
+#   hallway  114 fights holding potions, Mentor's search: 81% of the potions drunk, 61% of those in
+#            round 1, 5.8 HP gained per potion, and every fight won with the belt emptied too.
+#   boss     the four hardest, 96 fights: 27.1% won with no potion, 43.8% with two (+16.7 +-5.9 points);
+#            16 HP fewer cost 12.5 +-4.6 points there, so a potion at such a boss is worth about 11 HP.
+# So below a boss a drink waits until the fight is in doubt (``search.SAFE_WIN``). That hold kept 92%
+# of the potions in the hallway fights, still won all 114 and cost 4.8 +-0.7 HP a fight (5.7 HP per
+# potion kept). At elites (96 fights, a belt of two) it won exactly the fights free drinking won
+# (96.9%), kept 1.1 more potions a fight and cost 8.7 +-1.7 HP (7.9 HP per potion kept); in act 3,
+# where elites are in doubt, it let the potions go. Elites are the close call: taking "Elite" out of
+# this set spends potions there again.
+HOLD_TIERS = frozenset({"Weak", "Normal", "Elite"})
+
+
+def holds_potions(tier) -> bool:
+    """Whether a fight of ``tier`` keeps its potions until it is in doubt."""
+    return tier in HOLD_TIERS
 
 
 def default_profile(tier, act=None) -> Profile:
