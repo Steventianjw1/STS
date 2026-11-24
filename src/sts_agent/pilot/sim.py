@@ -22,15 +22,13 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from . import engine
-from .profiles import Profile, default_profile, holds_potions, hp_carry, load_tuned, mentor_profile, profile_for, save_tuned
+from .profiles import HP_WORTH, LOSS_VALUE, Profile, default_profile, hp_carry, load_tuned, mentor_profile, profile_for, save_tuned
 from .search import CORES, decide
 
-# What a fight's outcome is worth to the run. A win is 1, plus the engine's own default
-# worth of the HP it keeps (full HP = 2/7) scaled by how much of that HP survives to the next
-# fight (``profiles.hp_carry``), plus a potion's worth per potion kept; a loss ends the run.
-HP_WORTH = 2.0 / 7.0
+# A fight's outcome is priced as ``profiles`` prices it (a win is 1 plus the HP it keeps, a loss
+# ends the run), with the HP scaled by how much of it survives to the next fight
+# (``profiles.hp_carry``) and a potion's worth added per potion kept.
 POTION_WORTH = 0.03
-LOSS_VALUE = -1.25
 MAX_ACTIONS = 2000
 ACCEPT_SE = 2.0     # how many standard errors a tuned candidate must beat the default by
 SNAPSHOT_PATH = Path(__file__).with_name("snapshots.json")   # fight starts kept in the repository, for a machine without the logs
@@ -164,7 +162,7 @@ def play(rs, scenario: Scenario, profile: Profile, world_seed: int) -> dict:
         if len(legal) == 1:
             action = legal[0]
         else:
-            d = decide(rs, state, profile, seed=(world_seed * 7919 + step) & 0x7FFFFFFF, hold=holds_potions(scenario.tier))
+            d = decide(rs, state, profile, seed=(world_seed * 7919 + step) & 0x7FFFFFFF, tier=scenario.tier)
             action = d.action
             decisions += 1
             thinking += d.seconds

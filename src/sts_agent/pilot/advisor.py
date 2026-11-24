@@ -22,7 +22,7 @@ import types
 from pathlib import Path
 
 from . import engine
-from .profiles import default_profile, holds_potions, load_tuned
+from .profiles import default_profile, load_tuned
 from .search import decide
 
 SOURCE_ENV = "STS_AGENT_MENTOR_SOURCE"      # folder holding Mentor's realgame_advisor.py
@@ -84,8 +84,9 @@ def install(advisor, rs) -> None:
         try:
             encounter, tier, profile = profile_of(state)
             d = decide(core, state, profile, seed=kwargs.get("seed") or 0,
-                       carry=(kwargs.get("win_hp_carry"), kwargs.get("win_potion_carry")), hold=holds_potions(tier))
-            logger.info("pilot %s: %s %s  (%d sims, %.2fs)", encounter or turn.room, d.rule, d.action, d.sims, d.seconds)
+                       carry=(kwargs.get("win_hp_carry"), kwargs.get("win_potion_carry")), tier=tier)
+            logger.info("pilot %s: %s %s  (%d sims, %.2fs, win %s)", encounter or turn.room, d.rule, d.action, d.sims, d.seconds,
+                        "?" if d.win_chance is None else f"{d.win_chance:.0%}")
             return d.result
         except Exception:
             logger.exception("pilot search failed; this decision uses Mentor's own search")

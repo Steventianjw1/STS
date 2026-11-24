@@ -12,10 +12,16 @@ machines tune different encounters and merge their results through Git without a
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 
 TUNED_DIR = Path(__file__).with_name("tuned")
+
+# What a fight's outcome is worth to the run. A win is 1 plus the engine's own worth of the HP it
+# keeps (full HP = 2/7); a loss ends the run.
+HP_WORTH = 2.0 / 7.0
+LOSS_VALUE = -1.25
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,10 @@ class Profile:
     choice_tie: float = 0.01                # cards to give up that score this close are equal; the least useful goes (0 = off)
     matched_luck: bool = False              # the engine's common random numbers: one decision's options meet the same luck
     hold_potions: bool | None = None        # keep potions while the fight is not in doubt; None = the tier's rule
+    playouts: int | None = None             # possible worlds each close move is played out in; None = the tier's rule, 0 = off
+    playout_sims: int = 1000                # simulations of the small search that plays those fights to the end
+    playout_band: float = 0.01              # raced moves within this of the best are played out
+    playout_width: int = 2                  # at most this many of them
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -129,12 +139,57 @@ def hp_carry(tier, act) -> float:
 # (96.9%), kept 1.1 more potions a fight and cost 8.7 +-1.7 HP (7.9 HP per potion kept); in act 3,
 # where elites are in doubt, it let the potions go. Elites are the close call: taking "Elite" out of
 # this set spends potions there again.
+# The line is drawn on the real win chance (``win_chance``): 0.9968 is where the search's own share
+# of won playouts is 0.90, the line all of the above was measured at. Letting a fight get worse
+# before the potions go costs more than they are worth: at 0.95 the same 96 elite fights kept 0.33
+# more potions for 3.4 +-1.0 HP and one more loss, at 0.90 0.38 more for 4.0 +-1.1 HP and two.
 HOLD_TIERS = frozenset({"Weak", "Normal", "Elite"})
 
 
 def holds_potions(tier) -> bool:
     """Whether a fight of ``tier`` keeps its potions until it is in doubt."""
     return tier in HOLD_TIERS
+
+
+# The search's own win chance is the share of its playouts that were won, and its playouts are
+# finished by a fast policy that plays far below the search, so it understates the fight: alone that
+# policy wins 39-63% of act-1 boss fights, 5-20% of act-2 and 2-4% of act-3 ones, where the search-
+# driven player wins about 86%, 44% and 11%. The order is sound (a higher share is a likelier win),
+# so a monotone map turns the share into the chance the fight is won:
+# sigmoid(intercept + slope * logit(share)). Fitted on simulated fights the pilot played to the end
+# with these defaults, every decision's share against the fight's outcome, each fight counted once:
+#   Boss   72 fights:  a share of 0.2% is 1% (0.9% of those fights were won), 5% is 43% (43%),
+#          17% is 85% (91%), 38% is 97% (94%), 62% and above is 99% or more (100%).
+#   other  96 elite and 144 hallway fights, the hallway ones all won:  0.5% is 8% (12%),
+#          5.5% is 53% (43%), 18% is 84% (83%), 37% is 94% (95%), 65% is 98% (98%).
+# Refit when the budget, the playouts or the knobs of the search change. Spire Mentor shows its own
+# such map on its HUD (fitted at its budget); this one is what the pilot's rules and log read.
+WIN_ODDS = {"Boss": (4.394, 1.568), None: (3.355, 1.087)}      # (intercept, slope) by tier; None = every other tier
+
+
+def win_chance(raw, tier=None) -> float:
+    """The chance the fight is won, for the search's own ``p_win`` in a fight of ``tier``."""
+    intercept, slope = WIN_ODDS.get(tier) or WIN_ODDS[None]
+    p = min(max(float(raw), 1e-3), 1 - 1e-3)        # the search reports 0 and 1 for none or all of its playouts
+    return 1.0 / (1.0 + math.exp(-(intercept + slope * math.log(p / (1 - p)))))
+
+
+# Playing close moves out (``search.play_out``): each is followed to the end of the fight through the
+# same possible worlds by a small search, in place of the engine's fast playout policy. Measured in
+# boss fights: a player of 50 to 400 simulations a move wins no more than that policy does (Vantom
+# 50% against 48%, the Queen 4% against 3%); one of 1000 wins more (Vantom 67%, the Insatiable 37%
+# against 19%) at about 0.4 s a fight on four cores, still short of the pilot itself (80% and 63%).
+# And it finds nothing to choose: over 64 raced boss decisions, each with the race's pick and its
+# runner-up played out in the same 48 worlds, the runner-up was +0.3 points of wins and +0.007 value
+# ahead, the difference passed two standard errors 3 times (chance gives 3), and picking by one half
+# of the worlds gained +0.004 +-0.011 value on the other half. Moves the race holds close are close,
+# so no tier plays them out; eight worlds for two moves would cost several seconds a decision.
+PLAYOUT_WORLDS: dict = {}     # tier -> possible worlds each close move is played out in; a tier left out plays none
+
+
+def playouts_for(tier) -> int:
+    """How many possible worlds a fight of ``tier`` plays each of its close moves out in (0 = none)."""
+    return PLAYOUT_WORLDS.get(tier, 0)
 
 
 def default_profile(tier, act=None) -> Profile:

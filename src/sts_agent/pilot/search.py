@@ -27,13 +27,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from .profiles import Profile
+from .profiles import HP_WORTH, LOSS_VALUE, Profile, holds_potions, playouts_for, win_chance
 
 CORES = os.cpu_count() or 1
 EXACT_RULES = {"lost_position", "illegal_fallback"}   # engine picks that are not a judgement between values
-SAFE_WIN = 0.90      # a held potion waits while the best other move wins at least this often...
-DRINK_GAIN = 0.05    # ...unless drinking it adds this much win chance
+SAFE_WIN = 0.9968    # a held potion waits while the best other move wins the fight at least this often (``profiles.win_chance``)
 GIVE_UP = ("exhaust_from_hand",)   # card choices that take the chosen card out of the fight
+PLAYOUT_STEPS = 600  # a played-out fight is cut off after this many moves
+PLAYOUT_SE = 1.0     # a played-out move replaces the race's pick when it is ahead by this many standard errors
 _pool: ThreadPoolExecutor | None = None
 
 
@@ -45,9 +46,11 @@ class Decision:
                                  # or "hold" (a potion was kept)
     rows: list = field(default_factory=list)       # the main search's per-option rows
     raced: list = field(default_factory=list)      # [{"action", "score", "visits"}] when a race ran
+    played: list = field(default_factory=list)     # [{"action", "value", "wins", "worlds"}] when close moves were played out
     sims: int = 0                # simulations spent
     seconds: float = 0.0
-    p_win: float | None = None
+    p_win: float | None = None   # the search's own: the share of its playouts through the chosen option that were won
+    win_chance: float | None = None      # what that means for the fight (``profiles.win_chance``)
     hp: float | None = None      # expected HP at the end of the fight through the chosen option
     result: dict | None = None   # the engine's result with the pilot's pick crowned (see ``crown``)
 
@@ -105,18 +108,19 @@ def _is_drink(row) -> bool:
     return row["action"].get("action") in ("drink_potion", "potion")
 
 
-def _hold(rows) -> list:
-    """The drinks to keep back: the best other move wins anyway and the drink adds little to that.
+def _hold(rows, tier) -> list:
+    """The drinks to keep back: every one, while the best other move wins the fight anyway.
 
-    A row without a win chance is never held: the hold acts only on what the search measured.
+    Win chances are the fight's real ones (``profiles.win_chance``), not the search's own share of won
+    playouts. A row without a win chance is never held: the hold acts only on what the search measured.
     """
     others = [r for r in rows if not _is_drink(r)]
     if not others or len(others) == len(rows):
         return []
     ref = min(others, key=lambda r: r.get("pick_rank") if r.get("pick_rank") is not None else 1 << 30)
-    if ref.get("p_win") is None or ref["p_win"] < SAFE_WIN:
+    if ref.get("p_win") is None or win_chance(ref["p_win"], tier) < SAFE_WIN:
         return []
-    return [r for r in rows if _is_drink(r) and r.get("p_win") is not None and r["p_win"] - ref["p_win"] < DRINK_GAIN]
+    return [r for r in rows if _is_drink(r) and r.get("p_win") is not None]
 
 
 def _relic_gain(rs, state, rows) -> list:
@@ -169,11 +173,39 @@ def _keep_worth(state, rows) -> list | None:
     return out
 
 
-def decide(rs, state, profile: Profile, seed=0, carry=(None, None), hold=False) -> Decision:
+def play_out(rs, state, action, world, sims, knobs) -> tuple:
+    """One way the rest of the fight can go after ``action``: (won, HP at the end, max HP).
+
+    The fight continues in a possible world (``sample_world``: the hidden draw order dealt anew, every
+    roll reseeded from ``world``) with a small search of ``sims`` deciding every later move. The engine's
+    own playouts finish a fight with a fast policy that plays far below the search and so understate
+    how often the fight is won; a searching player is slower and closer to how the fight will be played.
+    """
+    fight = state.sample_world(world)
+    fight.apply_step(action)
+    search = dict(knobs, sims=sims, threads=1, c_puct=c_puct_for(sims, 1))
+    for step in range(PLAYOUT_STEPS):
+        if fight.terminal_value()[0]:
+            break
+        legal = fight.legal_actions()
+        if not legal:
+            break
+        if len(legal) == 1:
+            fight.apply_step(legal[0])
+            continue
+        rows = rs.mcts_recommend(fight, seed=(world * 7919 + step) & 0x7FFFFFFF, **search)["actions"]
+        fight.apply_step(next((r for r in rows if r.get("is_best")), rows[0])["action"])
+    over, value = fight.terminal_value()
+    player = rs.state_to_dict(fight)["player"]
+    return bool(over and value > 0), int(player.get("hp") or 0), int(player.get("max_hp") or 0)
+
+
+def decide(rs, state, profile: Profile, seed=0, carry=(None, None), tier=None) -> Decision:
     """Choose the action to play in ``state`` (an engine ``CombatState`` with a decision open).
 
-    ``hold`` is the fight's potion rule (``profiles.holds_potions`` of its tier); a profile that
-    sets ``hold_potions`` wins.
+    ``tier`` is the fight's ("Weak", "Normal", "Elite", "Boss"): it sets the rules a profile leaves
+    open (whether potions are held, whether close moves are played out) and how the search's win
+    chance reads as a real one. Without it no such rule applies.
     """
     started = time.perf_counter()
     threads = max(1, min(profile.threads, CORES))
@@ -194,28 +226,32 @@ def decide(rs, state, profile: Profile, seed=0, carry=(None, None), hold=False) 
                    p_win=best.get("p_win"), hp=best.get("mean_final_hp"), result=result)
     if engine_rule not in EXACT_RULES:
         open_rows = rows
-        if profile.hold_potions if profile.hold_potions is not None else hold:
-            held = _hold(rows)
+        if profile.hold_potions if profile.hold_potions is not None else holds_potions(tier):
+            held = _hold(rows, tier)
             if held:
                 open_rows = [r for r in rows if all(r is not h for h in held)]
                 if any(best is h for h in held):
                     best = min(open_rows, key=lambda r: r.get("pick_rank") if r.get("pick_rank") is not None else 1 << 30)
                     out.action, out.rule, out.p_win, out.hp = best["action"], "hold", best.get("p_win"), best.get("mean_final_hp")
         if profile.pick == "race" and len(open_rows) > 1:
-            _race(rs, state, profile, knobs, seed, open_rows, best, out)
+            worlds = profile.playouts if profile.playouts is not None else playouts_for(tier)
+            _race(rs, state, profile, knobs, seed, open_rows, best, out, worlds)
         if out.rule == "race":
             crown(result, out.action, "pilot_race", "the best of the close moves after searching each on its own")
         elif out.rule == "relic":
             crown(result, out.action, "pilot_relic", "of the moves the search holds equal, the one a held relic gains from")
+        elif out.rule == "playout":
+            crown(result, out.action, "pilot_playout", "the best of the close moves when the fight is played to its end")
         elif out.rule == "choice":
             crown(result, out.action, "pilot_choice", "of the cards the search holds equal, the least useful is given up")
         elif out.rule == "hold":
             crown(result, out.action, "pilot_hold", "the potion is kept: the fight is not in doubt without it")
+    out.win_chance = win_chance(out.p_win, tier) if out.p_win is not None else None
     out.seconds = time.perf_counter() - started
     return out
 
 
-def _race(rs, state, profile, knobs, seed, rows, best, out: Decision) -> None:
+def _race(rs, state, profile, knobs, seed, rows, best, out: Decision, worlds=0) -> None:
     top = max(r["q"] for r in rows)
     close = sorted((r for r in rows if r["q"] >= top - profile.race_band), key=lambda r: -r["q"])[:profile.race_width]
     if all(r is not best for r in close):
@@ -256,10 +292,46 @@ def _race(rs, state, profile, knobs, seed, rows, best, out: Decision) -> None:
             worth = dict(zip(near, worth))
             least = min(near, key=lambda i: (worth[i], -score[i], close[i] is not best))
             by_worth, win = worth[least] < worth[win], least if worth[least] < worth[win] else win
+    by_playout = False
+    if worlds > 0:
+        played = _play_outs(rs, state, profile, knobs, seed, close, score, win, worlds, out)
+        by_playout, win = played != win, played
     out.raced = [{"action": row["action"], "score": round(score[i], 4), "visits": visits[i]} for i, row in enumerate(close)]
     out.action = close[win]["action"]
-    out.rule = (("choice" if by_worth else "relic" if by_relic else "race") if close[win] is not best
+    out.rule = (("playout" if by_playout else "choice" if by_worth else "relic" if by_relic else "race") if close[win] is not best
                 else "hold" if out.rule == "hold" else "race=engine")
     out.sims += len(jobs) * profile.race_sims
     out.p_win = close[win].get("p_win")
     out.hp = hp_sum[win] / hp_n[win] if hp_n[win] else close[win].get("mean_final_hp")
+
+
+def _play_outs(rs, state, profile, knobs, seed, close, score, win, worlds, out: Decision) -> int:
+    """Play the race's close moves out and return the index of the one to play (``win`` unless another is ahead).
+
+    The race scores a move by the engine's playouts, which a fast policy finishes; here each of the
+    closest moves is followed through the same possible worlds by a searching player (``play_out``),
+    so the luck is the same for every move and only the move differs. The race's pick stands unless
+    another move is ahead of it by ``PLAYOUT_SE`` standard errors of the paired difference.
+    """
+    near = sorted((i for i in range(len(close)) if score[i] >= score[win] - profile.playout_band), key=lambda i: (i != win, -score[i]))
+    near = near[:max(2, profile.playout_width)]
+    if len(near) < 2:
+        return win
+    carry = knobs.get("win_hp_carry", 1.0)
+    seeds = [(seed * 2654435761 + k * 40503 + 1) & 0x7FFFFFFF for k in range(worlds)]
+    jobs = {i: [_workers().submit(play_out, rs, state, close[i]["action"], world, profile.playout_sims, knobs) for world in seeds] for i in near}
+    value, wins = {}, {}
+    for i, row in jobs.items():
+        ends = [job.result() for job in row]
+        value[i] = [1.0 + HP_WORTH * carry * hp / max(1, top) if won else LOSS_VALUE for won, hp, top in ends]
+        wins[i] = sum(won for won, _, _ in ends)
+    out.played = [{"action": close[i]["action"], "value": round(sum(value[i]) / worlds, 4), "wins": wins[i], "worlds": worlds} for i in near]
+    out.sims += len(near) * worlds * profile.playout_sims      # per decision of each played-out fight; a floor, not a count
+    best, lead = win, 0.0
+    for i in near[1:]:
+        gap = [a - b for a, b in zip(value[i], value[win])]
+        mean = sum(gap) / worlds
+        spread = (sum((g - mean) ** 2 for g in gap) / max(1, worlds - 1) / worlds) ** 0.5
+        if mean > lead and mean > PLAYOUT_SE * spread:
+            best, lead = i, mean
+    return best
