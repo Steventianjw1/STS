@@ -447,12 +447,14 @@ def tune(rs, encounter: dict, pool: list[Scenario], fights=8, rounds=3, progress
     return {"encounter": encounter["id"], "history": history, **evidence}
 
 
-def fit_win_odds(fights) -> tuple | None:
+def fit_win_odds(fights, prior=(3.355, 1.087), prior_sd=(2.0, 1.0)) -> tuple | None:
     """(intercept, slope) of ``profiles.win_chance`` from finished fights: every decision's share of won
     playouts against its fight's outcome, each fight weighing the same however many decisions it had.
 
-    A weighted logistic fit on the share's log-odds, by Newton steps. None when the fights do not
-    hold both outcomes or too few of them: a fit on wins alone says nothing.
+    A weighted logistic fit on the share's log-odds, by Newton steps, held near ``prior`` (Ironclad's
+    non-boss reading) with the given standard deviations: fights that were all hopeless or all safe
+    separate the outcomes perfectly, and a fit with nothing holding it then runs off to a step
+    function. None when the fights do not hold at least 3 of each outcome.
     """
     import math
     rows = []
@@ -464,14 +466,15 @@ def fit_win_odds(fights) -> tuple | None:
     lost = sum(1 for f in fights if not f["won"] and f.get("shares"))
     if lost < 3 or sum(1 for f in fights if f["won"] and f.get("shares")) < 3:
         return None
-    a, b = 0.0, 1.0
-    for _ in range(50):
-        g0 = g1 = h00 = h01 = h11 = 0.0
+    a, b = prior
+    pa, pb = 1.0 / prior_sd[0] ** 2, 1.0 / prior_sd[1] ** 2
+    for _ in range(100):
+        g0, g1, h00, h01, h11 = -pa * (a - prior[0]), -pb * (b - prior[1]), pa, 0.0, pb
         for x, y, w in rows:
             p = 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, a + b * x))))
             g0 += w * (y - p)
             g1 += w * (y - p) * x
-            v = w * p * (1 - p) + 1e-9
+            v = w * p * (1 - p)
             h00 += v
             h01 += v * x
             h11 += v * x * x
@@ -493,17 +496,14 @@ def hold_line(fit) -> float:
     return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, x))))
 
 
-def hold_line_interval(fights, resamples=200, seed=1) -> tuple | None:
-    """The 5% and 95% points of ``hold_line`` over fits to the fights drawn again with replacement:
-    how far the line moves with which fights happened to be played. None when too few resamples fit."""
-    import random
-    rng = random.Random(seed)
-    lines = []
-    for _ in range(resamples):
-        fit = fit_win_odds([rng.choice(fights) for _ in fights])
-        if fit:
-            lines.append(hold_line(fit))
-    if len(lines) < resamples // 2:
-        return None
-    lines.sort()
-    return round(lines[len(lines) // 20], 3), round(lines[-1 - len(lines) // 20], 3)
+def above_line(fights, line) -> tuple:
+    """(fights' worth of decisions at or above ``line``, the part of that in lost fights): the direct check of
+    a hold line. A fight's decisions together count as one fight, so a long fight weighs no more than a short one."""
+    worth = lost = 0.0
+    for f in fights:
+        shares = f.get("shares") or []
+        if shares:
+            part = sum(p >= line for p in shares) / len(shares)
+            worth += part
+            lost += 0.0 if f["won"] else part
+    return worth, lost

@@ -1,0 +1,174 @@
+{
+ "evidence": {
+  "knobs_Elite": {
+   "chosen": "default",
+   "kind": "simulator, candidates at Mentor's search budget",
+   "last_round": {
+    "fights": 32,
+    "ranked": [
+     {
+      "decisions": 22.2,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 41.41,
+      "hp_lost": 17.78,
+      "name": "default",
+      "potions_used": 0.09,
+      "race_changed_per_fight": 4.5,
+      "seconds_per_decision": 0.108,
+      "value": 1.1694,
+      "win_rate": 1.0
+     },
+     {
+      "decisions": 22.0,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 41.16,
+      "hp_lost": 18.03,
+      "name": "dominance",
+      "potions_used": 0.09,
+      "race_changed_per_fight": 4.41,
+      "seconds_per_decision": 0.112,
+      "value": 1.1685,
+      "win_rate": 1.0
+     },
+     {
+      "decisions": 21.9,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 40.88,
+      "hp_lost": 18.31,
+      "name": "leaf-playouts-3",
+      "potions_used": 0.12,
+      "race_changed_per_fight": 4.28,
+      "seconds_per_decision": 0.17,
+      "value": 1.1664,
+      "win_rate": 1.0
+     },
+     {
+      "decisions": 22.2,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 43.31,
+      "hp_lost": 15.88,
+      "name": "mentor",
+      "potions_used": 0.59,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.048,
+      "value": 1.1613,
+      "win_rate": 1.0
+     }
+    ],
+    "round": 1
+   },
+   "snapshots": 32,
+   "versus_default": {},
+   "versus_mentor": {
+    "fights": 32,
+    "hp_end": -1.9062,
+    "hp_end_se": 1.1547,
+    "value": 0.0081,
+    "value_se": 0.004,
+    "won": 0.0,
+    "won_se": 0.0
+   }
+  },
+  "versus_mentor": {
+   "by_tier": {
+    "Elite": {
+     "arm": {
+      "decisions": 21.5,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 37.34,
+      "hp_lost": 21.84,
+      "potions_used": 0.12,
+      "race_changed_per_fight": 4.59,
+      "seconds_per_decision": 0.212,
+      "value": 1.1532,
+      "win_rate": 1.0
+     },
+     "fights": 32,
+     "hp_end": -1.8438,
+     "hp_end_se": 0.8195,
+     "mentor": {
+      "decisions": 21.2,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 39.19,
+      "hp_lost": 20.0,
+      "potions_used": 0.53,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.047,
+      "value": 1.1478,
+      "win_rate": 1.0
+     },
+     "value": 0.0053,
+     "value_se": 0.0041,
+     "won": 0.0,
+     "won_se": 0.0
+    },
+    "Normal": {
+     "arm": {
+      "decisions": 19.9,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 47.44,
+      "hp_lost": 7.53,
+      "potions_used": 0.03,
+      "race_changed_per_fight": 4.75,
+      "seconds_per_decision": 0.193,
+      "value": 1.1899,
+      "win_rate": 1.0
+     },
+     "fights": 32,
+     "hp_end": -0.2812,
+     "hp_end_se": 0.9464,
+     "mentor": {
+      "decisions": 19.4,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 47.72,
+      "hp_lost": 7.25,
+      "potions_used": 0.38,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.04,
+      "value": 1.1806,
+      "win_rate": 1.0
+     },
+     "value": 0.0094,
+     "value_se": 0.0042,
+     "won": 0.0,
+     "won_se": 0.0
+    }
+   },
+   "kind": "simulator; the pilot arm minus Mentor's search on the same fights"
+  },
+  "win_odds": {
+   "arm": "pilot",
+   "by_group": {
+    "other": {
+     "above_ironclad_line": {
+      "allowed": 0.29,
+      "fights_worth": 89.7,
+      "in_lost_fights": 0.0
+     },
+     "fights": 112,
+     "fit": [
+      2.304,
+      1.025
+     ],
+     "hold_line": 0.966,
+     "ironclad_line": 0.9,
+     "kept": false,
+     "lost": 7
+    }
+   },
+   "kind": "simulator; every decision's share of won playouts against the fight's outcome, each fight weighing the same, fight starts entered at full and at half HP; a fit is kept only when these fights show Ironclad's potion hold line to be unsafe for the character and the fit is the more cautious"
+  }
+ },
+ "knobs": {
+  "Elite": {}
+ },
+ "win_odds": {}
+}

@@ -1,0 +1,174 @@
+{
+ "evidence": {
+  "knobs_Elite": {
+   "chosen": "default",
+   "kind": "simulator, candidates at Mentor's search budget",
+   "last_round": {
+    "fights": 32,
+    "ranked": [
+     {
+      "decisions": 17.5,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 29.0,
+      "hp_lost": 24.56,
+      "name": "dominance",
+      "potions_used": 0.38,
+      "race_changed_per_fight": 2.88,
+      "seconds_per_decision": 0.084,
+      "value": 0.8444,
+      "win_rate": 0.875
+     },
+     {
+      "decisions": 17.5,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 28.81,
+      "hp_lost": 24.75,
+      "name": "default",
+      "potions_used": 0.38,
+      "race_changed_per_fight": 3.09,
+      "seconds_per_decision": 0.075,
+      "value": 0.8436,
+      "win_rate": 0.875
+     },
+     {
+      "decisions": 16.6,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 31.84,
+      "hp_lost": 21.72,
+      "name": "mentor",
+      "potions_used": 0.84,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.038,
+      "value": 0.8407,
+      "win_rate": 0.875
+     },
+     {
+      "decisions": 18.0,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 27.81,
+      "hp_lost": 25.75,
+      "name": "leaf-playouts-3",
+      "potions_used": 0.38,
+      "race_changed_per_fight": 2.69,
+      "seconds_per_decision": 0.125,
+      "value": 0.8397,
+      "win_rate": 0.875
+     }
+    ],
+    "round": 1
+   },
+   "snapshots": 32,
+   "versus_default": {},
+   "versus_mentor": {
+    "fights": 32,
+    "hp_end": -3.0312,
+    "hp_end_se": 1.8379,
+    "value": 0.0028,
+    "value_se": 0.0065,
+    "won": 0.0,
+    "won_se": 0.0
+   }
+  },
+  "versus_mentor": {
+   "by_tier": {
+    "Elite": {
+     "arm": {
+      "decisions": 18.5,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 28.38,
+      "hp_lost": 25.19,
+      "potions_used": 0.41,
+      "race_changed_per_fight": 3.44,
+      "seconds_per_decision": 0.148,
+      "value": 0.8409,
+      "win_rate": 0.875
+     },
+     "fights": 32,
+     "hp_end": -5.4062,
+     "hp_end_se": 1.6257,
+     "mentor": {
+      "decisions": 17.9,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 33.78,
+      "hp_lost": 19.78,
+      "potions_used": 0.84,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.04,
+      "value": 0.8482,
+      "win_rate": 0.875
+     },
+     "value": -0.0073,
+     "value_se": 0.0057,
+     "won": 0.0,
+     "won_se": 0.0
+    },
+    "Normal": {
+     "arm": {
+      "decisions": 17.6,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 40.88,
+      "hp_lost": 9.66,
+      "potions_used": 0.03,
+      "race_changed_per_fight": 3.5,
+      "seconds_per_decision": 0.182,
+      "value": 1.1727,
+      "win_rate": 1.0
+     },
+     "fights": 32,
+     "hp_end": -2.25,
+     "hp_end_se": 1.1421,
+     "mentor": {
+      "decisions": 16.0,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 43.12,
+      "hp_lost": 7.41,
+      "potions_used": 0.53,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.04,
+      "value": 1.1663,
+      "win_rate": 1.0
+     },
+     "value": 0.0064,
+     "value_se": 0.0045,
+     "won": 0.0,
+     "won_se": 0.0
+    }
+   },
+   "kind": "simulator; the pilot arm minus Mentor's search on the same fights"
+  },
+  "win_odds": {
+   "arm": "pilot",
+   "by_group": {
+    "other": {
+     "above_ironclad_line": {
+      "allowed": 0.24,
+      "fights_worth": 76.3,
+      "in_lost_fights": 0.0
+     },
+     "fights": 112,
+     "fit": [
+      4.835,
+      1.248
+     ],
+     "hold_line": 0.674,
+     "ironclad_line": 0.9,
+     "kept": false,
+     "lost": 8
+    }
+   },
+   "kind": "simulator; every decision's share of won playouts against the fight's outcome, each fight weighing the same, fight starts entered at full and at half HP; a fit is kept only when these fights show Ironclad's potion hold line to be unsafe for the character and the fit is the more cautious"
+  }
+ },
+ "knobs": {
+  "Elite": {}
+ },
+ "win_odds": {}
+}

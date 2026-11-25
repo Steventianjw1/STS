@@ -26,6 +26,7 @@ from pathlib import Path
 
 from ..game.characters import CHARACTERS, character_key
 from . import engine, runs, sim
+from .search import SAFE_WIN
 from .profiles import TUNED_DIR, WIN_ODDS, character_tuning, load_tuned, profile_for, save_character_tuning
 
 
@@ -183,17 +184,25 @@ def main(argv=None) -> int:
                               f"{sum(w for w, won in inside if won) / weight:.0%} of them in won fights; "
                               f"the fit reads {mid:.2f} as {1 / (1 + math.exp(-odds)):.0%}")
             if fit:
-                # A fit is kept only when it moves the potion hold line off Ironclad's by more than the fights
-                # that happened to be played can explain; otherwise the character keeps Ironclad's reading.
+                # Ironclad's reading stays unless these fights show its potion hold line to be unsafe for this
+                # character: decisions read as safe that sat in lost fights, well beyond the 0.3% the line allows.
+                # Then the character's own fit is kept, and only if it holds potions less readily. A fit is never
+                # used to hold them more readily: a hundred fights do not place that line.
                 shared = sim.hold_line(WIN_ODDS.get("Boss" if group == "Boss" else None))
-                line, span = sim.hold_line(fit), sim.hold_line_interval(rows)
-                differs = span is not None and not span[0] <= shared <= span[1]
-                print(f"    potions are held above a share of {line:.3f} by this fit (fights drawn again: "
-                      f"{'%.3f to %.3f' % span if span else 'no interval'}); by Ironclad's above {shared:.3f}: "
-                      + ("the fit is kept" if differs else "not told apart, Ironclad's reading stays"))
-                lines[group] = {"fit": fit, "hold_line": round(line, 3), "interval": span, "ironclad_line": round(shared, 3),
-                                "kept": differs, "fights": len(rows), "lost": len(rows) - won}
-                if differs:
+                line = sim.hold_line(fit)
+                worth, lost_worth = sim.above_line(rows, shared)
+                allowed = (1 - SAFE_WIN) * worth
+                unsafe = lost_worth > max(1.0, 3 * allowed)
+                keep = unsafe and line > shared
+                print(f"    this fit would hold potions above a share of {line:.3f}; Ironclad's reading holds them above {shared:.3f}")
+                print(f"    decisions at or above Ironclad's line: {worth:.1f} fights' worth, {lost_worth:.2f} of it in lost fights "
+                      f"(the line allows {allowed:.2f}): " + ("unsafe here, " + ("the fit is kept" if keep else "but the fit is no "
+                      "more cautious, so nothing is kept") if unsafe else "safe here, Ironclad's reading stays"))
+                lines[group] = {"fit": fit, "hold_line": round(line, 3), "ironclad_line": round(shared, 3), "kept": keep,
+                                "fights": len(rows), "lost": len(rows) - won,
+                                "above_ironclad_line": {"fights_worth": round(worth, 1), "in_lost_fights": round(lost_worth, 2),
+                                                        "allowed": round(allowed, 2)}}
+                if keep:
                     fitted[group] = fit
         # The same files usually hold Mentor's search on the same fights: how the arm compares, kept as evidence.
         mentor = [r for path in args.file for r in sim.read_fights(path).get("mentor", [])
@@ -210,8 +219,9 @@ def main(argv=None) -> int:
             save_character_tuning(args.character, win_odds=fitted, evidence={
                 **({"win_odds": {"arm": args.arm, "by_group": lines,
                                  "kind": "simulator; every decision's share of won playouts against the fight's outcome, "
-                                         "each fight weighing the same; a fit is kept only when the potion hold line it "
-                                         "gives differs from Ironclad's beyond the 5%-95% span of fights drawn again"}}
+                                         "each fight weighing the same, fight starts entered at full and at half HP; a fit "
+                                         "is kept only when these fights show Ironclad's potion hold line to be unsafe for "
+                                         "the character and the fit is the more cautious"}}
                    if lines else {}),
                 **({"versus_mentor": {"kind": f"simulator; the {args.arm} arm minus Mentor's search on the same fights",
                                       "by_tier": versus}} if versus else {})})
@@ -277,8 +287,10 @@ def main(argv=None) -> int:
         return 0
     if args.cmd == "show":
         tuned, whole = load_tuned(character=character), character_tuning(character)
-        if whole.knobs or whole.win_odds:
-            print(f"{character}: tier knobs {whole.knobs or 'none'}; win chance fit {whole.win_odds or 'Ironclad\'s'}")
+        if character != "IRONCLAD":
+            knobs = {tier: row for tier, row in whole.knobs.items() if row}
+            print(f"{character}: tier knobs {knobs or 'the defaults'}; win chance read by "
+                  f"{whole.win_odds or 'Ironclad\'s fit'}; {len(tuned)} encounters tuned")
         for e in engine.encounters(rs):
             p = profile_for(e["id"], e["tier"], e["act"], tuned, character)
             print(f"act {e['act']} {e['tier']:<7} {e['id']:<34} {'tuned  ' if e['id'] in tuned else 'default'} "

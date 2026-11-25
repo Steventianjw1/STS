@@ -204,6 +204,36 @@ def playouts_for(tier) -> int:
     return PLAYOUT_WORLDS.get(tier, 0)
 
 
+# The other four characters. Everything above was measured with Ironclad; the simulator plays each
+# character's playouts with that character's own net, so it was measured again for each (2026-11-25,
+# fingerprint cc2c06eb91b21a2a; fight starts of simulated A10 runs, acts 1 and 2; 32 elite and 32 hallway
+# fights a character, the pilot at these defaults against Mentor's search on the same fights, and the same
+# fight starts again from half HP for fights in doubt). What it showed:
+#   - Wins: the pilot won every fight Mentor's search won and one more hallway fight for the Silent and one
+#     more hallway and elite fight for the Necrobinder (+3.1 +-3.1 points each); the Regent, the Defect and
+#     Ironclad's logged fight starts were level.
+#   - HP and potions: with nothing on the belt the pilot ended elites level with Mentor's search (-0.2 +-0.9
+#     HP over 48 fights of all five characters); with potions on it, 3.8 +-1.1 HP lower (91 fights) while
+#     keeping 0.5 more potions a fight, which is 7.6 HP per potion kept: the price of the hold, measured at
+#     7.9 for Ironclad above. No character stands apart from that beyond its own noise.
+#   - The win chance: each character's own fit of ``win_chance`` (``sim.fit_win_odds``, 112 fights each)
+#     would hold potions above a share of 0.975 (Silent), 0.966 (Defect), 0.937 (Necrobinder) and 0.674
+#     (Regent), where Ironclad's reading holds them above 0.900 and Ironclad's own fight starts gave 0.903.
+#     A hundred fights do not place that line (the Regent lost 8 of 112, nearly all read as lost from the first
+#     decision). What they do settle is whether Ironclad's line is safe for the character: of the decisions it
+#     read as safe, 61 to 90 fights' worth per character, at most 0.1 of a fight's worth sat in a lost fight
+#     (the line allows 0.2 to 0.3). So every character keeps Ironclad's reading; ``python -m sts_agent.pilot
+#     calibrate`` keeps a character's own fit only when its fights show the line to be unsafe.
+#   - The knobs: the two that came closest for Ironclad's elites (three playouts a leaf, dominance pruning)
+#     were compared with the default on each character's 32 elite fight starts at Mentor's thinking time.
+#     The default stayed for the Necrobinder, the Regent and the Defect. For the Silent three playouts a leaf
+#     came out 2.0 standard errors ahead (value +0.0053 +-0.0026), and on 64 fresh fights it was not (+0.0021
+#     +-0.0509, at twice the time per decision): thirty-two fights "find" such a winner by luck, so it stays
+#     the default as well.
+# The knobs were not tuned per encounter for these characters, and their bosses were not fought at all: that
+# took about two hours a boss on sixteen threads for Ironclad and chose the default 24 times of 24. The
+# fight starts for it are kept (``snapshots_<character>.json``, acts 1 and 2 only) and ``tune --character``
+# does it. ``tuned/<CHARACTER>/_character.json`` holds what was compared for each character.
 @dataclass(frozen=True)
 class CharacterTuning:
     """What was fitted for one character as a whole; empty for Ironclad, whose numbers are this module's own."""
