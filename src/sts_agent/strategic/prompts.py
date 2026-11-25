@@ -101,6 +101,15 @@ _POTIONS_HELD = """\
 - Potions are usually kept for the fights that need them. In hallway fights and elites, the combat pilot considers spending one potion early when the estimated drop chance on winning exceeds 80%, then returns to holding the rest unless they materially help win. It can spend freely at bosses. Simulated fights against the hardest bosses were won 27% of the time with no potion and 44% with two. potion_needs should say which potions are worth carrying to the next fight that will be in doubt and whether the belt has room. In those boss simulations, effects that last the whole fight, such as Strength, Dexterity or a Power, helped most. Holding potions in simulation cost about 5 more HP per hallway fight and about 9 per elite. recent_outcomes notes say which held potions a delegated fight used.
 """
 
+# The same paragraph with the prices the pilot benches measured on v0.111 (see decision.prompts._v0111_potions_held).
+_POTIONS_HELD_BY_BUILD = {"v0.111.0": _POTIONS_HELD.replace(
+    "Simulated fights against the hardest bosses were won 27% of the time with no potion and 44% with two.",
+    "On the previous game version, simulated fights against the hardest bosses were won 27% of the time with no potion and 44% with two; that was not measured again on this one.").replace(
+    "Holding potions in simulation cost about 5 more HP per hallway fight and about 9 per elite.",
+    "On this game version, keeping a potion cost about 4 HP in a simulated hallway fight and about 7 at an elite.")}
+if "previous game version" not in _POTIONS_HELD_BY_BUILD["v0.111.0"] or "about 7 at an elite" not in _POTIONS_HELD_BY_BUILD["v0.111.0"]:
+    raise ValueError("the planner's potion paragraph no longer holds the sentences its v0.111 prices replace")
+
 _AUTOBATTLE = """\
 COMBAT IS DELEGATED IN THIS RUN. Spire Mentor's Autobattle plays every fight; neither you nor the decision model chooses a card play, a target or the moment a potion is used. Write the assessment for that pilot:
 {potions}- A card with a lasting cost per play (Max HP, gold, a permanent stat) is played in almost every fight. Judge it by cost per play times the fights remaining.
@@ -154,7 +163,8 @@ def system_instruction(*, character: str | None = None, combat_delegated: bool =
     behavior.append(_BALANCE_CHARACTER if strategy.own_balance else _BALANCE)
     behavior.append(_RELIC_GUIDANCE)
     if combat_delegated:
-        behavior.append(_AUTOBATTLE.replace("{potions}", _POTIONS_HELD if potions_held else _POTIONS_SPENT))
+        held = _POTIONS_HELD_BY_BUILD.get(builds.active().key, _POTIONS_HELD)
+        behavior.append(_AUTOBATTLE.replace("{potions}", held if potions_held else _POTIONS_SPENT))
     return "\n\n".join(part.rstrip() for part in (*behavior, _CONTRACT_ENGINE if plan_engine() else _CONTRACT))
 
 

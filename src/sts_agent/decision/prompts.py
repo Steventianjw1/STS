@@ -22,7 +22,7 @@ from .models import DecisionFrame, route_plan_mode
 
 # One version per game build (``game.builds``): a build's prompt carries its characters' guidance, so the
 # version that names the text is the build's own. ``DECISION_PROMPT_VERSION`` is the one of the build in use.
-DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-35", "v0.111.0": "decision-prompt-39"}
+DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-35", "v0.111.0": "decision-prompt-40"}
 
 
 def decision_prompt_version(build=None) -> str:
@@ -435,13 +435,24 @@ def _v0111_autobattle(text: str) -> str:
     return _changed(text, "\n- No sequencing promises.", "\n" + _HP_EACH_FIGHT + "\n- No sequencing promises.")
 
 
+# What holding potions costs the agent's own pilot, as the pilot benches measured it on this build: 320 paired
+# simulated fights against Mentor's search, 4.2 HP per potion kept in hallway fights and 6.9 at elites (the
+# v0.107.1 text counts HP per fight over fights that all began with potions held, which is a different quantity).
+# Boss wins with and without potions were not measured again on this build.
+def _v0111_potions_held(text: str) -> str:
+    text = _changed(text, "Simulated fights against the hardest bosses were won 27% of the time with no potion and 44% with two.",
+                    "On the previous game version, simulated fights against the hardest bosses were won 27% of the time with no potion and 44% with two; that was not measured again on this one.")
+    return _changed(text, "Holding potions in simulation cost about 5 more HP per hallway fight and about 9 per elite",
+                    "On this game version, keeping a potion cost about 4 HP in a simulated hallway fight and about 7 at an elite")
+
+
 _ON_PAPER = "a Power too slow or too small to matter in the fights ahead) is still a skip."
 _ON_PAPER_OR_BET = (_ON_PAPER[:-1] + ", unless it passes the test for a payoff taken before its enabler given on card "
                     "reward and shop screens.")
 _V0111_MODULES = {
     "noncombat": _v0111_noncombat(),
     "autobattle_pilot": _v0111_autobattle(_AUTOBATTLE),
-    "autobattle_own_pilot": _v0111_autobattle(_AUTOBATTLE_PILOT),
+    "autobattle_own_pilot": _v0111_potions_held(_v0111_autobattle(_AUTOBATTLE_PILOT)),
     "deck_balance": _v0111_balance(_BALANCE, "Skipping is wrong here whenever a damage card is offered"),
     "deck_balance_character": _v0111_balance(_BALANCE_CHARACTER,
                                              "Skipping is wrong here whenever a card for that list is offered"),
