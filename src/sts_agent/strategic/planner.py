@@ -17,7 +17,7 @@ from .models import (
     FAILED, INVALID_INPUT, UNCHANGED, UPDATED, InputError, OutputError,
     PlannerResult, StrategicAssessment, StrategicSnapshot, parse_assessment,
 )
-from .prompts import build_user_message, prompt_version_for, system_instruction
+from .prompts import build_user_message, plan_engine, prompt_version_for, system_instruction
 
 
 class TextModel(Protocol):
@@ -134,7 +134,7 @@ class StrategicPlanner:
             if isinstance(text, str):
                 record["response_text"] = text
             try:
-                content = parse_assessment(text, snap.facts)
+                content = parse_assessment(text, snap.facts, engine=plan_engine())
                 self.progress.emit("reply_accepted", "strategy", attempt, revision=snap.revision)
                 break
             except OutputError as e:

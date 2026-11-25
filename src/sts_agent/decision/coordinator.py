@@ -26,7 +26,7 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
-from ..evidence import boss_demands, deck_balance, enemy_patterns
+from ..evidence import boss_demands, budget, deck_balance, enemy_patterns
 from ..evidence.potion_odds import drop_state
 from ..game.client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
 from ..config import Limits
@@ -994,6 +994,13 @@ class RunCoordinator:
                     or (c["kind"] == "shop_purchase" and c["details"].get("category") == "card")])
                 if offered:
                     facts = {**facts, "deck_balance_offers": offered}
+            if budget.active() and v.kind in ("card_reward", "shop"):
+                # Whether this position can afford a card that waits for its enabler: checked here, not left to the model.
+                facts = {**facts, "payoff_bet": budget.bet_window(state, run, v.facts.get("player"), ahead)}
+        if budget.active() and v.kind in ("map", "rest_site") and not v.in_combat and not overlay:
+            costs = budget.hp_costs(v.facts.get("deck"), v.facts.get("relics"))
+            if costs:   # HP the deck pays on purpose comes back only at rest sites: part of rest and route choices
+                facts = {**facts, "hp_costs": costs}
         if self._handoff:
             lims.append("AUTOBATTLE HANDOFF: an enemy's action opened this offer during its turn. Spire Mentor is "
                         "playing this fight and is holding it for this one choice, because it has no fight search for "

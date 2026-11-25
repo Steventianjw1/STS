@@ -57,6 +57,11 @@ CONFIDENCE = ("low", "medium", "high")
 # standing_plan: the maintained deck plan every later choice is checked against.
 PLAN_LISTS = ("deck_needs", "avoid", "removal_targets", "upgrade_targets")
 PLAN_TEXTS = ("skip_rule", "boss_prep")
+# An optional further entry, asked for only by the planner prompt of a game build that has it
+# (``prompts.plan_engine``): the loop the deck already holds, {"pieces": [names], "plan": text}. Every piece
+# must be a card in the deck or a relic held, so the plan can never rest on cards the run does not have.
+PLAN_ENGINE = "engine"
+MAX_ENGINE_PIECES = 6
 
 _SHORT, _NAME, _TEXT = 80, 120, 1000
 MAX_GLOSSARY_TERMS = 60
@@ -439,8 +444,33 @@ def _evidence(v, path, facts) -> list:
     return targets
 
 
-def parse_assessment(text: Any, facts: dict) -> dict:
-    """Validate raw model text against the output contract. Returns the content dict."""
+def _fold(name) -> str:
+    """A card or relic name as compared: case, surrounding space and the upgrade mark do not count."""
+    return str(name or "").strip().rstrip("+").strip().casefold()
+
+
+def _engine(value, facts: dict, E) -> None:
+    """Validate standing_plan.engine: a few pieces, each one held, and a sentence on what they do together."""
+    p = "/standing_plan/" + PLAN_ENGINE
+    engine = _obj(value, p, ("pieces", "plan"), err=E)
+    pieces = _list(engine["pieces"], p + "/pieces", maxlen=MAX_ENGINE_PIECES, err=E)
+    _str(engine["plan"], p + "/plan", nullable=False, nonempty=bool(pieces), err=E)
+    deck = facts.get("deck")
+    held = None     # unknown while the deck is not observed: the names cannot be checked then
+    if isinstance(deck, dict):
+        held = {_fold(c.get("name")) for c in deck.get("cards") or []}
+        held |= {_fold(r.get("name")) for r in (facts.get("relics") or {}).get("items") or []}
+    for i, piece in enumerate(pieces):
+        _str(piece, f"{p}/pieces/{i}", nullable=False, nonempty=True, err=E)
+        if held is not None and _fold(piece) not in held:
+            _fail(E, f"{p}/pieces/{i}", f"{piece!r} is not the name of a card in current_facts.deck or of a relic in "
+                                         "current_facts.relics; an engine lists only pieces that are held")
+
+
+def parse_assessment(text: Any, facts: dict, *, engine: bool = False) -> dict:
+    """Validate raw model text against the output contract. Returns the content dict.
+
+    ``engine``: the contract of the game build in use lets standing_plan carry ``PLAN_ENGINE``."""
     if not isinstance(text, str):
         raise OutputError(f"model returned {type(text).__name__}, expected text")
     body = text.strip()
@@ -480,12 +510,17 @@ def parse_assessment(text: Any, facts: dict) -> dict:
         _str(it["reconsider_when"], p + "/reconsider_when", nullable=False, err=E)
         _evidence(it["evidence"], p + "/evidence", facts)
 
-    plan = _obj(data["standing_plan"], "/standing_plan", tuple(PLAN_LISTS) + tuple(PLAN_TEXTS), err=E)
+    plan_keys = tuple(PLAN_LISTS) + tuple(PLAN_TEXTS)
+    if engine and isinstance(data["standing_plan"], dict) and PLAN_ENGINE in data["standing_plan"]:
+        plan_keys += (PLAN_ENGINE,)     # optional: a plan without it is as valid as before
+    plan = _obj(data["standing_plan"], "/standing_plan", plan_keys, err=E)
     for key in PLAN_LISTS:
         for i, it in enumerate(_list(plan[key], f"/standing_plan/{key}", err=E)):
             _str(it, f"/standing_plan/{key}/{i}", nullable=False, nonempty=True, err=E)
     for key in PLAN_TEXTS:
         _str(plan[key], f"/standing_plan/{key}", nullable=False, nonempty=True, err=E)
+    if PLAN_ENGINE in plan:
+        _engine(plan[PLAN_ENGINE], facts, E)
 
     unc = _list(data["uncertainties"], "/uncertainties", err=E)
     for i, u in enumerate(unc):

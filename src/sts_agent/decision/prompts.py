@@ -22,7 +22,7 @@ from .models import DecisionFrame, route_plan_mode
 
 # One version per game build (``game.builds``): a build's prompt carries its characters' guidance, so the
 # version that names the text is the build's own. ``DECISION_PROMPT_VERSION`` is the one of the build in use.
-DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-35", "v0.111.0": "decision-prompt-37"}
+DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-35", "v0.111.0": "decision-prompt-38"}
 
 
 def decision_prompt_version(build=None) -> str:
@@ -360,7 +360,7 @@ _CARD_FIT = """\
 Conditional synergy counts when the other half is already held: a card in the deck that is drawn often enough to matter, or a relic, which is active in every fight and so always counts. A card's drawback counts only if this deck pays it and its bonus only if this deck can use it: a penalty to a stat the deck's damage does not use costs little, and a bonus for a mechanic the deck lacks is worth nothing. A card that is strong by itself but works against what the deck relies on (it uses up or displaces what the main damage or defense needs, or adds cards that delay it) is worse here than its text."""
 
 _PAYOFF_BET = """\
-A PAYOFF BEFORE ITS ENABLER. A card that does little until another kind of card is held is a bet, and it is taken only when all four of these hold. (1) What it does once enabled is among the strongest things this deck could have, for the act boss or in every fight, not a small bonus. (2) The enabler is a kind of card this character is offered often and this deck wants anyway: a deck_balance track or a deck_needs entry already asks for it, or several different cards supply it, so it is likely to arrive within this act. (3) The deck can carry a card that does nothing for now: its Block and damage are enough for the fights before the next rest site, and the pick does not displace a card that answers the current limit. (4) The route gives time: rest sites, a shop with gold to spend, potions held, no elite or boss as the very next fight (current_facts.route_context). When HP is low, a hard fight is next, or a card for the current limit is on offer, take what works the turn it is drawn: a solution now beats potential. Hold one such bet at a time: no second copy of it and no second card waiting for an enabler until the first is working. Say in reason that the pick is a bet, on which enabler, and by when it must arrive; from then on that enabler is the first thing the deck looks for."""
+A PAYOFF BEFORE ITS ENABLER. A card that does little until another kind of card is held is a bet, and the rule against counting synergy the deck does not hold has this one narrow exception. Python opens or closes it. current_facts.payoff_bet.open is true only in act 1 or early act 2, with neither damage nor Block missing or short among the added cards, at least two thirds of HP left, and a rest site that some route reaches before an elite; closed_by lists what failed. When it is false or absent the exception does not apply, whatever the card: take what works the turn it is drawn, because a solution now beats potential. When it is true, two more things must hold, and those you judge. (1) What the card does once enabled is among the strongest things this deck could have, for the act boss or in every fight, not a small bonus. (2) The enabler is a kind of card this character is offered often and this deck wants anyway: a deck_balance track or a deck_needs entry already asks for it, or several different cards supply it, so it is likely to arrive within this act. Even then a card on offer that answers the current limit comes first. The exception never covers a card that costs HP to play or that pays only when you lose HP. Hold one such bet at a time: no second copy of it and no second card waiting for an enabler until the first is working. Say in reason that the pick is a bet, on which enabler, and by when it must arrive; from then on that enabler is the first thing the deck looks for."""
 
 _SHOP_PROBLEMS = """\
 Buy answers to named problems. For each purchase name the coming failure it prevents (which fight, and what the deck lacks in it), then compare that with the removal, a potion, a relic, and keeping the gold for a later shop: route_context says whether another shop comes before the boss, and gold carried there is worth what that shop could sell, which for a relic that fixes energy or the opening turn is more than a card costs. Leaving with the gold is right when nothing here answers a named problem; do not buy the best of a weak stock. The other way round, an unstable deck early in an act with no rest site near turns gold into survival now. A removal improves every later draw and is worth most when the cards that remain are ones the deck wants in every pass; it is not automatic: a relic or potion that fixes a named problem can come before it, and when nothing left in the deck stands in the plan's way it buys little."""
@@ -369,13 +369,19 @@ _MAP_STRENGTH = """\
 Route for the deck as it is now, inside the elite stance below. An elite turns present strength into a relic. When the deck has just become stronger (a new relic, a combination that now works, potions in hand) and the boss still asks for more, take the elites that convert that strength. When this run's own fights show the deck already handles this act and its boss (recent_combat_outcomes, boss_readiness), weigh one more elite as exactly that: its relic adds less than the earlier ones did, and rest sites, shops and upgrades protect a winning position. That is a judgment about the next elite and never a reason to plan none: the best players still take nearly two elites in act 3 and reach its boss close to full HP. A weak deck cannot hide either: when the act has paid it too little, the rooms that pay (an elite behind easier fights, a shop with gold to spend) are how it becomes strong enough, and a route that only postpones the test loses to the boss. Route around what the deck is bad at today: easier fights for card rewards before the harder ones, a ? room in place of a fight this deck loses HP in, a shop early when gold can buy survival, a shop after a risky event or elite when something may need repair. A hard first half of an act is worse than a hard second half, because the deck is not yet repaired, and rest sites that come only at the end do not protect the rooms before them. A route with slack (rest sites, shops) is also what lets the deck carry a card that pays off later; a route without slack calls for cards that work at once."""
 
 _REST_BUDGET = """\
-RESTING VERSUS UPGRADING, at a rest site and on the map when the room you travel to is one. Resting is not timid and upgrading is not greedy: each is a price. Count the HP this deck spends on purpose before the next rest site: cards and relics that cost HP when played or at the start of a fight, the damage taken in the turns it needs to put its Powers into play, and the worst order it can draw its Block in. A deck that wins once it is set up needs the HP to get there more than it needs one more upgrade. Rest when no available upgrade changes how the next fights go, when a relic already upgrades the cards you add, or when the run is ahead and HP is what keeps it ahead. Upgrade when HP covers the rooms before the next heal and the upgrade changes something concrete: a key card becomes cheaper or playable a turn sooner, scaling that every later turn multiplies grows, a card the deck plays in every pass does more each time, or a number crosses a threshold that matters against a named enemy. Rank upgrades by that and not by how strong the card is in general, and rank them again after removals: an upgrade that did little in a large deck matters once the deck is small enough to draw that card in every pass. Before a boss, rest when the plan for that fight accepts damage in its opening turns."""
+RESTING VERSUS UPGRADING, at a rest site and on the map when the room you travel to is one. Resting is not timid and upgrading is not greedy: each is a price. Count the HP this deck spends on purpose before the next rest site: cards and relics that cost HP when played or at the start of a fight (current_facts.hp_costs lists them when the deck holds any), the damage taken in the turns it needs to put its Powers into play, and the worst order it can draw its Block in. A deck that wins once it is set up needs the HP to get there more than it needs one more upgrade. Rest when no available upgrade changes how the next fights go, when a relic already upgrades the cards you add, or when the run is ahead and HP is what keeps it ahead. Upgrade when HP covers the rooms before the next heal and the upgrade changes something concrete: a key card becomes cheaper or playable a turn sooner, scaling that every later turn multiplies grows, a card the deck plays in every pass does more each time, or a number crosses a threshold that matters against a named enemy. Rank upgrades by that and not by how strong the card is in general, and rank them again after removals: an upgrade that did little in a large deck matters once the deck is small enough to draw that card in every pass. Before a boss, rest when the plan for that fight accepts damage in its opening turns."""
+
+_ACCESS = """\
+DRAW, ENERGY AND GETTING POWERS INTO PLAY ARE NOT AMONG THE FOUR ROLES. deck_balance lists such cards under added.other, and deck_balance_offers marks one neutral whatever the deck needs, so for these cards neutral is not a verdict. Judge them by whether the deck can find and pay for what it holds. Count its setup (the Powers, and the other cards costing 2 or more that it wants in play early) against what finds and pays for that setup (cards that draw, give energy, keep cards in hand or cost 0). When the setup outnumbers what serves it (several Powers and one or no card that draws or gives energy; recent fights that ended with Powers unplayed), a draw, energy or hand-keeping card answers the current limit: take it ahead of another card for a role that is already covered, and say which the deck lacks, cards or energy. More draw without the energy to play what it finds adds nothing, and neither does energy with nothing to spend it on. The need is capped like a role: once the deck plays its setup in the first turns of a fight, one more such card is neutral again and is judged by its quality."""
 
 _GRID_DRAWS = """\
 A removal is worth what it does to the draws that remain: give up the card that most delays the ones the plan needs, usually a starter Strike, then the starter card nothing in the deck improves. Check the target against the deck as it is now: a card that has since been upgraded, or that a held card or relic makes better (a Power that pays for that kind of card, an enchantment on it), is no longer the one to give up. When the removal is random, or nothing in the deck is unwanted, declining it is right. A transform is a removal plus an unknown card: good on a starter card when it is free or cheap."""
 
 _EVENT = """\
 At events, price each option in what this deck is short of. HP is a budget: pay it when the reward answers a named need (deck_needs, the current limit) and that HP is not needed before the next rest site (route_context); refuse a price the reward does not cover. When paying for an effect that fixes what limits the deck, buy enough of it to matter, not the cheapest step. A curse costs more the smaller the deck is and the more it relies on drawing the same few cards in every pass, and its price includes the removal that must follow: gold, and a removal that would otherwise have taken a starter card. Judge an option with a random result by everything it can give, as far as its own text says: what share of the results helps this deck and what the worst one costs. The result you got does not change whether the choice was right. Random cards added to a deck that wants particular things are a cost unless most of what can come helps. Cards offered from another character's pool are judged by what that pool gives this deck's plan (energy, draw, Block, a way to Exhaust), not by how strong that character is. A safety margin already held (high HP with a rest site next, a potion that prevents death) raises how much risk an option may carry; without one, take the certain gain."""
+
+_ELITE_ACT3 = """\
+ACT 3: ELITES WHILE THE BOSS STILL ASKS FOR SOMETHING. This narrows the elite stance above for the last act. Few fights remain in which a new relic can pay, and a lost fight ends the run, so what an act 3 elite is worth depends on whether the deck still lacks something for the final boss. While a boss need is open (boss_readiness shows a demand unmet, or standing_plan.boss_prep names one), an elite's relic and card reward are among the few ways left to answer it: take the elite the route can best afford, with a rest site before or right behind it. When every boss need is covered and this run's recent fights went as projected or better, HP at the boss is worth more than another relic: prefer the route with the most rest sites and a shop, and take an elite only where it costs the route little (a rest site beside it, HP to spare). The best players still average nearly two elites in act 3 and reach its boss close to full HP, so decide elite by elite, not by a rule to take none; say in route_plan which boss need each accepted elite is for, or that none is open."""
 
 _ANCIENT_CARDS = """\
 - A relic that removes, transforms or upgrades cards is worth what the cards left behind gain: much when the deck already holds cards it wants in every pass and the starter cards are its worst draws, little when it holds no such cards yet. Where it carries a lasting cost (a card added at every shuffle, max HP), count that cost over the fights remaining, and count that a smaller deck draws any later curse more often. A relic that gives energy or a strong first turn at a price is taken when the deck's opening turns can absorb the price."""
@@ -394,13 +400,47 @@ def _changed(text: str, old: str, new: str) -> str:
     return text.replace(old, new)
 
 
+# A cost paid in HP is not lasting like Max HP or gold, but the pilot pays it in almost every fight all the same.
+_HP_EACH_FIGHT = (
+    "- A card or relic that costs HP (not Max HP) each time is paid in almost every fight too, and that HP comes back "
+    "only at rest sites. current_facts.hp_costs (on map and rest site screens, when the deck holds any) lists them: "
+    "count that HP over the fights before the next rest site when choosing a route and when choosing between resting "
+    "and upgrading, and price an offered card of that kind the same way.")
+_ENGINE = (
+    " engine, when present, names a loop the deck already holds: its pieces are cards and relics you have, and its "
+    "plan says what they do together. Judge removals, upgrades, draw and energy by how much sooner or more often they "
+    "bring those pieces together, and count a card that breaks the loop (it uses up, displaces or delays a piece) as "
+    "worse than its text. An engine without pieces means the deck has no such loop yet; never reason from pieces "
+    "that are not held.")
+_REPEAT = (", unless the only such card repeats what an added card already does (a second attack that hits ALL "
+           "enemies while one is held, a second copy): a repeat is not a fill.")
+
+
+def _v0111_noncombat() -> str:
+    text = _changed(_NONCOMBAT, "\n\nThe relics you hold", "\n\n" + _LIMIT + "\n\nThe relics you hold")
+    return _changed(text, "and boss_prep says what the act boss demands.",
+                    "and boss_prep says what the act boss demands." + _ENGINE)
+
+
+def _v0111_balance(text: str, skip_wrong: str) -> str:
+    text = _changed(text, _ON_PAPER, _ON_PAPER_OR_BET)
+    return _changed(text, skip_wrong + ".", skip_wrong + _REPEAT) + "\n\n" + _ACCESS
+
+
+def _v0111_autobattle(text: str) -> str:
+    return _changed(text, "\n- No sequencing promises.", "\n" + _HP_EACH_FIGHT + "\n- No sequencing promises.")
+
+
 _ON_PAPER = "a Power too slow or too small to matter in the fights ahead) is still a skip."
 _ON_PAPER_OR_BET = (_ON_PAPER[:-1] + ", unless it passes the test for a payoff taken before its enabler given on card "
                     "reward and shop screens.")
 _V0111_MODULES = {
-    "noncombat": _changed(_NONCOMBAT, "\n\nThe relics you hold", "\n\n" + _LIMIT + "\n\nThe relics you hold"),
-    "deck_balance": _changed(_BALANCE, _ON_PAPER, _ON_PAPER_OR_BET),
-    "deck_balance_character": _changed(_BALANCE_CHARACTER, _ON_PAPER, _ON_PAPER_OR_BET),
+    "noncombat": _v0111_noncombat(),
+    "autobattle_pilot": _v0111_autobattle(_AUTOBATTLE),
+    "autobattle_own_pilot": _v0111_autobattle(_AUTOBATTLE_PILOT),
+    "deck_balance": _v0111_balance(_BALANCE, "Skipping is wrong here whenever a damage card is offered"),
+    "deck_balance_character": _v0111_balance(_BALANCE_CHARACTER,
+                                             "Skipping is wrong here whenever a card for that list is offered"),
     "card_reward": _changed(
         _CARD_REWARD,
         "Conditional synergy counts only when the other half is already held: a card in the deck that is drawn often "
@@ -411,6 +451,7 @@ _V0111_MODULES = {
     "rest_budget": _REST_BUDGET,
     "grid": _GRID + " " + _GRID_DRAWS,
     "event": _EVENT,
+    "elite_stance_act3": _ELITE_ACT3,
     "ancient_route": _changed(_ANCIENT_ROUTE, "\n- Read the map the other way round as well:",
                               "\n" + _ANCIENT_CARDS + "\n- Read the map the other way round as well:"),
     "evidence_duplicate": _changed(_E_DUPLICATE, "does not by itself justify another. ",
@@ -465,6 +506,8 @@ _V0111_BY_KIND = {
     "event": _followed(_BY_KIND["event"], "deck_balance", "event"),
 }
 _KINDS_BY_BUILD = {"v0.111.0": _V0111_BY_KIND}
+# A build's further elite stance for an act, read after the character's own and the shared one.
+_STANCE_BY_BUILD = {"v0.111.0": {3: "elite_stance_act3"}}
 
 # Screens where the act's elite stance changes the choice: the route, and the cards bought or taken for it.
 _ELITE_STANCE_KINDS = ("map", "card_reward", "shop", "rest_site")
@@ -502,6 +545,8 @@ def prompt_modules(frame: DecisionFrame, *, tools: bool = False) -> list[str]:
             body = (*body, f"{own}_elites")
         if strategy.act_stance:
             body = (*body, "elite_stance_act1" if act == 1 else "elite_stance_later")
+        if act in _STANCE_BY_BUILD.get(builds.active().key, {}):
+            body = (*body, _STANCE_BY_BUILD[builds.active().key][act])
     names = ["core", *body, "contract"]
     if kind in _CONTRACT_BY_KIND and not screen.get("during_combat"):
         names.append(_CONTRACT_BY_KIND[kind])

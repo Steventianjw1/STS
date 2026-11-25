@@ -627,6 +627,8 @@ function thinkEntry(e) {
       const item = (label, v) => { if (v && v.length) { const li = el("li"); li.append(el("b", null, label + ": "), document.createTextNode(Array.isArray(v) ? v.join("; ") : v)); ul.append(li); } };
       item("Needs", e.plan.deck_needs); item("Avoid", e.plan.avoid); item("Remove", e.plan.removal_targets);
       item("Upgrade", e.plan.upgrade_targets); item("Skip rule", e.plan.skip_rule); item("Boss prep", e.plan.boss_prep);
+      const eng = e.plan.engine;
+      if (eng && Array.isArray(eng.pieces) && eng.pieces.length) item("Engine", eng.pieces.join(" + ") + (eng.plan ? ": " + eng.plan : ""));
       det.append(ul); d.append(det);
     }
   } else if (e.k === "reasoning") {
