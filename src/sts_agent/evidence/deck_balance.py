@@ -227,7 +227,7 @@ PLANS_V0107 = {
 # a character drafted the same seeds: 120 for Spire Mentor's run-policy net alone, 60 for the plan carried
 # over from v0.107.1 and for the first refit, 60 or 80 for a variant. Average floor / act 1 boss beaten /
 # act 2 boss beaten of the plans below, then the plan minus the carried-over plan, and minus the net:
-#     IRONCLAD     27.6 / 83.3% / 55.0%   +1.58 +-0.80, +8.3 +-4.3, +13.3 +-7.3   -1.17 +-0.73, -5.0 +-3.7, -8.3 +-6.8
+#     IRONCLAD     27.4 / 81.7% / 51.7%   +1.38 +-0.84, +6.7 +-4.7, +10.0 +-7.4   -1.37 +-0.76, -6.7 +-4.0, -11.7 +-6.8
 #     SILENT       21.4 / 56.7% / 33.3%   +0.00 +-0.00, +0.0 +-0.0, +0.0 +-2.4    -1.05 +-0.83, -5.0 +-5.5, -1.7 +-5.6
 #     DEFECT       25.7 / 76.7% / 45.0%   +0.07 +-0.06, +0.0 +-0.0, +3.3 +-2.3    -0.33 +-0.67, -5.0 +-3.7, -3.3 +-6.7
 #     REGENT       23.3 / 73.8% / 25.0%   +0.00 +-0.44, -5.0 +-2.8, +5.0 +-6.9    +1.04 +-0.72, +5.0 +-3.9, +2.5 +-5.0
@@ -235,14 +235,18 @@ PLANS_V0107 = {
 # (the net alone: 27.4 / 83.3% / 57.5%, 23.0 / 63.3% / 34.2%, 25.9 / 80.0% / 45.8%, 22.8 / 68.3% / 24.2% and
 # 19.8 / 49.2% / 18.3%). So no refit is behind the plan it replaces, the Ironclad's is ahead of it, and all
 # five are within noise of the net by itself, as on v0.107.1. They are kept because they read decks the
-# way this build's players build them: of the cards those players took, the refits call 7% (Ironclad),
+# way this build's players build them: of the cards those players took, the refits call 6% (Ironclad),
 # 11% (Silent), 6% (Defect), 11% (Regent) and 9% (Necrobinder) worsening, where the carried-over plans
 # call 20, 12, 9, 14 and 11%, and a card a refit puts first was taken 43, 38, 39, 33 and 54% of the times
 # it was offered (27, 34, 38, 28 and 56% before).
-# Two numbers the rules above left open were set by these runs:
+# Two numbers the rules above left open were set by these runs, and one addition was checked by them:
 #   - Ironclad, Block. With Block capped at the players' holding plus one (4, 6 and 7 by act) the plan
 #     reached 27.3 / 81.7% / 50.0%; without the cap floor +0.35 +-0.27 and act 2 boss +5.0 +-3.7 points:
 #     no cap. Damage and Block as the first picks instead was behind (floor -0.45 +-0.64).
+#   - Ironclad, the track "flow". The plan without it reached 27.6 / 83.3% / 55.0%; with it floor -0.20
+#     +-0.26 and act 2 boss -3.3 +-5.3 points: level. It is kept for how it reads the players' picks: the
+#     cards it marks as filling something (6226 offers) were taken 41%, where the plan without it marked
+#     2801 and those were taken 35%.
 #   - Regent, first picks. Block and damage scaling first reached 23.7 / 71.7% / 25.0% and lost the act 1
 #     boss more often than the carried-over plan (-8.3 +-4.3 points); damage and Block first gave floor
 #     +0.58 +-0.60 and act 2 boss +5.0 +-3.7 points against it. Three other changes to that refit did not
