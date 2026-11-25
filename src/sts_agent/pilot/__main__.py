@@ -9,6 +9,8 @@
     runs   --out FILE         whole simulated runs per character and deck-plan arm (`pilot.runs`)
     runs-report FILE          the comparison table of a file `runs` wrote
     fight-starts FILE         fight starts of those runs, kept per character for bench and tune (--save)
+    players --character C     the decks and card picks of the highest-rated Spire Codex players, read by the
+                              deck plans' own rules, and how a plan's verdicts match them (`pilot.players`; network)
 
 bench, tune, scenarios and show take --character (IRONCLAD by default; the others fight from the
 fight starts `fight-starts --save` kept).
@@ -25,7 +27,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ..game.characters import CHARACTERS, character_key
-from . import engine, runs, sim
+from . import engine, players, runs, sim
 from .search import SAFE_WIN
 from .profiles import TUNED_DIR, WIN_ODDS, character_tuning, load_tuned, profile_for, save_character_tuning
 
@@ -47,6 +49,50 @@ def _character(value) -> str:
     if key is None:
         raise argparse.ArgumentTypeError(f"{value!r} is not one of {', '.join(CHARACTERS)}")
     return key
+
+
+def _players_table(character, rows, catalog, words, arms, cards=False) -> str:
+    found = players.decks(rows, character, catalog, words)
+    lines = [f"{character}: {found['runs']} solo A10 standard runs of builds {', '.join(players.BUILDS)} by the "
+             f"{found['players']} highest-rated Spire Codex players who have them, {found['won']} won (public data, not this agent)"]
+    for act in (1, 2, 3):
+        row = found.get(f"act{act}")
+        if not row:
+            continue
+        deck = row["deck"]
+        lines.append(f"  act {act}: deck entering the boss in won runs (n={row['won_decks']}) {deck['size']:.1f} cards, "
+                     f"quartiles {'/'.join(map(str, row['size_quartiles']))}: "
+                     + ", ".join(f"{key.replace('track_', '').replace('names_', 'naming ')} {value:.1f}"
+                                 for key, value in deck.items() if key != "size"))
+        lines.append(f"         during the act (n={row['runs']}): card rewards taken {row['rewards_taken_pct']}% "
+                     f"({row['rewards_taken']:.1f} a run), removals {row['removals']:.2f} ("
+                     + ", ".join(f"{kind} {pct}%" for kind, pct in row["removed_pct"].items())
+                     + f"), elites {row['elites']:.2f} at {row['hp_lost_per_elite_pct']}% of max HP each, "
+                     f"HP entering the boss {row['hp_entering_boss_pct']}%")
+    decisions = list(players.rewards(rows, catalog))
+    lines.append(f"  pick rate when offered, at {len(decisions)} card rewards, by the number of that kind the deck "
+                 "already held (taken % (offers), a dash under 25 offers), then by act:")
+    for kind, row in sorted(players.pick_rates(decisions, words).items()):
+        held = "  ".join(f"{n if n < 6 else '6+'}: " + (f"{100 * row['held'][n][0] / row['held'][n][1]:3.0f}% ({row['held'][n][1]})"
+                                                     if row["held"].get(n, (0, 0))[1] >= 25 else "  -")
+                         for n in range(7))
+        acts = "  ".join(f"act {a}: {100 * row['act'][a][0] / row['act'][a][1]:.0f}%" for a in (1, 2, 3)
+                         if row["act"].get(a, (0, 0))[1] >= 25)
+        lines.append(f"    {kind:<16} {held}   | {acts}")
+    lines.append("  a card reward was taken (not skipped), by act and the deck's size at the reward:")
+    for act, row in players.size_rates(decisions).items():
+        lines.append(f"    act {act}: " + "  ".join(f"{size}-{size + 3} cards {100 * a / n:.0f}% ({n})"
+                                                   for size, (a, n) in row.items() if n >= 25))
+    lines.append("  how each plan labels those offers, and how often the players took a card under each label:")
+    for arm in arms:
+        fit = players.plan_fit(decisions, character, arm)
+        lines.append(f"    {arm[:60]:<60} " + "  ".join(f"{label} {row['taken_pct']:.0f}% ({row['offered']})"
+                                                         for label, row in fit["labels"].items())
+                     + f"  | of the cards taken, {fit['takes_labelled_worsens_pct']:.0f}% are labelled worsens")
+    if cards:
+        lines.append("  every card offered 15 times or more: taken %, offers, card, kinds")
+        lines += [f"    {pct:3d}% {n:4d}  {cid:<24} {tags}" for pct, n, cid, tags in players.card_rates(decisions)]
+    return "\n".join(lines)
 
 
 def _runs_table(report) -> str:
@@ -148,9 +194,18 @@ def main(argv=None) -> int:
     f.add_argument("--arm", default=None, help="take the fight starts of this arm's runs only")
     f.add_argument("--per-tier", default="Weak=16,Normal=32,Elite=32,Boss=24", help="how many to keep of each tier, per character")
     f.add_argument("--save", action="store_true", help="keep them in the repository (snapshots_<character>.json)")
-    for p in (s, sh, b, t, f, c):
+    pl = sub.add_parser("players")
+    pl.add_argument("--players", type=int, default=players.PLAYERS, help="how many of the character's highest-rated accounts")
+    pl.add_argument("--runs", type=int, default=players.RUNS_EACH, help="solo A10 runs of the pinned builds read per account, newest first")
+    pl.add_argument("--arms", default="shared,character", help="plans whose verdicts are compared with the picks (as for `runs`)")
+    pl.add_argument("--words", default="", help="words a card's text names, counted as kinds of their own (Shiv,Poison)")
+    pl.add_argument("--cards", action="store_true", help="also list every card's pick rate")
+    pl.add_argument("--offline", action="store_true", help="read only what earlier calls kept in the Spire Codex cache")
+    pl.add_argument("--source", default=None, help="a full checkout of Spire Mentor's source (default: data/mentor_build)")
+    for p in (s, sh, b, t, f, c, pl):
         p.add_argument("--character", type=_character, default=None if p is f else "IRONCLAD",
-                       help="whose fight starts" + (" (default: every character in the file)" if p is f else " (default IRONCLAD)"))
+                       help=("whose players" if p is pl else "whose fight starts")
+                       + (" (default: every character in the file)" if p is f else " (default IRONCLAD)"))
     for p in (b, t):
         p.add_argument("--low-priority", action="store_true", help="run below normal CPU priority, so a game being played keeps the processor")
         p.add_argument("--tier", default=None, help="Weak,Normal,Elite,Boss")
@@ -249,6 +304,13 @@ def main(argv=None) -> int:
         print(f"done in {time.time() - started:.0f}s")
         return 0
     rs = engine.load(args.game_dir)
+    if args.cmd == "players":
+        catalog, words = runs.Catalog(rs, runs.source_dir(args.source)), [w for w in args.words.split(",") if w]
+        raw = players.fetch(args.character, players=args.players, runs_each=args.runs, offline=args.offline,
+                            progress=lambda i, n, kept: print(f"  player {i}/{n}: {kept} runs", flush=True))
+        rows = players.read(raw, args.character)
+        print(_players_table(args.character, rows, catalog, words, args.arms.split(","), args.cards))
+        return 0
     if args.cmd == "fight-starts":
         caps = {k: int(v) for k, v in (kv.split("=") for kv in args.per_tier.split(",") if kv)}
         rows = runs.read_runs(args.file)

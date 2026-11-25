@@ -9,10 +9,12 @@ What the deck should take first changes over the run (``phase``) and with the ch
 (``DeckPlan``, one per character in ``PLANS``). Ironclad's plan is the one every character had
 before: the first picks of act 1 go to damage, because the starter deck kills too slowly for the
 act 1 elites and boss, and from act 2 on Block scaling and a thin deck decide fights. The other
-four follow the owner's guidance for each, with the numbers set by simulated runs (``pilot.runs``;
-what was measured is recorded with the plans). A character also has ``tracks``: counts of what its
-own mechanic needs (the Silent's Weak, the Necrobinder's Osty and deck size, the Regent's Stars
-gained against Stars spent, the Defect's Frost), each with a status like a role's.
+four follow the owner's guidance for each. The Regent's numbers were set by simulated runs
+(``pilot.runs``); the Silent's, Defect's and Necrobinder's follow what the decks of the highest-rated
+players hold and what those players take (``pilot.players``) and were then checked in simulated runs.
+What was measured is recorded with the plans. A character also has ``tracks``: counts of what its
+own mechanic needs (the Silent's Weak, the Necrobinder's Weak and Osty, the Regent's Stars gained
+against Stars spent, the Defect's Frost and Weak), each with a status like a role's.
 
 The counts are explicit rules over each card's own type and text as the game shows it (and, for
 the Regent's Star amounts, the card's id); they need no catalog and no network. They count
@@ -44,8 +46,15 @@ class DeckPlan:
     front_lead: int = 2             # ... when it also holds this many more than the other
     scaling_full: int = 2           # lasting sources of one kind of scaling beyond which another adds little
     late_first: tuple = ("block_scaling",)   # roles that lead from ``thin_from_act`` on while missing or short
-    thin_from_act: int = 2          # the act from which a card that fills nothing is skipped
+    thin_from_act: int | None = 2   # the act from which a card that fills nothing is skipped; None: no such act
+    build_first: tuple = ()         # roles that lead before ``thin_from_act``, after the first picks, while missing or short
+    caps: dict = field(default_factory=dict)        # front-line role -> added cards from which it is over-supplied by itself:
+                                                    # one number, or one per act (the last stands for later acts)
+    never_over: tuple = ()          # front-line roles that are never over-supplied
+    scaling_min: dict = field(default_factory=dict)     # scaling role -> lasting sources below which it is still short
     deck_target: int | None = None  # deck size the plan holds to: at or above it only a card that fills a need is added
+    deck_targets: dict = field(default_factory=dict)    # act -> the deck size held to in that act (replaces ``deck_target``)
+    removals_from_act: int | None = None    # from this act the shop's card removal is bought before a card (``pilot.runs``)
     tracks: tuple = ()              # the character's own tracks, most urgent first (``_TRACKS``)
     targets: dict = field(default_factory=dict)     # numbers the tracks read (see each track)
     note: str = ""                  # the plan in one sentence, shown with the evidence
@@ -54,49 +63,87 @@ class DeckPlan:
 # One plan per character. IRONCLAD is the plan measured on the logged A10 Ironclad runs and is what a
 # character without an entry gets. The others put the owner's guidance into the same terms.
 #
-# How their numbers were set (simulator evidence throughout: ``pilot.runs``, engine fingerprint
-# cc2c06eb91b21a2a, ascension 10, 80 seeds a character, runs ended at the act 2 boss, fights searched
-# with 400 simulations a decision and 1600 at bosses; a stand-in drafter, no model and no live run):
+# How their numbers were set. Simulator evidence is ``pilot.runs``: engine fingerprint cc2c06eb91b21a2a,
+# ascension 10, the same 80 seeds for every plan of a character, runs ended at the act 2 boss, fights
+# searched with 400 simulations a decision and 1600 at bosses, a stand-in drafter, no model and no live
+# run. Player evidence is ``pilot.players``, read 2026-11-25: the solo A10 standard runs of builds v0.107.1
+# and v0.107.0 by the 12 highest-rated Spire Codex accounts that have them (Silent 166 runs and 3058 card
+# rewards, Defect 133 and 2419, Necrobinder 137 and 2401).
 #   1. Read off the decks Spire Mentor's run-policy net builds by itself, at each act boss, in runs that
 #      beat the boss and runs that did not. Runs that won held one Frost card per 8 to 10 cards (Defect),
 #      Star costs within a Star of the Stars gained (Regent), fewer attacks and more Block and scaling
 #      than runs that lost (Necrobinder), and 3.5 damage-scaling cards at the act 2 boss (Regent) where
 #      every other character's held about 2.
-#   2. Each plan drafted the same 80 seeds as Ironclad's plan ("shared") did for that character. Paired
+#   2. Each first plan drafted the same seeds as Ironclad's plan ("shared") did for that character. Paired
 #      differences, plan minus shared, with standard errors:
 #        SILENT       floor +0.04 +-0.71, act 1 boss +0.0 +-4.4 points, act 2 boss -1.3 +-2.8 points
 #        NECROBINDER  floor -0.06 +-0.68, act 1 boss +0.0 +-5.0 points, act 2 boss -3.7 +-2.8 points
 #        REGENT       floor -0.28 +-0.43, act 1 boss -2.5 +-2.5 points, act 2 boss +8.7 +-4.1 points
 #        DEFECT       floor +0.42 +-0.71, act 1 boss +0.0 +-4.0 points, act 2 boss +5.0 +-4.3 points
-#      So the Regent's plan beat the act 2 boss more often than the shared plan did, and the others are
-#      level with it: they are kept because they say what the owner asked for at no measured cost, not
-#      because they were shown to be stronger.
+#      So the Regent's plan beat the act 2 boss more often than the shared plan did, and it stands.
 #   3. Ironclad's own plan against the net by itself: floor -0.82 +-0.72, act 2 boss +0.0 +-6.4 points,
 #      with a deck 3 cards smaller. For the other four the shared plan cost act 2 boss wins against the net
-#      (Regent -11.3 +-5.0 points, Defect -13.8 +-6.4, Necrobinder -7.5 +-3.5); their own plans gave most
-#      of that back for the Regent (-2.5 +-4.0) and part of it for the Defect (-8.7 +-6.5).
+#      (Regent -11.3 +-5.0 points, Defect -13.8 +-6.4, Necrobinder -7.5 +-3.5); the Regent's own plan gave
+#      most of that back (-2.5 +-4.0).
+#   4. The Silent's, Defect's and Necrobinder's first plans did not read decks the way the best players
+#      build them: of the cards those players took, the plans called 16%, 16% and 35% worsening, and from
+#      act 2 they marked every card without a role as one to skip. What the players' decks and picks say,
+#      and the field for it:
+#        - no deck is kept thin. Card rewards taken in acts 1, 2 and 3: 86/72/60% (Silent), 89/73/62%
+#          (Defect), 84/65/54% (Necrobinder), as often with a large deck as with a small one; a card
+#          with no role was taken about one time in three at any count. So ``thin_from_act=None``, and
+#          no deck-size target for the Necrobinder, whose decks held 19, 25 and 32 cards at the bosses.
+#        - Block was taken three times in ten or more at any count, so it is never over-supplied.
+#          Damage cards fell from one in three to under one in ten, so damage has ``caps``: one more
+#          than the damage cards those decks held at each act's boss (3.8/6.0/7.3 Silent, 4.3/6.8/8.8
+#          Defect, 3.8/5.8/7.4 Necrobinder).
+#        - Silent: Block scaling taken 80% of the times offered with none held and 65% with one,
+#          damage scaling 37% and 46%: both lead and are short below two sources, full at four. Weak
+#          sources held 1.7/2.7/3.5: one per 15 cards, at least two.
+#        - Defect: Frost taken 51%, 46%, 32%, 40% with none to three held and 18% with four: two, three
+#          past 24 cards, over-supplied from four. Weak 65% with none, 21% with one, 7% with two: one.
+#          Focus, slots and Block Powers about 40% with none to two held: short below two.
+#        - Necrobinder: Weak taken 82% with none and still 54% with four: three, one per 8 cards.
+#          Summon cards 20 to 23% at any count: no Summon target.
+#        - removals by act: 0.5/1.8/1.2 (Silent), 0.4/1.8/0.9 (Defect), 0.7/2.0/1.5 (Necrobinder).
+#      The refitted plans call 12%, 8% and 9% of the cards taken worsening; a card they put first was
+#      taken 33%, 38% and 58% of the times it was offered, one they call worsening 11%, 14% and 12%.
+#   5. The refitted plans on the same seeds. Average floor / act 1 boss beaten / act 2 boss beaten, then
+#      the plan minus the first plan of step 2, and minus the net by itself:
+#        SILENT       19.3 / 45.0% / 17.5%   -0.12 +-0.17, +0.0 +-0.0, +2.5 +-3.1   -0.69 +-0.69, -5.0 +-4.7, +0.0 +-3.1
+#        DEFECT       25.2 / 80.0% / 40.0%   -0.61 +-0.84, +3.7 +-4.5, +3.7 +-5.5   -0.80 +-0.52, +0.0 +-3.1, -5.0 +-5.9
+#        NECROBINDER  20.9 / 57.5% / 10.0%   +1.68 +-0.86, +8.7 +-5.1, +5.0 +-3.0   +0.65 +-0.61, +5.0 +-3.9, -6.2 +-4.1
+#      So the Necrobinder's plan is the stronger one (and beats the shared plan by 1.61 +-0.65 floors);
+#      the Silent's and Defect's are level with their first plans, and are kept because they read decks
+#      the way the players build them. Three things the simulated runs decided on the way:
+#        - the shop's removal bought first in every act cost the Silent (against not buying it first:
+#          floor -0.71 +-0.46, act 2 boss -6.2 +-2.7 points) and the Necrobinder (against act 2 onwards:
+#          floor -1.38 +-0.71, act 1 boss -10.0 +-4.6 points), so ``removals_from_act=2``, which is also
+#          where the players make theirs;
+#        - the Defect's first picks: Block alone lost to Block and damage (floor -0.50 +-0.49, act 1 boss
+#          -6.2 +-3.3 points); the players took a first Block card 44% and a first damage card 34% of the
+#          times one was offered;
+#        - a damage cap at the count where the players' pick rate halves (4 for the Silent and
+#          Necrobinder, 6 for the Defect, in every act) measured the same as the caps above, which are
+#          kept because they do not stop a deck below what the players' decks held.
 PLANS = {
     "IRONCLAD": DeckPlan(note="damage first in act 1, then a balanced deck that is kept thin from act 2"),
-    # Owner: consistent Weak and Block, damage scaling taken for the bosses. One Weak source per 10 cards
-    # raised the Weak sources held at the act 1 boss from 1.5 to 1.8. Asking for one per 6 cards and Block
-    # before damage in the first picks (2.1 held) was no better: floor -0.11 +-0.71 against shared, act 1
-    # boss -3.7 +-4.5 points.
+    # Owner: consistent Weak and Block, damage scaling taken for the bosses.
     "SILENT": DeckPlan(
-        early_roles=("damage", "block"), scaling_full=3, late_first=("damage_scaling", "block_scaling"),
-        tracks=("weak",), targets={"weak_per_cards": 10, "weak_min": 2},
-        note="Weak applied every turn and reliable Block come first; damage scaling is taken for each act's boss"),
-    # Owner: removals and a smaller deck, Block and Osty's HP preserved, then scaling. The deck is held small
-    # from act 2 and not before: skipping cards that fill nothing already in act 1 lost the act 1 boss more
-    # often, at a target of 18 cards (floor -1.69 +-0.75 against shared, act 1 boss -11.3 +-5.6 points) and of
-    # 22 (floor -1.05 +-0.79). From act 2, a target of 22 and no target measured the same (-0.03 and -0.06
-    # +-0.68), so 22 is kept: the plan then buys twice the shop removals (0.8 a run against 0.4). Its Summon
-    # and Osty tracks changed no outcome (floor +0.00 +-0.53 without them).
+        early_roles=("damage", "block"), thin_from_act=None, build_first=("block_scaling", "damage_scaling"),
+        caps={"damage": (5, 7, 9)}, never_over=("block",), scaling_min={"block_scaling": 2, "damage_scaling": 2},
+        scaling_full=4,
+        tracks=("weak",), targets={"weak_per_cards": 15, "weak_min": 2}, removals_from_act=2,
+        note="Block that grows and Shiv scaling first, Weak kept up, Block, draw and utility added in every act; "
+             "plain attacks stop after the first few"),
+    # Owner: removals and a smaller deck, Block and Osty's HP preserved, then scaling. The players get the
+    # smaller deck from removals and from refusing attacks; Weak is what they take to protect Osty and the deck.
     "NECROBINDER": DeckPlan(
-        early_roles=("block", "damage"), early_picks=2, deck_target=22, scaling_full=3,
-        late_first=("damage_scaling", "block_scaling"), tracks=("deck_size", "osty", "summon"),
-        targets={"summon_min": 2},
-        note="a small deck from act 2: removals before additions, Block and Osty's HP kept up, and room left only "
-             "for scaling"),
+        early_roles=("block",), early_picks=2, thin_from_act=None, front_min=99, caps={"damage": (5, 7, 9)},
+        scaling_full=3,
+        tracks=("weak", "osty"), targets={"weak_per_cards": 8, "weak_min": 3}, removals_from_act=2,
+        note="Weak and Block first so Osty and the deck survive, removals before additions, then energy and "
+             "scaling; plain attacks stop after the first few"),
     # Owner: Star gain balanced against Star cost, Block alongside, scaling by Stars or by the sword. Forge
     # cards are common and add up, so five sources fill damage scaling here, not two.
     "REGENT": DeckPlan(
@@ -105,9 +152,13 @@ PLANS = {
         note="Stars gained must pay for the Star costs held; Block alongside, and scaling from Star payoffs or Forge"),
     # Owner: mixed builds that generally defend with Frost; scaling by Orbs or by physical attacks.
     "DEFECT": DeckPlan(
-        early_roles=("damage", "block"), scaling_full=4, late_first=("block_scaling", "damage_scaling"),
-        tracks=("frost",), targets={"frost_per_cards": 10, "frost_min": 2},
-        note="Frost for defense in every build; scaling from Orbs and Focus or from Attacks that grow"),
+        early_roles=("block", "damage"), thin_from_act=None, front_min=99, build_first=("block_scaling",),
+        caps={"damage": (6, 8, 10)},
+        scaling_min={"block_scaling": 2}, scaling_full=4, tracks=("frost", "weak"),
+        targets={"frost_per_cards": 12, "frost_min": 2, "frost_max": 4, "weak_per_cards": 0, "weak_min": 1, "weak_over": 1},
+        removals_from_act=2,
+        note="Frost and Block first, one Weak source, Focus and Orb slots for scaling; draw and energy added in every "
+             "act, attacks only while few are held"),
 }
 
 
@@ -121,12 +172,20 @@ def phase_rules(plan: DeckPlan) -> dict:
     lead = ", then ".join(r.replace("_", " ") for r in plan.late_first)
     lead = (lead[0].upper() + lead[1:].replace("block", "Block")
             + (" comes first while it is missing" if len(plan.late_first) == 1 else " come first while missing"))
+    thin = plan.thin_from_act
+    build = ("the rest of act 1: fill missing or short roles first and skip cards that worsen the balance; a solid "
+             "neutral card is still worth taking, because the deck is still too small to win act 1 boss fights")
+    if thin is None or thin > 2:        # the deck keeps building past act 1
+        ahead = ", then ".join(r.replace("_", " ").replace("block", "Block") for r in plan.build_first)
+        build = (f"after the first picks, {'in every act' if thin is None else f'until act {thin}'}: fill missing or short "
+                 f"roles and tracks first{f' ({ahead} leading)' if ahead else ''} and skip cards that worsen the balance; "
+                 "a solid card that fills nothing (draw, energy, a debuff) is still worth taking")
     return {
-        EARLY: f"the first {plan.early_picks} cards added in act 1: {first} come first and are never "
+        EARLY: f"the first {plan.early_picks} cards added in act 1: {first} "
+               f"{'come first and are' if len(plan.early_roles) != 1 else 'comes first and is'} never "
                "over-supplied; a card of another role is taken only when it is clearly the strongest card offered",
-        BUILD: "the rest of act 1: fill missing or short roles first and skip cards that worsen the balance; a solid "
-               "neutral card is still worth taking, because the deck is still too small to win act 1 boss fights",
-        LATE: f"{'every act' if plan.thin_from_act <= 1 else f'act {plan.thin_from_act} onwards'}: {lead}"
+        BUILD: build,
+        LATE: f"{'every act' if (thin or 9) <= 1 else f'act {thin} onwards'}: {lead}"
               ", then the other missing or short roles; skip cards that worsen the balance "
               "and, for a thin deck, skip neutral cards unless clearly strong",
     }
@@ -253,18 +312,20 @@ def card_marks(card) -> dict:
     return {k: v for k, v in marks.items() if v}
 
 
-def _track_weak(plan, deck_size, marks, names):
-    """The Silent: Weak (or lost enemy Strength) often enough to be up every turn."""
+def _track_weak(plan, deck_size, marks, names, act=None):
+    """Weak (or lost enemy Strength): enough sources to keep it on the enemy, and no more than the deck uses."""
     count = marks["weak"]
-    target = max(plan.targets.get("weak_min", 2), math.ceil(deck_size / plan.targets.get("weak_per_cards", 10)))
-    status = "missing" if count == 0 else "short" if count < target else "covered" if count <= target + 1 else "over_supplied"
+    per, least = plan.targets.get("weak_per_cards", 10), plan.targets.get("weak_min", 2)
+    over = plan.targets.get("weak_over", 2)
+    target = max(least, math.ceil(deck_size / per)) if per else least
+    status = "missing" if count == 0 else "short" if count < target else "covered" if count < target + over else "over_supplied"
+    wanted = f"one per {per} cards in the deck (at least {least})" if per else f"{least} in the deck"
     return {"count": count, "target": target, "cards": names["weak"], "status": status,
-            "rule": f"cards that apply Weak or lower enemy Strength, the starter's included: one per "
-                    f"{plan.targets.get('weak_per_cards', 10)} cards in the deck (at least "
-                    f"{plan.targets.get('weak_min', 2)}) keeps Weak on the enemy most turns; two more than that is too many"}
+            "rule": f"cards that apply Weak or lower enemy Strength, the starter's included: {wanted} keeps what "
+                    f"enemies hit with down; {over} more than that is too many"}
 
 
-def _track_summon(plan, deck_size, marks, names):
+def _track_summon(plan, deck_size, marks, names, act=None):
     """The Necrobinder: Osty's HP is Block that lasts, so the deck keeps Summon cards."""
     count, target = marks["summon"], plan.targets.get("summon_min", 2)
     status = "missing" if count == 0 else "short" if count < target else "covered"
@@ -272,22 +333,31 @@ def _track_summon(plan, deck_size, marks, names):
             "rule": f"cards that Summon, the starter's included: at least {target} keep Osty alive to take hits"}
 
 
-def _track_osty(plan, deck_size, marks, names):
+def _track_osty(plan, deck_size, marks, names, act=None):
     count = marks["osty_dies"]
     return {"count": count, "cards": names["osty_dies"], "status": "over_supplied" if count else "covered",
             "rule": "cards that kill Osty for a one-time effect: each one gives up the HP the Summon cards built"}
 
 
-def _track_deck_size(plan, deck_size, marks, names):
-    target = plan.deck_target
+def _deck_target(plan, act):
+    """The deck size the plan holds to in ``act`` (an unknown act is read as act 1); None when it holds to none."""
+    if plan.deck_targets:
+        return plan.deck_targets.get(act if type(act) is int else 1)
+    return plan.deck_target
+
+
+def _track_deck_size(plan, deck_size, marks, names, act=None):
+    target = _deck_target(plan, act)
     status = "covered" if target is None or deck_size < target else "over_supplied"
+    held = (f"the {target} cards this plan holds to" + (" in this act" if plan.deck_targets else "")
+            if target is not None else "no target in this act")
     return {"count": deck_size, "target": target, "cards": [], "status": status,
-            "rule": f"deck size against the {target} cards this plan holds to: at or above it a card is added only "
+            "rule": f"deck size against {held}: at or above a target a card is added only "
                     "when it fills a missing or short role or track or adds scaling the deck is not yet full of, and "
                     "a removal comes before an addition"}
 
 
-def _track_stars(plan, deck_size, marks, names):
+def _track_stars(plan, deck_size, marks, names, act=None):
     """The Regent: Stars gained over one pass through the deck against the Star costs held."""
     gain, cost = marks["star_gain"], marks["star_cost"]
     owed, slack = plan.targets.get("star_deficit", 3), plan.targets.get("star_slack", 2)
@@ -300,14 +370,17 @@ def _track_stars(plan, deck_size, marks, names):
                     "relics are not counted"}
 
 
-def _track_frost(plan, deck_size, marks, names):
+def _track_frost(plan, deck_size, marks, names, act=None):
     """The Defect: Frost Orbs are Block that repeats, and a bigger deck needs more cards that Channel them."""
     count = marks["frost"]
     target = max(plan.targets.get("frost_min", 2), math.ceil(deck_size / plan.targets.get("frost_per_cards", 10)))
-    status = "missing" if count == 0 else "short" if count < target else "covered"
+    most = plan.targets.get("frost_max")
+    status = ("missing" if count == 0 else "short" if count < target else
+              "over_supplied" if most is not None and count >= most else "covered")
     return {"count": count, "target": target, "cards": names["frost"], "status": status,
             "rule": f"cards that Channel Frost: one per {plan.targets.get('frost_per_cards', 10)} cards in the deck (at "
-                    f"least {plan.targets.get('frost_min', 2)}) give the deck Block that repeats every turn"}
+                    f"least {plan.targets.get('frost_min', 2)}) give the deck Block that repeats every turn"
+                    + (f"; from {most} on another adds little" if most is not None else "")}
 
 
 _TRACKS = {"weak": _track_weak, "summon": _track_summon, "osty": _track_osty, "deck_size": _track_deck_size,
@@ -315,32 +388,65 @@ _TRACKS = {"weak": _track_weak, "summon": _track_summon, "osty": _track_osty, "d
 NEEDS, EXCESS = ("missing", "short"), ("over_supplied", "full")
 
 
-def _limits(plan: DeckPlan) -> dict:
+def _cap(value, act) -> int:
+    """A role's cap in ``act``: the number itself, or the act's entry of a per-act list (an unknown act is act 1)."""
+    if isinstance(value, (list, tuple)):
+        return value[min(max(act if type(act) is int else 1, 1), len(value)) - 1]
+    return value
+
+
+def _limits(plan: DeckPlan, act=None) -> dict:
     return {"front_min": plan.front_min, "front_lead": plan.front_lead, "scaling_full": plan.scaling_full,
-            "deck_target": plan.deck_target, **({"star_deficit": plan.targets.get("star_deficit", 3)}
-                                                if "stars" in plan.tracks else {})}
+            "deck_target": _deck_target(plan, act),
+            **({"star_deficit": plan.targets.get("star_deficit", 3)} if "stars" in plan.tracks else {}),
+            **({"caps": {role: _cap(value, act) for role, value in plan.caps.items()}} if plan.caps else {}),
+            **({"never_over": list(plan.never_over)} if plan.never_over else {}),
+            **({"scaling_min": dict(plan.scaling_min)} if plan.scaling_min else {})}
 
 
 def _statuses(counts, limits) -> dict:
     out = {}
+    caps, never, least = limits.get("caps") or {}, limits.get("never_over") or (), limits.get("scaling_min") or {}
     for role, other in (FRONT, FRONT[::-1]):
         mine, theirs = counts[role], counts[other]
-        out[role] = ("over_supplied" if mine >= limits["front_min"] and mine - theirs >= limits["front_lead"] else
+        ahead = mine >= limits["front_min"] and mine - theirs >= limits["front_lead"] and role not in never
+        out[role] = ("over_supplied" if ahead or (role in caps and mine >= caps[role]) else
                      "missing" if mine == 0 else
                      "short" if theirs >= limits["front_min"] and theirs - mine >= limits["front_lead"] else "balanced")
     for role in SCALING:
-        out[role] = "missing" if counts[role] == 0 else "covered" if counts[role] < limits["scaling_full"] else "full"
+        out[role] = ("missing" if counts[role] == 0 else "short" if counts[role] < least.get(role, 1) else
+                     "covered" if counts[role] < limits["scaling_full"] else "full")
     return out
+
+
+def _rules(plan: DeckPlan) -> dict:
+    """``RULES`` as this plan applies them: its own limits on damage, Block and scaling are said where it has any."""
+    if not (plan.caps or plan.never_over or plan.scaling_min):
+        return RULES
+    front = RULES["front_line_status"]
+    for role, cap in plan.caps.items():
+        if isinstance(cap, (list, tuple)):
+            cap = (f"{cap[0]} added cards in act 1" + "".join(f", {n} in act {i}" for i, n in enumerate(cap[1:-1], 2))
+                   + f" and {cap[-1]} after")
+        else:
+            cap = f"{cap} added cards"
+        front += f"; {role.replace('block', 'Block')} is also over-supplied from {cap}, whatever the other holds"
+    for role in plan.never_over:
+        front += f"; {role.replace('block', 'Block')} is never over-supplied"
+    scaling = RULES["scaling_status"] + "".join(
+        f"; {role.replace('_', ' ').replace('block', 'Block')} is short below {n} sources" for role, n in plan.scaling_min.items())
+    return {**RULES, "front_line_status": front, "scaling_status": scaling}
 
 
 def phase(act, added, plan: DeckPlan = PLANS["IRONCLAD"]) -> str:
     """Which deck-building phase applies: by act, and in act 1 by the cards added beyond the starter.
     An unknown act is read as act 1."""
+    thin = plan.thin_from_act
     if act is not None and act >= 2:
-        return LATE
+        return LATE if thin is not None and act >= thin else BUILD
     if added < plan.early_picks:
         return EARLY
-    return LATE if plan.thin_from_act <= 1 else BUILD
+    return LATE if thin is not None and thin <= 1 else BUILD
 
 
 def _priority(stage, status, plan, tracks) -> list:
@@ -349,10 +455,8 @@ def _priority(stage, status, plan, tracks) -> list:
     if stage == EARLY:
         return wanted + list(plan.early_roles)
     short = [r for r in ROLES if status[r] in NEEDS]
-    if stage == LATE:
-        lead = [r for r in plan.late_first if r in short]
-        short = lead + [r for r in short if r not in lead]
-    return wanted + short
+    lead = [r for r in (plan.late_first if stage == LATE else plan.build_first) if r in short]
+    return wanted + lead + [r for r in short if r not in lead]
 
 
 def balance(deck, act=None, character=None, plan: DeckPlan | None = None) -> dict | None:
@@ -389,10 +493,12 @@ def balance(deck, act=None, character=None, plan: DeckPlan | None = None) -> dic
         for role in roles or ("other",):
             counts[role] += n
             names[role].append(label)
-    status = _statuses(counts, _limits(plan))
-    tracks = {name: _TRACKS[name](plan, size, marks, {k: sorted(v)[:MAX_NAMES] for k, v in mark_names.items()})
+    act = act if type(act) is int else None
+    limits = _limits(plan, act)
+    status = _statuses(counts, limits)
+    tracks = {name: _TRACKS[name](plan, size, marks, {k: sorted(v)[:MAX_NAMES] for k, v in mark_names.items()}, act)
               for name in plan.tracks}
-    stage = phase(act if type(act) is int else None, added, plan)
+    stage = phase(act, added, plan)
     sides = {"damage": counts["damage"] + counts["damage_scaling"], "block": counts["block"] + counts["block_scaling"]}
     return {
         "label": "DECK BALANCE: the cards added beyond the starter, counted by what they do. Rules over card text, "
@@ -407,8 +513,8 @@ def balance(deck, act=None, character=None, plan: DeckPlan | None = None) -> dic
         "over_supplied": ([r for r in ROLES if status[r] in EXCESS]
                           + [t for t in plan.tracks if tracks[t]["status"] in EXCESS]),
         "lighter_side": None if sides["damage"] == sides["block"] else min(sides, key=sides.get),
-        "limits": _limits(plan),
-        "rules": RULES,
+        "limits": limits,
+        "rules": _rules(plan),
     }
 
 
@@ -425,8 +531,8 @@ def _track_effect(state, marks, earns_slot) -> tuple:
         fills.append("summon")
     if "osty" in status and marks.get("osty_dies"):
         worse.append("osty")
-    if "frost" in status and marks.get("frost") and status["frost"] in NEEDS:
-        fills.append("frost")
+    if "frost" in status and marks.get("frost"):
+        (fills if status["frost"] in NEEDS else worse if status["frost"] in EXCESS else []).append("frost")
     if "stars" in status:
         gain, cost = marks.get("star_gain", 0), marks.get("star_cost", 0)
         if status["stars"] == "short":
@@ -482,6 +588,8 @@ def _track_text(name, row) -> str:
         return (f"Stars gained per pass {row['star_gain']} against Star costs held {row['star_cost']}: "
                 f"{row['status'].replace('_', ' ')}")
     if name == "deck_size":
+        if row["target"] is None:
+            return f"deck size {row['count']}, no target in this act"
         return f"deck size {row['count']} against a target of {row['target']}: {row['status'].replace('_', ' ')}"
     label = {"weak": "Weak sources", "summon": "Summon cards", "osty": "cards that kill Osty", "frost": "Frost cards"}[name]
     target = f" of {row['target']} wanted" if row.get("target") else ""
@@ -513,4 +621,10 @@ def summary_text(state) -> str:
             f"{start['block']} Block cards. Deck size {state['deck_size']}, of which "
             f"{state['curses_and_statuses']} curses or statuses. Status rules: damage and Block are over-supplied "
             f"at {limits['front_min']} or more added cards and {limits['front_lead']} or more ahead of the other; a "
-            f"scaling role is covered by one lasting source and full at {limits['scaling_full']}.")
+            f"scaling role is covered by one lasting source and full at {limits['scaling_full']}."
+            + "".join(f" {role.replace('block', 'Block').capitalize()} is also over-supplied from {cap} added cards."
+                      for role, cap in (limits.get("caps") or {}).items())
+            + "".join(f" {role.replace('block', 'Block').capitalize()} is never over-supplied."
+                      for role in limits.get("never_over") or ())
+            + "".join(f" {role.replace('_', ' ').replace('block', 'Block').capitalize()} is short below {n} sources."
+                      for role, n in (limits.get("scaling_min") or {}).items()))

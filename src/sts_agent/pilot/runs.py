@@ -9,15 +9,15 @@ decides the card rewards:
     shared      the champion's own preferences inside what the plan every character had (Ironclad's)
                 leaves open
     character   the same inside the character's own plan (``evidence.deck_balance.PLANS``)
-    character:scaling_full=4;targets.frost_min=3;early_roles=block+damage
-                a variant of that plan, for choosing its numbers
+    character:scaling_full=4;targets.frost_min=3;early_roles=block+damage;caps.damage=[5,7,9]
+                a variant of that plan, for choosing its numbers (``shared:...`` varies Ironclad's)
 
 A plan arm reads the same evidence the planner and the decision model read (``deck_balance.balance``
-and ``offer_effects``) and obeys it literally (``choose_reward``); where the plan holds the deck to a
-size it also buys the shop's removal before anything else. That stands in for a model told to obey
-the plan. It is not that model, nothing here calls one, and the fights are played by a far smaller
-search than the pilot's, so the results rank plans against each other and say little about how far
-the agent itself gets.
+and ``offer_effects``) and obeys it literally (``choose_reward``); from the act the plan names
+(``removals_from_act``), or where it holds the deck to a size, it also buys the shop's removal before
+anything else. That stands in for a model told to obey the plan. It is not that model, nothing here
+calls one, and the fights are played by a far smaller search than the pilot's, so the results rank
+plans against each other and say little about how far the agent itself gets.
 
 Every fight a run enters is also a fight start for the pilot's comparisons (``sim.Scenario``):
 ``fight_starts`` picks them out of the finished runs, which is where the four characters without
@@ -106,6 +106,8 @@ class Catalog:
 
     def card(self, name) -> dict:
         cid = self.card_id(name)
+        if cid not in self.cards and cid + "_CARD" in self.cards:    # a card named like its Power, as other sources spell it
+            cid += "_CARD"
         return self.cards.get(cid) or {"id": cid, "name": cid, "type": None, "rarity": None, "description": ""}
 
     def deck(self, names) -> list:
@@ -128,19 +130,23 @@ def plan_of(arm, character) -> deck_balance.DeckPlan | None:
     if name not in ("shared", "character"):
         raise ValueError(f"unknown arm {arm!r}")
     plan = deck_balance.PLANS["IRONCLAD"] if name == "shared" else deck_balance.plan_for(character)
-    targets = dict(plan.targets)
+    tables = {key: dict(getattr(plan, key)) for key in ("targets", "caps", "scaling_min", "deck_targets")}
     fields = {}
     for change in filter(None, changes.split(";")):
         key, _, value = change.partition("=")
-        if key in ("early_roles", "late_first", "tracks"):       # role lists are joined with "+": early_roles=block+damage
-            fields[key] = tuple(filter(None, value.split("+")))
+        if key in ("early_roles", "late_first", "build_first", "never_over", "tracks"):
+            fields[key] = tuple(filter(None, value.split("+")))      # role lists are joined with "+": early_roles=block+damage
             continue
-        value = json.loads(value) if value[:1] in "-0123456789ntf" else value
-        if key.startswith("targets."):
-            targets[key[8:]] = value
+        value = json.loads(value) if value[:1] in "-0123456789ntf[" else value      # caps.damage=[5,7,9]: one per act
+        table, _, entry = key.partition(".")
+        if entry and table in tables:           # targets.frost_min=3, caps.damage=5, deck_targets.2=26
+            if value is None:
+                tables[table].pop(int(entry) if table == "deck_targets" else entry, None)
+            else:
+                tables[table][int(entry) if table == "deck_targets" else entry] = value
         else:
             fields[key] = value
-    return replace(plan, targets=targets, **fields)
+    return replace(plan, **tables, **fields)
 
 
 def choose_reward(state, effects, probs) -> int | None:
@@ -255,7 +261,9 @@ def play_run(rs, catalog, table, character, seed, arm, *, source, ascension=10, 
                             picked += choice is not None
                             skipped += choice is None
                             continue
-            if plan is not None and plan.deck_target is not None and phase == "shop" and not bought_removal:
+            removal_first = plan is not None and (plan.deck_target is not None or (
+                plan.removals_from_act is not None and rm.act_index >= plan.removals_from_act))
+            if removal_first and phase == "shop" and not bought_removal:
                 action = _removal(rm, catalog, balance())
                 bought_removal = 1           # one removal a shop; asked once whether it could be bought or not
                 if action is not None:
