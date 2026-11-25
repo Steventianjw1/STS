@@ -16,10 +16,19 @@ from __future__ import annotations
 
 import json
 
+from ..game import builds
 from ..strategic.characters import strategies, strategy_for
 from .models import DecisionFrame, route_plan_mode
 
-DECISION_PROMPT_VERSION = "decision-prompt-35"
+# One version per game build (``game.builds``): a build's prompt carries its characters' guidance, so the
+# version that names the text is the build's own. ``DECISION_PROMPT_VERSION`` is the one of the build in use.
+DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-35", "v0.111.0": "decision-prompt-36"}
+
+
+def decision_prompt_version(build=None) -> str:
+    return DECISION_PROMPT_VERSIONS[builds.get(build).key]
+
+
 DEFAULT_MAX_INPUT_BYTES = None
 MENTOR_PILOT, OWN_PILOT = "spire_mentor_autobattle", "sts_agent_pilot"   # screen.combat_pilot: whose search plays the fights
 DEFAULT_OBJECTIVE = ("Win the run (ordinary victory) with the current character at the current difficulty. "
@@ -411,11 +420,16 @@ def prompt_modules(frame: DecisionFrame, *, tools: bool = False) -> list[str]:
 def system_instruction(frame: DecisionFrame, *, tools: bool = False) -> tuple[str, list[str]]:
     """(system prompt, module names) for one frame."""
     names, modules = prompt_modules(frame, tools=tools), _modules()
-    return f"[{DECISION_PROMPT_VERSION}]\n" + "\n\n".join(modules[n] for n in names), names
+    return f"[{decision_prompt_version()}]\n" + "\n\n".join(modules[n] for n in names), names
 
 
-# Every module at once: reference text for inspection and size comparison, never sent as such.
-SYSTEM_INSTRUCTION = f"[{DECISION_PROMPT_VERSION}]\n" + "\n\n".join(_modules().values())
+def __getattr__(name):
+    # Read when asked, not at import: the build in use is selected after the modules load.
+    if name == "DECISION_PROMPT_VERSION":
+        return decision_prompt_version()
+    if name == "SYSTEM_INSTRUCTION":    # every module at once: reference text for inspection and size comparison, never sent as such
+        return f"[{decision_prompt_version()}]\n" + "\n\n".join(_modules().values())
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class FrameTooLarge(ValueError):

@@ -179,6 +179,15 @@ def play(rs, scenario: Scenario, profile: Profile, world_seed: int) -> dict:
     reads against the outcome), thinned to at most 40 a fight.
     """
     state = scenario.build(rs, world_seed)
+    row = fight(rs, state, profile, world_seed, tier=scenario.tier, act=scenario.act, character=scenario.character,
+                drop_chance_pct=scenario.drop_chance_pct, hp_start=scenario.hp, max_hp=scenario.max_hp)
+    return {"scenario": scenario.name, "encounter": scenario.encounter, "world": world_seed, **row}
+
+
+def fight(rs, state, profile: Profile, world_seed: int, *, tier, act, character, hp_start, max_hp,
+          drop_chance_pct=None) -> dict:
+    """Play the fight ``state`` stands in to its end with ``profile`` (the state is changed); what ``play`` reports
+    of it."""
     _, potions_start = _board(rs, state)
     decisions = raced = changed = 0
     thinking = 0.0
@@ -194,8 +203,8 @@ def play(rs, scenario: Scenario, profile: Profile, world_seed: int) -> dict:
         if len(legal) == 1:
             action = legal[0]
         else:
-            d = decide(rs, state, profile, seed=(world_seed * 7919 + step) & 0x7FFFFFFF, tier=scenario.tier,
-                       drop_chance_pct=scenario.drop_chance_pct, potion_used=potion_used, character=scenario.character)
+            d = decide(rs, state, profile, seed=(world_seed * 7919 + step) & 0x7FFFFFFF, tier=tier,
+                       drop_chance_pct=drop_chance_pct, potion_used=potion_used, character=character)
             action = d.action
             decisions += 1
             if d.p_win is not None:
@@ -209,14 +218,13 @@ def play(rs, scenario: Scenario, profile: Profile, world_seed: int) -> dict:
     hp, potions = _board(rs, state)
     won = bool(terminal and value > 0)
     hp = hp if won else 0
-    return {"scenario": scenario.name, "encounter": scenario.encounter, "tier": scenario.tier, "act": scenario.act,
-            "character": scenario.character, "world": world_seed, "shares": shares[::max(1, len(shares) // 40)],
-            "won": won, "finished": bool(terminal), "hp_start": scenario.hp, "hp_end": hp, "max_hp": scenario.max_hp,
-            "hp_lost": scenario.hp - hp, "potions_used": potions_start - potions, "potions_left": potions,
+    return {"tier": tier, "act": act, "character": character, "shares": shares[::max(1, len(shares) // 40)],
+            "won": won, "finished": bool(terminal), "hp_start": hp_start, "hp_end": hp, "max_hp": max_hp,
+            "hp_lost": hp_start - hp, "potions_used": potions_start - potions, "potions_left": potions,
             "decisions": decisions, "raced": raced, "race_changed": changed,
             "seconds_per_decision": thinking / decisions if decisions else 0.0,
             "seconds": time.perf_counter() - started,
-            "value": run_value(won, hp, scenario.max_hp, potions, hp_carry(scenario.tier, scenario.act))}
+            "value": run_value(won, hp, max_hp, potions, hp_carry(tier, act))}
 
 
 def run_value(won, hp, max_hp, potions_left, carry=1.0) -> float:

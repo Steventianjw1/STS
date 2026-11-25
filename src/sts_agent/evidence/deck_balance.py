@@ -172,8 +172,83 @@ PLANS_V0107 = {
 # Game build v0.111 (v0.111.0 and its hotfix v0.111.1)
 # ---------------------------------------------------------------------------
 #
-# Until a character's plan is refitted on this build it is the one it had on v0.107.1.
-PLANS_V0111 = dict(PLANS_V0107)
+# Every character's plan is refitted to what this build's best players' decks hold and take. Player
+# evidence is ``pilot.players``, read 2026-11-25: the solo A10 standard runs of builds v0.111.1 and v0.111.0
+# by the 20 highest-rated Spire Codex accounts that have them, up to 40 runs each:
+#     IRONCLAD     532 runs, 397 won, 10142 card rewards     decks at the act bosses 19.1 / 25.7 / 32.3 cards
+#     SILENT       531 runs, 437 won,  9954 card rewards                             21.0 / 28.1 / 35.1
+#     DEFECT       471 runs, 308 won,  8663 card rewards                             19.7 / 26.9 / 34.6
+#     REGENT       475 runs, 344 won,  8557 card rewards                             18.9 / 25.4 / 32.8
+#     NECROBINDER  537 runs, 371 won,  9634 card rewards                             18.8 / 25.2 / 31.2
+# The same rules set every plan's numbers ("pick rate" is how often a card of the kind was taken when it
+# was offered, by how many of the kind the deck already held; a count with under 40 offers is not read):
+#   - no thin phase and no deck-size target: a card with no role was taken about one time in three at any
+#     count and in every act (Ironclad 38/35/32% by act, Silent 32/35/35, Defect 27/34/35, Regent 36/33/30,
+#     Necrobinder 36/40/41), and a reward was taken as often with a large deck as with a small one.
+#   - a front-line role is capped when its pick rate with six or more held is under half its rate with
+#     none, at one more than the mean those decks held at each act's boss, rounded up; otherwise it is
+#     never over-supplied. Damage fell that far for all five (to 9, 8, 13, 8 and 11%) and held 3.5/5.4/7.0
+#     (Ironclad), 3.8/5.6/7.0 (Silent), 4.2/6.5/8.5 (Defect), 2.2/3.7/4.8 (Regent), 3.6/5.9/7.6
+#     (Necrobinder). Block fell that far for the Ironclad alone (38% to 18%, holding 2.5/4.3/5.8).
+#   - a scaling role is short while its pick rate is above the highest rate of a card with no role, and
+#     full from the count where the rate is under 20%. Block scaling stays above it through three held
+#     for the Ironclad (46/55/54/66%), Silent (88/75/68/60%), Defect (48/44/41/39%) and Regent
+#     (42/39/39/38%): short below four. Damage scaling does for the Silent's first two (44/37%). It falls
+#     under 20% for the Ironclad alone (14% with four); elsewhere it holds between 20 and 30% as far as
+#     the offers reach, so ``scaling_full`` is set past them.
+#   - the first picks (the first three rewards of act 1) go to the roles taken at least as often there as
+#     a card with no role: damage scaling and Block for the Ironclad (40 and 34% against 32%), Regent
+#     (36 and 39% against 34%) and Necrobinder (47 and 41% against 29%), every role for the Silent and
+#     the Defect (whose no-role cards were taken 24 and 19%).
+#   - tracks. Weak: the Ironclad took a first source 55% and a second 31%: one. The Silent 38% with one,
+#     25 to 32% with two to four, 14% with five: two, too many from five. The Defect 44/22/12%: one, a
+#     third is too many. The Necrobinder 72/67/57/55/46%: four, one per 7 cards. The Regent 30% with one,
+#     11% with three: one, too many from three. Frost (Defect) 58/47% then 27 to 34% with two to five
+#     and 14% with six: two, too many from six. Stars (Regent): a card that costs more Stars than it
+#     gains was taken 26 to 30% while the deck's Star gain covered its Star costs and 16 to 19% once it
+#     did not; a card that gains Stars 26 to 31%, and 33 to 39% from three Stars owed; with four or more
+#     Stars spare the two swap (23% and 30%). Owed up to 3, spare up to 3. A card that kills Osty
+#     (Necrobinder) was taken 29% with none held (39% in act 1) and 11% with one: one is carried.
+#   - removals by act: 0.4/1.6/1.1, 0.6/1.6/1.2, 0.5/1.8/0.9, 0.5/1.8/1.0, 0.8/2.0/1.2 in the order above:
+#     bought first from act 2 on.
+# Simulator evidence for these plans is under ``PLANS_V0111`` below.
+PLANS_V0111 = {
+    "IRONCLAD": DeckPlan(
+        early_roles=("damage_scaling", "block"), thin_from_act=None, front_min=99, build_first=("block_scaling",),
+        caps={"damage": (5, 7, 8), "block": (4, 6, 7)}, scaling_min={"block_scaling": 4}, scaling_full=4,
+        tracks=("weak",), targets={"weak_per_cards": 0, "weak_min": 1}, removals_from_act=2,
+        note="one Weak source and Block that grows first, draw, energy and Exhaust utility added in every act; "
+             "attacks and plain Block stop once the deck holds what the best decks hold"),
+    "SILENT": DeckPlan(
+        early_roles=("damage_scaling", "damage", "block"), thin_from_act=None,
+        build_first=("block_scaling", "damage_scaling"), caps={"damage": (5, 7, 8)}, never_over=("block",),
+        scaling_min={"block_scaling": 4, "damage_scaling": 2}, scaling_full=7,
+        tracks=("weak",), targets={"weak_per_cards": 0, "weak_min": 2, "weak_over": 3}, removals_from_act=2,
+        note="Block that grows first, then Shiv scaling, two Weak sources, Block, draw and utility added in every "
+             "act; plain attacks stop after the first few"),
+    "NECROBINDER": DeckPlan(
+        early_roles=("damage_scaling", "block"), thin_from_act=None, front_min=99, caps={"damage": (5, 7, 9)},
+        scaling_full=5,
+        tracks=("weak", "osty"), targets={"weak_per_cards": 7, "weak_min": 4, "osty_dies_ok": 1}, removals_from_act=2,
+        note="Weak first and in numbers, Block and a first damage multiplier, removals before additions from act 2, "
+             "energy and draw in every act; plain attacks stop after the first few"),
+    "REGENT": DeckPlan(
+        early_roles=("block", "damage_scaling"), thin_from_act=None, front_min=99, build_first=("block_scaling",),
+        caps={"damage": (4, 5, 6)}, scaling_min={"block_scaling": 4}, scaling_full=7,
+        tracks=("stars", "weak"),
+        targets={"star_deficit": 3, "star_slack": 3, "weak_per_cards": 0, "weak_min": 1, "weak_over": 2},
+        removals_from_act=2,
+        note="Star costs paid for by Star gain, Block that grows first, Block and Star utility added in every act; "
+             "few plain attacks"),
+    "DEFECT": DeckPlan(
+        early_roles=("block", "damage", "damage_scaling"), thin_from_act=None, front_min=99,
+        build_first=("block_scaling",), caps={"damage": (6, 8, 10)}, scaling_min={"block_scaling": 4}, scaling_full=7,
+        tracks=("frost", "weak"),
+        targets={"frost_per_cards": 99, "frost_min": 2, "frost_max": 6, "weak_per_cards": 0, "weak_min": 1, "weak_over": 1},
+        removals_from_act=2,
+        note="two Frost cards and Block first, one Weak source, Focus, Orb slots and Block Powers while under four; "
+             "draw and energy added in every act, attacks only while few are held"),
+}
 
 PLANS_BY_BUILD = {"v0.107.1": PLANS_V0107, "v0.111.0": PLANS_V0111}
 
@@ -191,7 +266,8 @@ def plan_for(character, build=None) -> DeckPlan:
 
 
 def phase_rules(plan: DeckPlan) -> dict:
-    first = " and ".join(r.replace("_", " ") for r in plan.early_roles)
+    roles = [r.replace("_", " ") for r in plan.early_roles]
+    first = ", ".join(roles[:-1]) + (" and " if roles[:-1] else "") + roles[-1]
     lead = ", then ".join(r.replace("_", " ") for r in plan.late_first)
     lead = (lead[0].upper() + lead[1:].replace("block", "Block")
             + (" comes first while it is missing" if len(plan.late_first) == 1 else " come first while missing"))
@@ -256,6 +332,8 @@ STAR_COST = {"SEVEN_STARS": 7, "DECISIONS_DECISIONS": 6, "COMET": 5, "NEUTRON_AE
              "DEVASTATE": 4, "THE_SMITH": 4, "ALIGNMENT": 3, "ASTRAL_PULSE": 3, "DYING_STAR": 3, "GAMMA_BLAST": 3,
              "REFLECT": 3, "RESONANCE": 3, "THE_SEALED_THRONE": 3, "FALLING_STAR": 2, "GUIDING_STAR": 2,
              "METEOR_SHOWER": 2, "PARTICLE_WALL": 2, "QUASAR": 2, "CLOAK_OF_STARS": 1, "CRESCENT_SPEAR": 1}
+# v0.111 lowered three Star costs (Alignment and Resonance 3 to 2, Guiding Star 2 to 1); the Stars gained did not change.
+_STAR_COSTS = {"v0.107.1": STAR_COST, "v0.111.0": {**STAR_COST, "ALIGNMENT": 2, "RESONANCE": 2, "GUIDING_STAR": 1}}
 
 RULES = {
     "counted": "cards added beyond the starter (rarity not Basic); curses and statuses are counted apart; a card "
@@ -320,7 +398,7 @@ def _star_cost(card) -> int:
     raw = _field(card, "star_cost")
     if raw is not None and not _STAR_COST_ONLY.search(str(raw).strip() or "x"):
         return int(str(raw).strip())
-    return STAR_COST.get(_cid(card), 0)
+    return _STAR_COSTS[builds.active().key].get(_cid(card), 0)
 
 
 def card_marks(card) -> dict:
@@ -357,9 +435,12 @@ def _track_summon(plan, deck_size, marks, names, act=None):
 
 
 def _track_osty(plan, deck_size, marks, names, act=None):
-    count = marks["osty_dies"]
-    return {"count": count, "cards": names["osty_dies"], "status": "over_supplied" if count else "covered",
-            "rule": "cards that kill Osty for a one-time effect: each one gives up the HP the Summon cards built"}
+    count, allowed = marks["osty_dies"], plan.targets.get("osty_dies_ok", 0)
+    rule = "cards that kill Osty for a one-time effect: each one gives up the HP the Summon cards built"
+    if allowed:
+        rule += f"; {allowed} can be carried, another is too many"
+    return {"count": count, **({"allowed": allowed} if allowed else {}), "cards": names["osty_dies"],
+            "status": "over_supplied" if count > allowed else "covered", "rule": rule}
 
 
 def _deck_target(plan, act):
@@ -553,7 +634,7 @@ def _track_effect(state, marks, earns_slot) -> tuple:
         (fills if status["weak"] in NEEDS else worse if status["weak"] in EXCESS else []).append("weak")
     if "summon" in status and marks.get("summon") and status["summon"] in NEEDS:
         fills.append("summon")
-    if "osty" in status and marks.get("osty_dies"):
+    if "osty" in status and marks.get("osty_dies") and tracks["osty"]["count"] >= tracks["osty"].get("allowed", 0):
         worse.append("osty")
     if "frost" in status and marks.get("frost"):
         (fills if status["frost"] in NEEDS else worse if status["frost"] in EXCESS else []).append("frost")

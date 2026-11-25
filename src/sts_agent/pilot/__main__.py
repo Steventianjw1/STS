@@ -72,14 +72,17 @@ def _players_table(character, rows, catalog, words, arms, cards=False, read_buil
                      f"HP entering the boss {row['hp_entering_boss_pct']}%")
     decisions = list(players.rewards(rows, catalog))
     lines.append(f"  pick rate when offered, at {len(decisions)} card rewards, by the number of that kind the deck "
-                 "already held (taken % (offers), a dash under 25 offers), then by act:")
+                 "already held (taken % (offers), a dash under 25 offers), then by act, then in the first "
+                 f"{players.FIRST_PICKS} picks of act 1:")
     for kind, row in sorted(players.pick_rates(decisions, words).items()):
         held = "  ".join(f"{n if n < 6 else '6+'}: " + (f"{100 * row['held'][n][0] / row['held'][n][1]:3.0f}% ({row['held'][n][1]})"
                                                      if row["held"].get(n, (0, 0))[1] >= 25 else "  -")
                          for n in range(7))
         acts = "  ".join(f"act {a}: {100 * row['act'][a][0] / row['act'][a][1]:.0f}%" for a in (1, 2, 3)
                          if row["act"].get(a, (0, 0))[1] >= 25)
-        lines.append(f"    {kind:<16} {held}   | {acts}")
+        first = (f"  | first picks: {100 * row['first'][0] / row['first'][1]:.0f}% ({row['first'][1]})"
+                 if row["first"][1] >= 25 else "")
+        lines.append(f"    {kind:<16} {held}   | {acts}{first}")
     lines.append("  a card reward was taken (not skipped), by act and the deck's size at the reward:")
     for act, row in players.size_rates(decisions).items():
         lines.append(f"    act {act}: " + "  ".join(f"{size}-{size + 3} cards {100 * a / n:.0f}% ({n})"

@@ -228,26 +228,35 @@ def _kinds(card, words) -> set:
     return ({*roles} or {"other"}) | {m for m in MARKS if marks.get(m)} | named | ({"damage_only"} if plain else set())
 
 
+FIRST_PICKS = 3     # the act 1 rewards counted as a deck's first picks
+
+
 def pick_rates(decisions, words=()) -> dict:
-    """kind -> {"held": {cards of the kind already added: [taken, offered]}, "act": {act: [taken, offered]}}.
+    """kind -> {"held": {cards of the kind already added: [taken, offered]}, "act": {act: [taken, offered]},
+    "first": [taken, offered] over the act 1 rewards met with fewer than ``FIRST_PICKS`` cards added}.
 
     ``held`` counts the cards added beyond the starter, except for the tracks, which count the
     starter's too (as the plans do); 6 stands for six or more.
     """
-    words, out = _words(words), defaultdict(lambda: {"held": defaultdict(lambda: [0, 0]), "act": defaultdict(lambda: [0, 0])})
+    words = _words(words)
+    out = defaultdict(lambda: {"held": defaultdict(lambda: [0, 0]), "act": defaultdict(lambda: [0, 0]), "first": [0, 0]})
     for act, deck, cards, picked in decisions:
-        held = Counter()
+        held, added = Counter(), 0
         for card in deck:
             basic = str(card.get("rarity") or "").lower() == "basic"
+            added += not basic and str(card.get("type") or "").lower() not in ("curse", "status")
             for kind in _kinds(card, words):
                 if not basic or kind in MARKS:
                     held[kind] += 1
         for card, was in zip(cards, picked):
             for kind in _kinds(card, words):
-                for cell in (out[kind]["held"][min(held[kind], 6)], out[kind]["act"][act]):
+                cells = [out[kind]["held"][min(held[kind], 6)], out[kind]["act"][act]]
+                if act == 1 and added < FIRST_PICKS:
+                    cells.append(out[kind]["first"])
+                for cell in cells:
                     cell[0] += was
                     cell[1] += 1
-    return {kind: {"held": dict(row["held"]), "act": dict(row["act"])} for kind, row in out.items()}
+    return {kind: {"held": dict(row["held"]), "act": dict(row["act"]), "first": row["first"]} for kind, row in out.items()}
 
 
 def size_rates(decisions, step=4) -> dict:

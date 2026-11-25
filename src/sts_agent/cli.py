@@ -32,7 +32,7 @@ from . import AGENT_VERSION, STS2MCP_SOURCE_DESCRIBE
 from .game.client import GameClient, GameClientError, parse_mod_version
 from .config import DEFAULT_CONFIG_FILE, load_config
 from .evidence import enemy_patterns
-from .game import game_pin
+from .game import builds, game_pin
 from .decision.coordinator import LLM_PROVENANCE_LIVE, LLM_PROVENANCE_SCRIPTED, RunCoordinator
 from .decision.models import DecisionFrame
 from .decision.offline import ScriptedTextModel
@@ -40,7 +40,7 @@ from .decision.policy import LLMDecisionPolicy, model_identity
 from .game.autobattle import MentorAutobattle
 from .pilot import install as pilot_install
 from .pilot.potion_context import context_path as pilot_potion_context_path
-from .decision.prompts import DECISION_PROMPT_VERSION, DEFAULT_OBJECTIVE, MENTOR_PILOT, OWN_PILOT
+from .decision.prompts import DEFAULT_OBJECTIVE, MENTOR_PILOT, OWN_PILOT, decision_prompt_version
 from .decision.screens import CAPABILITIES, MOD_REVISION, build_view, capability_table
 from .game.observation import normalize, summarize
 from .baseline.policy import BaselinePolicy
@@ -55,7 +55,8 @@ from .game.startup import RunStartup, StartupError, ascension_level, character_i
 from .session.trace import LLM_TRACE_FORMAT_VERSION, TraceRecorder, new_session_id
 
 # What this adapter has actually been checked against.
-SOURCE_VERIFIED_MOD = "0.4.0 + commits through 55e0648 (STS2 v0.107 compatibility fix)"
+SOURCE_VERIFIED_MOD = ("0.4.0 + commits through 55e0648 (STS2 v0.107 compatibility fix), with this repository's "
+                       "patch for the v0.111 lobby members (tools/patch_mod_preview.py)")
 
 
 PROVIDERS = {"deepseek": DeepSeekTextModel, "anthropic": AnthropicTextModel}
@@ -106,7 +107,7 @@ def _build(args):
     if getattr(args, "model", None):
         cfg.llm.model = args.model
     cfg.llm.model = cfg.llm.model or default_model(cfg, cfg.llm.provider)
-    enemy_patterns.configure(cfg.monster_data_path, game_build=cfg.game_build)
+    enemy_patterns.configure(cfg.monster_data_path, game_build=cfg.game_build or builds.active().key)
     client = GameClient(cfg.base_url, cfg.read_timeout_s, cfg.action_timeout_s)
     return cfg, used, client
 
@@ -244,6 +245,13 @@ def cmd_doctor(args) -> int:
 
     if cfg.game_dir:
         _doctor_game_dir(Path(cfg.game_dir), line)
+    version = builds.active()
+    line("info", f"agent version in use: game build {version.key} (also {', '.join(version.same_as)}), with Spire Mentor "
+                 f"{version.mentor_release}; others: {', '.join(k for k in builds.BUILDS if k != version.key)} "
+                 f"(set game_build in the config to use one)")
+    line("ok" if version.live.startswith("mod build") else "WARN", f"established against the running game: {version.live}")
+    if cfg.game_build and builds.find(cfg.game_build) is None:
+        line("WARN", f"the agent has no version for the configured game_build {cfg.game_build}; it uses {version.key}")
     copy = game_pin.frozen_copy(cfg.pinned_game_dir)
     if not game_pin.is_pinned(game_pin.read_build(copy)):
         line("WARN", f"no saved {game_pin.PINNED_GAME_BUILD} copy at {copy}; run ./start run --pin-only before Steam "
@@ -525,7 +533,7 @@ def run_llm_session(cfg, client, model, command: str, *, facts_source: str = "ob
                         provenance=LLM_PROVENANCE_SCRIPTED if scripted else {**LLM_PROVENANCE_LIVE,
                                                                              "facts_source": facts_source,
                                                                              "live_validated": False},
-                        extra_manifest={"model": ident, "decision_prompt_version": DECISION_PROMPT_VERSION,
+                        extra_manifest={"model": ident, "decision_prompt_version": decision_prompt_version(),
                                         "run_id_source": run_id_source, "facts_source": facts_source,
                                         "capabilities_mod_revision": MOD_REVISION})
     log(f"session {rec.session_id} -> {rec.dir}  (policy llm, model {ident.get('model')}"

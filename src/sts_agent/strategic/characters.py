@@ -17,7 +17,8 @@ from dataclasses import dataclass
 from ..game import builds
 from ..game.characters import character_key
 from .v0107 import defect as defect_0107, necrobinder as necrobinder_0107, regent as regent_0107, silent as silent_0107
-from .v0111 import defect as defect_0111, necrobinder as necrobinder_0111, regent as regent_0111, silent as silent_0111
+from .v0111 import (defect as defect_0111, ironclad as ironclad_0111, necrobinder as necrobinder_0111,
+                    regent as regent_0111, silent as silent_0111)
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ STRATEGIES_BY_BUILD = {
         "DEFECT": _own("DEFECT", defect_0107, act_stance=True),
     },
     "v0.111.0": {
-        "IRONCLAD": IRONCLAD,
+        "IRONCLAD": _own("IRONCLAD", ironclad_0111, act_stance=True),
         "SILENT": _own("SILENT", silent_0111, act_stance=False),
         "NECROBINDER": _own("NECROBINDER", necrobinder_0111, act_stance=False),
         "REGENT": _own("REGENT", regent_0111, act_stance=True),

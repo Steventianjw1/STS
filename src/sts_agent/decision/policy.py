@@ -20,7 +20,7 @@ from typing import Callable
 
 from ..llm.progress import ModelProgress
 from .models import Choice, ChoiceError, DecisionFrame, parse_choice, parse_tool_request
-from .prompts import DECISION_PROMPT_VERSION, DEFAULT_MAX_INPUT_BYTES, build_user_message, system_instruction
+from .prompts import DEFAULT_MAX_INPUT_BYTES, build_user_message, decision_prompt_version, system_instruction
 
 POLICY_NAME = "llm"
 POLICY_VERSION = "1.1.0"
@@ -57,7 +57,7 @@ def model_identity(model) -> dict:
 class LLMDecisionPolicy:
     name = POLICY_NAME
     version = POLICY_VERSION
-    prompt_version = DECISION_PROMPT_VERSION
+    prompt_version = property(lambda self: decision_prompt_version())    # of the game build in use
 
     def __init__(self, model, *, max_input_bytes: int | None = DEFAULT_MAX_INPUT_BYTES,
                  provider_retries: int | None = 2, corrective_retries: int | None = 1,

@@ -16,20 +16,23 @@ action_timeout_s = 10.0   # POST action timeout; a timeout here is treated as an
 trace_dir = "traces"
 record_raw = true         # also write debug_raw.jsonl (raw API responses; not training data)
 
-# The API does not report the game build. Copy it from the game's main menu so traces record it.
-# game_build = "v0.107.1"
+# The game build the agent plays. It has one version per build (plans, guidance, pilot tuning: see
+# src/sts_agent/game/builds.py): "v0.111.0" (also the v0.111.1 hotfix; the default) and "v0.107.1".
+# Naming one here puts that version in use and records it in traces; the API does not report the build.
+# game_build = "v0.111.0"
 
 # Optional: lets `doctor` read <game_dir>/mods/STS2_MCP.json. This path is never written to traces.
 # game_dir = 'D:\SteamLibrary\steamapps\common\Slay the Spire 2'
 
-# The agent only plays the game build its mod and simulator support (v0.107.1; see game/game_pin.py).
+# The agent only plays the game build its version in use is for (game_build above; see game/game_pin.py).
 # `./start` saves a frozen copy of that build under <pinned_game_dir>/<build>, outside Steam's
 # reach, and launches it when no game is running, refusing a copy whose mods folder lacks
 # STS2_MCP.dll. `./start run --pin-only` just saves the copy and checks its mod.
 pinned_game_dir = "data/game"
 
 # Enemy move-pattern reference (fetch with `python tools/fetch_monster_data.py`). Fills the
-# combat prompt's offsets 2-3 after the observed next move. Data is pinned to v0.107.1;
+# combat prompt's offsets 2-3 after the observed next move. Data is the v0.107.1 extraction (Spire
+# Mentor publishes none for v0.111, where a handful of enemies changed; a mismatch is flagged in the facts);
 # forecasts are base values, not native simulations. A missing file leaves them unknown.
 monster_data_path = "data/monster_reference/monsters.json"
 
