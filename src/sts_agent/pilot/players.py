@@ -1,6 +1,6 @@
 """What the highest-rated players' decks hold and what they take, counted the way the deck plans count.
 
-A character's deck plan (``evidence.deck_balance.PLANS``) says which roles and tracks come first and
+A character's deck plan (``evidence.deck_balance.plan_for``) says which roles and tracks come first and
 when another card of a kind stops helping. This module measures those things on real runs: the
 solo A10 standard runs that the highest-rated Spire Codex players of a character submitted on the
 pinned game build, read with the same role rules the plan uses.
@@ -29,11 +29,11 @@ from collections import Counter, defaultdict
 
 from ..config import ExpertStatsConfig
 from ..evidence import deck_balance
+from ..game import builds as game_builds
 from ..evidence.expert_stats import SpireCodexClient, StatsUnavailable
 from ..evidence.spire_history import normalize_run
 from . import runs
 
-BUILDS = ("v0.107.1", "v0.107.0")       # the pinned build and the one before it, which has the same cards
 PLAYERS, RUNS_EACH = 12, 30
 PAUSE_S = 0.35                          # between requests: far below the public rate limit
 KEEP_S = 365 * 86400.0                  # the fetched runs are a fixed sample, not a live statistic
@@ -64,13 +64,19 @@ def _get(api, path, params, offline=False):
     return None
 
 
-def fetch(character, *, players=PLAYERS, runs_each=RUNS_EACH, builds=BUILDS, api=None, offline=False,
+def codex_builds(build=None) -> tuple:
+    """The Spire Codex build ids whose runs describe a game build (the one in use when None): it and the
+    builds with the same cards, the ones read first first."""
+    return game_builds.get(build).codex_builds
+
+
+def fetch(character, *, players=PLAYERS, runs_each=RUNS_EACH, builds=None, api=None, offline=False,
           progress=None) -> list[dict]:
     """The raw runs of the character's ``players`` highest-rated accounts that have any: up to
     ``runs_each`` solo A10 standard runs each, newest first, of ``builds`` in that order. An account
     is rated on the Elo board of the top 100 (30 rated runs or more with the character). Network
     unless cached."""
-    api = api or client()
+    api, builds = api or client(), builds or codex_builds()
     board = (_get(api, "/api/leaderboards/elo", {"limit": 100, "min_runs": 30}, offline) or {}).get("players") or []
     key = character.lower()
     ranked = sorted((p for p in board if (p.get("by_character") or {}).get(key, {}).get("runs", 0) >= 30),

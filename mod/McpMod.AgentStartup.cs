@@ -56,7 +56,12 @@ public static partial class McpMod
         if (!int.TryParse(option.Substring("agent_ascension_".Length), out int level) ||
             level < 0 || level > 10 || level > lobby.MaxAscension)
             return Error($"Ascension must be unlocked and between 0 and {Math.Min(10, lobby.MaxAscension)}");
-        lobby.SyncAscensionChange(level);
+        // By name, so that a build which renamed either one fails here with a message instead of failing
+        // the whole mod's compilation: the lobby's own setter first, then the ascension panel's.
+        if (!AgentCompatInvoke(lobby, "SyncAscensionChange", level) &&
+            !AgentCompatInvoke(AgentCompatFindNode(root, "NAscensionPanel"), "SetAscensionLevel", level))
+            return Error("This game build has no known way to set the ascension level");
+        // The caller waits until agent_startup_status reports the level, so a setter that lands a frame later is fine.
         return new Dictionary<string, object?> { ["status"] = "ok", ["ascension"] = lobby.Ascension };
     }
 
@@ -80,7 +85,10 @@ public static partial class McpMod
                 var manager = RunManager.Instance;
                 if (!manager.IsInProgress || manager.NetService.Type.IsMultiplayer() || !fighting)
                     return Error("Autobattle requires an active singleplayer combat.");
-                advisorType.GetMethod("SetBrain")!.Invoke(advisor, new object[] { "search", "STS Agent" });
+                // Mentor up to 0.10 had a player-facing brain switch and the agent asked for its search.
+                // From 0.11 the mod asks for a brain with every request (Instinct where the advisor says it
+                // can play the run, the search elsewhere) and has no switch: nothing to set here.
+                advisorType.GetMethod("SetBrain")?.Invoke(advisor, new object[] { "search", "STS Agent" });
                 runtime.GetProperty("Style")!.SetValue(null,
                     Enum.Parse(runtime.GetProperty("Style")!.PropertyType, "Coach"));
                 mode.SetValue(null, Enum.Parse(mode.PropertyType, "Advisor"));
@@ -113,7 +121,8 @@ public static partial class McpMod
                 ["status"] = "ok", ["autobattle_version"] = 1,
                 ["combat_in_progress"] = fighting, ["mode"] = mode.GetValue(null)!.ToString(),
                 ["autobattle"] = autobattle.GetValue(advisor), ["autoplay"] = armed.GetValue(null),
-                ["brain"] = advisorType.GetProperty("CurrentBrain")!.GetValue(null),
+                ["brain"] = (advisorType.GetProperty("CurrentBrain") ?? advisorType.GetProperty("RequestedBrain"))
+                    ?.GetValue(null),
                 ["fight_offer_hold"] = AgentOfferHoldActive(assembly),
                 ["fight_offer_held"] = AgentHeldOfferId(advisorType, advisor)
             };

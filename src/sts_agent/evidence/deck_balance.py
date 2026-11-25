@@ -5,8 +5,9 @@ that makes its damage grow during a fight, and something that makes its Block gr
 This module counts the observed deck in those four roles and says which are missing, short,
 over-supplied or full, and what each offered card would do to that picture.
 
-What the deck should take first changes over the run (``phase``) and with the character
-(``DeckPlan``, one per character in ``PLANS``). Ironclad's plan is the one every character had
+What the deck should take first changes over the run (``phase``), with the character and with the
+game build (``DeckPlan``, one per character and build in ``PLANS_BY_BUILD``; ``plan_for`` answers for
+the build in use, ``game.builds``). On v0.107.1 Ironclad's plan is the one every character had
 before: the first picks of act 1 go to damage, because the starter deck kills too slowly for the
 act 1 elites and boss, and from act 2 on Block scaling and a thin deck decide fights. The other
 four follow the owner's guidance for each. The Regent's numbers were set by simulated runs
@@ -27,6 +28,7 @@ import math
 import re
 from dataclasses import dataclass, field
 
+from ..game import builds
 from ..game.characters import character_key
 
 FRONT = ("damage", "block")
@@ -60,6 +62,10 @@ class DeckPlan:
     note: str = ""                  # the plan in one sentence, shown with the evidence
 
 
+# ---------------------------------------------------------------------------
+# Game build v0.107.1
+# ---------------------------------------------------------------------------
+#
 # One plan per character. IRONCLAD is the plan measured on the logged A10 Ironclad runs and is what a
 # character without an entry gets. The others put the owner's guidance into the same terms.
 #
@@ -126,7 +132,7 @@ class DeckPlan:
 #        - a damage cap at the count where the players' pick rate halves (4 for the Silent and
 #          Necrobinder, 6 for the Defect, in every act) measured the same as the caps above, which are
 #          kept because they do not stop a deck below what the players' decks held.
-PLANS = {
+PLANS_V0107 = {
     "IRONCLAD": DeckPlan(note="damage first in act 1, then a balanced deck that is kept thin from act 2"),
     # Owner: consistent Weak and Block, damage scaling taken for the bosses.
     "SILENT": DeckPlan(
@@ -162,9 +168,26 @@ PLANS = {
 }
 
 
-def plan_for(character) -> DeckPlan:
-    """The deck plan of ``character`` (a game ID or display name); Ironclad's for anything else."""
-    return PLANS.get(character_key(character) or "IRONCLAD", PLANS["IRONCLAD"])
+# ---------------------------------------------------------------------------
+# Game build v0.111 (v0.111.0 and its hotfix v0.111.1)
+# ---------------------------------------------------------------------------
+#
+# Until a character's plan is refitted on this build it is the one it had on v0.107.1.
+PLANS_V0111 = dict(PLANS_V0107)
+
+PLANS_BY_BUILD = {"v0.107.1": PLANS_V0107, "v0.111.0": PLANS_V0111}
+
+
+def plans(build=None) -> dict:
+    """Every character's deck plan for a game build (the build in use when None)."""
+    return PLANS_BY_BUILD[builds.get(build).key]
+
+
+def plan_for(character, build=None) -> DeckPlan:
+    """The deck plan of ``character`` (a game ID or display name) on a game build (the one in use when None);
+    Ironclad's for a character without one."""
+    table = plans(build)
+    return table.get(character_key(character) or "IRONCLAD", table["IRONCLAD"])
 
 
 def phase_rules(plan: DeckPlan) -> dict:
@@ -438,9 +461,10 @@ def _rules(plan: DeckPlan) -> dict:
     return {**RULES, "front_line_status": front, "scaling_status": scaling}
 
 
-def phase(act, added, plan: DeckPlan = PLANS["IRONCLAD"]) -> str:
+def phase(act, added, plan: DeckPlan | None = None) -> str:
     """Which deck-building phase applies: by act, and in act 1 by the cards added beyond the starter.
-    An unknown act is read as act 1."""
+    An unknown act is read as act 1. Without a plan, Ironclad's of the build in use."""
+    plan = plan or plan_for("IRONCLAD")
     thin = plan.thin_from_act
     if act is not None and act >= 2:
         return LATE if thin is not None and act >= thin else BUILD

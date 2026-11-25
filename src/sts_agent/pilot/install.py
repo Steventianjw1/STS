@@ -12,6 +12,7 @@ import os
 import sys
 from pathlib import Path
 
+from ..game import builds
 from ..game.game_pin import frozen_copy
 from .advisor import GAME_DIR_ENV, SOURCE_ENV
 
@@ -25,6 +26,25 @@ def mod_dir(cfg) -> Path:
 
 def source_dir(cfg) -> Path:
     return Path(cfg.autobattle.pilot_source).resolve() / "sts2-pycli" / "python"
+
+
+def source_release(cfg) -> str | None:
+    """Why the checked-out advisor source cannot be used with the game build in use; None when it can.
+
+    The advisor's Python and the simulator it drives change together, so the checkout must be the
+    commit of the Mentor release that goes with the build (``tools/fetch_mentor_source.py`` records it)."""
+    folder = Path(cfg.autobattle.pilot_source).resolve()
+    if not (source_dir(cfg) / "realgame_advisor.py").is_file():
+        return f"Mentor's advisor source is missing at {source_dir(cfg)}; run python tools/fetch_mentor_source.py"
+    try:
+        head = (folder / ".git" / "HEAD").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None                         # not a checkout this repository's tool made: taken as given
+    wanted = builds.active()
+    if len(head) == 40 and head != wanted.mentor_commit:
+        return (f"Mentor's advisor source at {folder} is not the Mentor {wanted.mentor_release} release that goes with game "
+                f"build {wanted.key}; run python tools/fetch_mentor_source.py")
+    return None
 
 
 def _ours(path: Path) -> bool:
@@ -53,8 +73,9 @@ def status(cfg) -> tuple[bool, str]:
     path = mod_dir(cfg) / LAUNCHER
     if not cfg.autobattle.pilot:
         return False, "off ([autobattle] pilot = false); Mentor's packaged advisor decides combat"
-    if not (source_dir(cfg) / "realgame_advisor.py").is_file():
-        return False, f"Mentor's advisor source is missing at {source_dir(cfg)}; run python tools/fetch_mentor_source.py"
+    problem = source_release(cfg)
+    if problem:
+        return False, problem
     if not _ours(path):
         return False, f"{path} is not installed yet; it is written when the agent starts the game"
     return True, f"the mod starts the pilot's advisor ({path})"
@@ -69,9 +90,9 @@ def sync(cfg, log=print) -> bool:
             path.unlink()
             log("pilot: removed the launcher; Spire Mentor uses its packaged advisor again")
         return False
-    if not (source_dir(cfg) / "realgame_advisor.py").is_file():
-        log(f"pilot: Mentor's advisor source is missing at {source_dir(cfg)} (python tools/fetch_mentor_source.py); "
-            "Mentor's packaged advisor decides combat")
+    problem = source_release(cfg)
+    if problem:
+        log(f"pilot: {problem}; Mentor's packaged advisor decides combat")
         if _ours(path):
             path.unlink()
         return False

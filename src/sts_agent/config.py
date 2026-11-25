@@ -131,7 +131,19 @@ class Config:
 
 
 def load_config(path: str | None) -> tuple[Config, str | None]:
-    """Load config. Returns (config, path_used or None)."""
+    """Load config. Returns (config, path_used or None).
+
+    A ``game_build`` that names a build the agent has a version for (``game.builds``) puts that
+    version in use; any other value only labels traces and filters statistics, as before.
+    """
+    from .game import builds        # here, not at the top: the game package reads this module's dataclasses
+    cfg, used = _load_config(path)
+    if cfg.game_build:
+        builds.select(cfg.game_build)
+    return cfg, used
+
+
+def _load_config(path: str | None) -> tuple[Config, str | None]:
     cfg = Config()
     p = Path(path) if path else Path(DEFAULT_CONFIG_FILE)
     if path and not p.exists():

@@ -23,8 +23,20 @@ import math
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 
-TUNED_DIR = Path(__file__).with_name("tuned")
+from ..game import builds
+
+BUILDS_DIR = Path(__file__).with_name("builds")     # one folder per game build: its fight starts and tuned files
 CHARACTER_FILE = "_character.json"      # in a character's folder: what was fitted for the character as a whole
+
+
+def build_dir(build=None) -> Path:
+    """Where everything the pilot keeps for a game build lives (the build in use when None)."""
+    return BUILDS_DIR / builds.get(build).key
+
+
+def tuned_root(build=None) -> Path:
+    """The tuned files of a game build: Ironclad's per-encounter files, and one folder per other character."""
+    return build_dir(build) / "tuned"
 
 # What a fight's outcome is worth to the run. A win is 1 plus the engine's own worth of the HP it
 # keeps (full HP = 2/7); a loss ends the run.
@@ -246,15 +258,19 @@ _NO_TUNING = CharacterTuning()
 _character_cache: dict = {}
 
 
-def tuned_dir(character=None, folder=TUNED_DIR) -> Path:
-    """Where a character's tuned files are kept: ``tuned/`` for Ironclad, ``tuned/<CHARACTER>/`` otherwise."""
-    return Path(folder) if character in (None, "IRONCLAD") else Path(folder) / character
+def tuned_dir(character=None, folder=None) -> Path:
+    """Where a character's tuned files are kept, for the build in use unless ``folder`` names another place:
+    ``tuned/`` for Ironclad, ``tuned/<CHARACTER>/`` otherwise."""
+    folder = Path(folder) if folder else tuned_root()
+    return folder if character in (None, "IRONCLAD") else folder / character
 
 
-def character_tuning(character, folder=TUNED_DIR, fresh=False) -> CharacterTuning:
-    """The character-wide tuning kept for ``character`` (a game ID); nothing for Ironclad or an untuned character."""
-    if character in (None, "IRONCLAD"):
+def character_tuning(character, folder=None, fresh=False) -> CharacterTuning:
+    """The character-wide tuning kept for ``character`` (a game ID) on the build in use; nothing for an untuned
+    character. Ironclad's file on v0.107.1 holds evidence only: its numbers there are this module's own."""
+    if character is None:
         return _NO_TUNING
+    folder = Path(folder) if folder else tuned_root()
     key = (character, str(folder))
     if fresh or key not in _character_cache:
         try:
@@ -269,8 +285,9 @@ def character_tuning(character, folder=TUNED_DIR, fresh=False) -> CharacterTunin
     return _character_cache[key]
 
 
-def save_character_tuning(character, *, knobs=None, win_odds=None, evidence=None, folder=TUNED_DIR) -> None:
+def save_character_tuning(character, *, knobs=None, win_odds=None, evidence=None, folder=None) -> None:
     """Merge ``knobs`` (by tier), ``win_odds`` (by "Boss"/"other") and ``evidence`` (by key) into the character's file."""
+    folder = Path(folder) if folder else tuned_root()
     path = tuned_dir(character, folder) / CHARACTER_FILE
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -296,7 +313,7 @@ def mentor_profile(tier) -> Profile:
     return MENTOR_BOSS if tier == "Boss" else MENTOR
 
 
-def load_tuned(folder=TUNED_DIR, character=None) -> dict[str, Profile]:
+def load_tuned(folder=None, character=None) -> dict[str, Profile]:
     """Every tuned profile of ``character`` (Ironclad when None) in ``folder``, by encounter id; a file that
     does not read as one is left out."""
     out = {}
@@ -308,7 +325,7 @@ def load_tuned(folder=TUNED_DIR, character=None) -> dict[str, Profile]:
     return out
 
 
-def save_tuned(key, profile: Profile, evidence: dict, folder=TUNED_DIR, character=None) -> None:
+def save_tuned(key, profile: Profile, evidence: dict, folder=None, character=None) -> None:
     """Record ``profile`` as the tuned one for ``key`` together with the numbers that chose it."""
     folder = tuned_dir(character, folder)
     folder.mkdir(parents=True, exist_ok=True)

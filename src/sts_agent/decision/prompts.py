@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 
-from ..strategic.characters import STRATEGIES, strategy_for
+from ..strategic.characters import strategies, strategy_for
 from .models import DecisionFrame, route_plan_mode
 
 DECISION_PROMPT_VERSION = "decision-prompt-35"
@@ -319,7 +319,7 @@ On this rewards screen, a reward_batch candidate collects gold and then claims a
 _C_TOOLS = """\
 WHAT-IF TOOLS. available_tools in the user message lists read-only calculations for this screen. If, and only if, a result could change your choice, you may reply ONCE with {"tool": "<name>", "args": {...}} instead of a choice; you then receive the same frame again with tool_result and must reply with the choice object. A tool never acts in the game. Everything you need for an ordinary decision is already in the frame, so most decisions need no tool call."""
 
-_MODULES = {
+_SHARED_MODULES = {
     "core": _CORE, "noncombat": _NONCOMBAT, "autobattle_pilot": _AUTOBATTLE, "autobattle_own_pilot": _AUTOBATTLE_PILOT,
     "combat_state": _COMBAT_STATE, "combat_play": _COMBAT_PLAY,
     "fight_picker": _FIGHT_PICKER, "deck_balance": _BALANCE, "card_reward": _CARD_REWARD, "shop": _SHOP, "map": _MAP,
@@ -327,9 +327,6 @@ _MODULES = {
     "grid": _GRID, "ancient_route": _ANCIENT_ROUTE,
     "elite_stance_act1": _ELITE_ACT1, "elite_stance_later": _ELITE_LATER,
     "deck_balance_character": _BALANCE_CHARACTER,
-    # each character's own guidance, the same text the planner gets: "<character>_deck", "<character>_elites"
-    **{f"{key.lower()}_{part}": text for key, strategy in STRATEGIES.items()
-       for part, text in (("deck", strategy.deck_guidance), ("elites", strategy.elite_guidance)) if text},
     "evidence_profile": _E_PROFILE, "evidence_duplicate": _E_DUPLICATE,
     "evidence_upgrade_pick": _E_UPGRADE_PICK, "evidence_upgrade_choice": _E_UPGRADE_CHOICE,
     "evidence_elite_pick": _E_ELITE_PICK, "evidence_boss_pick": _E_BOSS_PICK, "evidence_map": _E_MAP,
@@ -338,6 +335,16 @@ _MODULES = {
     "contract_shop": _C_SHOP, "contract_rewards": _C_REWARDS, "contract_rest": _C_REST,
     "contract_tools": _C_TOOLS,
 }
+
+
+
+def _modules() -> dict:
+    """Every instruction module by name, for the game build in use: the shared ones and each character's own
+    guidance, the same text the planner gets ("<character>_deck", "<character>_elites")."""
+    return {**_SHARED_MODULES,
+            **{f"{key.lower()}_{part}": text for key, strategy in strategies().items()
+               for part, text in (("deck", strategy.deck_guidance), ("elites", strategy.elite_guidance)) if text}}
+
 
 _BY_KIND = {
     "combat": ("combat_play", "combat_state"),
@@ -403,12 +410,12 @@ def prompt_modules(frame: DecisionFrame, *, tools: bool = False) -> list[str]:
 
 def system_instruction(frame: DecisionFrame, *, tools: bool = False) -> tuple[str, list[str]]:
     """(system prompt, module names) for one frame."""
-    names = prompt_modules(frame, tools=tools)
-    return f"[{DECISION_PROMPT_VERSION}]\n" + "\n\n".join(_MODULES[n] for n in names), names
+    names, modules = prompt_modules(frame, tools=tools), _modules()
+    return f"[{DECISION_PROMPT_VERSION}]\n" + "\n\n".join(modules[n] for n in names), names
 
 
 # Every module at once: reference text for inspection and size comparison, never sent as such.
-SYSTEM_INSTRUCTION = f"[{DECISION_PROMPT_VERSION}]\n" + "\n\n".join(_MODULES.values())
+SYSTEM_INSTRUCTION = f"[{DECISION_PROMPT_VERSION}]\n" + "\n\n".join(_modules().values())
 
 
 class FrameTooLarge(ValueError):

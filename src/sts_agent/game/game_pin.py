@@ -1,11 +1,14 @@
-"""Keep the agent on the one game build its mod and combat simulator support.
+"""Keep the agent on the game build its version in use is for.
 
-The build is read from the running game's own files, never from configuration.
-A frozen copy of that build is kept outside Steam's library so an update cannot
-replace it; the start script launches that copy, after confirming the mod is
-installed in it, and then confirms that build is what is running. Change
-PINNED_GAME_BUILD only after the mod and the simulator/reference data have been
-ported to a newer patch.
+Which build that is comes from ``builds.active()`` (the configured ``game_build`` when it
+names a build the agent has a version for, else the default); what is running is read
+from the game's own files, never from configuration. A frozen copy of that build is kept
+outside Steam's library so an update cannot replace it; the start script launches that
+copy, after confirming the mod is installed in it, and then confirms that build is what
+is running. A build gets a version (``builds.BUILDS``) only after the mod, the simulator
+and the strategies have been ported to it.
+
+``PINNED_GAME_BUILD`` reads as the build in use.
 """
 from __future__ import annotations
 
@@ -19,9 +22,9 @@ import sys
 import time
 from pathlib import Path
 
+from . import builds
 from .client import GameClientError
 
-PINNED_GAME_BUILD = "v0.107.1"
 STEAM_APP_ID = "2868840"
 GAME_FOLDER = "Slay the Spire 2"
 RELEASE_INFO = "release_info.json"
@@ -38,8 +41,19 @@ def _norm(build) -> str | None:
     return str(build).strip().lower().removeprefix("v") if build else None
 
 
+def _pinned() -> str:
+    return builds.active().key
+
+
+def __getattr__(name):
+    if name == "PINNED_GAME_BUILD":
+        return _pinned()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def is_pinned(build) -> bool:
-    return _norm(build) == _norm(PINNED_GAME_BUILD)
+    """Whether ``build`` is the build in use, or one with the same rules and cards (a hotfix of it)."""
+    return builds.find(build) is builds.active()
 
 
 def _strings(node, key=""):
@@ -116,7 +130,7 @@ def verify_running() -> list[tuple[Path, Path | None]]:
         if not is_pinned(build):
             raise GamePinError(
                 f"the running game at {folder} is {build or 'an unreadable build'}, but the mod and simulator only "
-                f"support {PINNED_GAME_BUILD}. Close it and run ./start, which launches the saved {PINNED_GAME_BUILD} copy.")
+                f"support {_pinned()}. Close it and run ./start, which launches the saved {_pinned()} copy.")
     return games
 
 
@@ -126,7 +140,7 @@ def require_running() -> Path:
     if not games:
         raise GamePinError(
             f"the mod answers, but no local game process could be identified, so its build cannot be confirmed as "
-            f"{PINNED_GAME_BUILD}. Close the game and run ./start, which launches the saved {PINNED_GAME_BUILD} copy.")
+            f"{_pinned()}. Close the game and run ./start, which launches the saved {_pinned()} copy.")
     return games[0][0]
 
 
@@ -149,7 +163,7 @@ def installed_dirs(game_dir=None) -> list[Path]:
 
 
 def frozen_copy(copy_root) -> Path:
-    return Path(copy_root) / PINNED_GAME_BUILD
+    return Path(copy_root) / _pinned()
 
 
 def _marker(copy: Path) -> dict:
@@ -190,8 +204,8 @@ def require_mod(game_dir) -> str:
     found = describe_mod(game_dir)
     if found is None:
         raise GamePinError(
-            f"{Path(game_dir) / 'mods'} has no {MOD_NAME}.dll, so this {PINNED_GAME_BUILD} copy would start without "
-            f"the mod. Copy the {MOD_NAME}.dll built for {PINNED_GAME_BUILD} with this repository's extension, and "
+            f"{Path(game_dir) / 'mods'} has no {MOD_NAME}.dll, so this {_pinned()} copy would start without "
+            f"the mod. Copy the {MOD_NAME}.dll built for {_pinned()} with this repository's extension, and "
             f"its manifest {MOD_NAME}.json, into that folder, then run ./start again.")
     return found
 
@@ -201,7 +215,7 @@ def save_copy(copy: Path, games, game_dir=None, log=print) -> None:
     if copy.exists():
         if is_pinned(read_build(copy)):
             return
-        raise GamePinError(f"{copy} exists but is not a {PINNED_GAME_BUILD} game folder; move it away and retry.")
+        raise GamePinError(f"{copy} exists but is not a {_pinned()} game folder; move it away and retry.")
     source, exe = games[0] if games else (None, None)
     if source is None:
         installs = installed_dirs(game_dir)
@@ -209,25 +223,25 @@ def save_copy(copy: Path, games, game_dir=None, log=print) -> None:
         if source is None:
             seen = ", ".join(f"{d} is {read_build(d) or 'an unreadable build'}" for d in installs) or "no install found"
             raise GamePinError(
-                f"there is no saved {PINNED_GAME_BUILD} copy at {copy} and no installed {PINNED_GAME_BUILD} game "
-                f"({seen}). Put a {PINNED_GAME_BUILD} game folder, with the mod installed, at {copy} "
+                f"there is no saved {_pinned()} copy at {copy} and no installed {_pinned()} game "
+                f"({seen}). Put a {_pinned()} game folder, with the mod installed, at {copy} "
                 f"or set game_dir to one.")
     partial = copy.with_name(copy.name + ".partial")
-    log(f"pin: saving {PINNED_GAME_BUILD} from {source} to {copy} (one-time full copy; this can take minutes)")
+    log(f"pin: saving {_pinned()} from {source} to {copy} (one-time full copy; this can take minutes)")
     shutil.rmtree(partial, ignore_errors=True)
     try:
         shutil.copytree(source, partial, symlinks=True)
         if not is_pinned(read_build(partial)):
             raise GamePinError(f"{source} changed while it was being copied; nothing was saved.")
         relative = exe.relative_to(source).as_posix() if exe else None
-        (partial / MARKER).write_text(json.dumps({"build": PINNED_GAME_BUILD, "exe": relative}), encoding="utf-8")
+        (partial / MARKER).write_text(json.dumps({"build": _pinned(), "exe": relative}), encoding="utf-8")
         os.replace(partial, copy)
     except BaseException:
         shutil.rmtree(partial, ignore_errors=True)
         raise
     if describe_mod(copy) is None:
         log(f"pin: WARNING: {copy / 'mods'} has no {MOD_NAME}.dll; install the mod there before launching this copy")
-    log(f"pin: saved; a Steam update can no longer replace {PINNED_GAME_BUILD}")
+    log(f"pin: saved; a Steam update can no longer replace {_pinned()}")
 
 
 def _game_exe(copy: Path) -> Path:
@@ -251,7 +265,7 @@ def launch(copy: Path, log=print, args=()) -> None:
     ``args`` are extra game arguments, e.g. ``--wid <handle>`` to open inside another window."""
     exe = _game_exe(copy)
     (exe.parent / "steam_appid.txt").write_text(STEAM_APP_ID, encoding="ascii")
-    log(f"pin: launching {PINNED_GAME_BUILD} from {exe}")
+    log(f"pin: launching {_pinned()} from {exe}")
     detach = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
               if sys.platform == "win32" else {"start_new_session": True})
     subprocess.Popen([str(exe), *args], cwd=str(exe.parent), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -286,14 +300,14 @@ def _await_mod(client, wait_s: float, launched: bool) -> None:
             seen, misses = seen or bool(games), 0 if games else misses + 1
             if launched and seen and misses >= 2:
                 raise GamePinError(
-                    f"the {PINNED_GAME_BUILD} game closed before the mod answered at {client.base_url}. "
+                    f"the {_pinned()} game closed before the mod answered at {client.base_url}. "
                     f"Start Steam first, then run ./start again; if the game still closes, read the game's own log.")
         if now >= started + wait_s:
             state = ("is running but the mod never answered: mods are disabled in the game (enable them in the "
                      "game's mod settings and restart it), the mod failed to load, or it listens on another port "
                      f"than {client.base_url}" if seen else
                      f"did not bring up the mod at {client.base_url}: check that Steam is running and mods are enabled")
-            raise GamePinError(f"after {wait_s:.0f}s the {PINNED_GAME_BUILD} game {state}.")
+            raise GamePinError(f"after {wait_s:.0f}s the {_pinned()} game {state}.")
         time.sleep(1.0)
 
 
@@ -311,13 +325,13 @@ def start_pinned(client, *, game_dir=None, copy_root="data/game", wait_s=180.0, 
         log(f"pin: WARNING: no frozen copy was saved ({exc}); a Steam update can still replace this install")
     if not _reachable(client):
         if games:
-            log(f"pin: {PINNED_GAME_BUILD} is running; waiting for the mod")
+            log(f"pin: {_pinned()} is running; waiting for the mod")
         else:
             log(f"pin: {require_mod(copy)}")   # never launch a copy that would come up without the mod
             launcher(copy, log)
         _await_mod(client, wait_s, launched=not games)
     folder = require_running()
-    log(f"pin: game build {PINNED_GAME_BUILD} verified at {folder}; the mod answers at {client.base_url}")
+    log(f"pin: game build {_pinned()} verified at {folder}; the mod answers at {client.base_url}")
     if folder.resolve() != copy.resolve():
         log(f"pin: this game runs from {folder}, not the saved copy; "
             f"{describe_mod(folder) or 'its mods folder has no ' + MOD_NAME + '.dll'}")

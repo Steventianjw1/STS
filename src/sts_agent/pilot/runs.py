@@ -8,7 +8,8 @@ decides the card rewards:
     net         the champion alone: the reference, and a strong drafter that knows no plan
     shared      the champion's own preferences inside what the plan every character had (Ironclad's)
                 leaves open
-    character   the same inside the character's own plan (``evidence.deck_balance.PLANS``)
+    character   the same inside the character's own plan (``evidence.deck_balance.plan_for``)
+    character@v0.107.1   the same inside the plan the character has on another game build
     character:scaling_full=4;targets.frost_min=3;early_roles=block+damage;caps.damage=[5,7,9]
                 a variant of that plan, for choosing its numbers (``shared:...`` varies Ironclad's)
 
@@ -37,12 +38,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from ..evidence import deck_balance
+from ..game import builds
 from ..game.characters import character_key
 from . import engine
 
-SOURCES = ("data/mentor_build", "data/mentor_source")     # full checkouts of Mentor's source (docs/PILOT_TUNING.md)
 CHAMPIONS = Path("sts2-pycli") / "data" / "ppo"
-CARD_TEXT = Path("sts2-pycli") / "localization_eng" / "cards.json"
+CARD_SPECS = Path("sts2-rs") / "crates" / "sts2-content" / "src" / "cards"     # one .rs per card, by character
 SIMS, BOSS_SIMS = 1000, 4000        # the engine authors' own evaluation budget for a run's fights
 MAX_STEPS = 60000
 
@@ -59,11 +60,13 @@ FLATTEN = 0.25
 
 
 def source_dir(given=None) -> Path:
-    for folder in ([given] if given else SOURCES):
+    # full checkouts of the Mentor commit that goes with the game build in use (docs/PILOT_TUNING.md)
+    sources = [given] if given else [builds.active().source_dir, "data/mentor_source"]
+    for folder in sources:
         if (Path(folder) / CHAMPIONS / "champions.toml").is_file():
             return Path(folder)
     raise engine.EngineError("whole-run simulation needs a full checkout of Spire Mentor's source (the run-policy nets "
-                             f"and the card text); none found in {given or ' or '.join(SOURCES)}. See docs/PILOT_TUNING.md")
+                             f"and the card text); none found in {' or '.join(map(str, sources))}. See docs/PILOT_TUNING.md")
 
 
 def champion(source, character) -> tuple[str, str | None]:
@@ -86,16 +89,39 @@ def _render(text) -> str:
     return text
 
 
+def card_text_path(source) -> Path:
+    """The English card text of the game build in use, in a checkout of Mentor's source."""
+    version = builds.active().engine_version
+    return Path(source) / "sts2-pycli" / ("localization_eng" + (f"_{version}" if version else "")) / "cards.json"
+
+
+def _source_card_kinds(source) -> dict:
+    """card id -> (type, rarity), read from the simulator's own card files: for the cards of a newer game
+    build, which the simulator's ``card_kinds`` (its first build's list) leaves out."""
+    out = {}
+    for path in (Path(source) / CARD_SPECS).glob("*/*.rs"):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        kind, rarity = re.search(r"card_type:\s*CardType::(\w+)", text), re.search(r"rarity:\s*CardRarity::(\w+)", text)
+        if kind and rarity:
+            out[path.stem.upper()] = (kind.group(1).upper(), rarity.group(1).upper())
+    return out
+
+
 class Catalog:
     """Card facts for the simulator's ids, in the shape the live game's card facts have."""
 
     def __init__(self, rs, source):
-        text = json.loads((Path(source) / CARD_TEXT).read_text(encoding="utf-8"))
+        text = json.loads(card_text_path(source).read_text(encoding="utf-8"))
         self.ids = dict(rs.list_registry_id_forms("card"))          # "StrikeSilent" -> "STRIKE_SILENT"
         self.relic_ids = dict(rs.list_registry_id_forms("relic_id"))
         self.potion_ids = dict(rs.list_registry_id_forms("potion"))
         self.cards = {}
-        for cid, kind, rarity in rs.card_kinds():
+        kinds = [(cid, kind, rarity) for cid, kind, rarity in rs.card_kinds()]
+        listed = {cid for cid, _, _ in kinds}
+        if builds.active().engine_version and set(self.ids.values()) - listed:      # a build after the simulator's first
+            in_source = _source_card_kinds(source)
+            kinds += [(cid, *in_source[cid]) for cid in sorted(set(self.ids.values()) - listed) if cid in in_source]
+        for cid, kind, rarity in kinds:
             key = cid if f"{cid}.description" in text else cid.removesuffix("_CARD")
             self.cards[cid] = {"id": cid, "name": text.get(f"{key}.title", cid), "type": kind.capitalize(),
                                "rarity": rarity.capitalize(), "description": _render(text.get(f"{key}.description", ""))}
@@ -125,11 +151,12 @@ class Catalog:
 def plan_of(arm, character) -> deck_balance.DeckPlan | None:
     """The deck plan an arm drafts by; None for the champion alone."""
     name, _, changes = arm.partition(":")
+    name, _, build = name.partition("@")         # character@v0.107.1: the plan the character had on another build
     if name == "net":
         return None
     if name not in ("shared", "character"):
         raise ValueError(f"unknown arm {arm!r}")
-    plan = deck_balance.PLANS["IRONCLAD"] if name == "shared" else deck_balance.plan_for(character)
+    plan = deck_balance.plan_for("IRONCLAD" if name == "shared" else character, build or None)
     tables = {key: dict(getattr(plan, key)) for key in ("targets", "caps", "scaling_min", "deck_targets")}
     fields = {}
     for change in filter(None, changes.split(";")):
@@ -200,7 +227,7 @@ def play_run(rs, catalog, table, character, seed, arm, *, source, ascension=10, 
     """
     name = engine.character_name(character)
     model, features = champion(source, character)
-    rm = rs.RunManager(seed=seed, character=name, ascension_level=ascension)
+    rm = rs.RunManager(seed=seed, character=name, ascension_level=ascension, **engine.version_args())
     agent = rs.PpoRunAgent(seed=seed, sims=sims, boss_sims=boss_sims, model_path=model, features=features)
     plan = plan_of(arm, character)
     tiers = {e["id"]: e for e in table}

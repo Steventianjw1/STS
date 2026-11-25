@@ -29,7 +29,8 @@ from pathlib import Path
 from ..game.characters import CHARACTERS, character_key
 from . import engine, players, runs, sim
 from .search import SAFE_WIN
-from .profiles import TUNED_DIR, WIN_ODDS, character_tuning, load_tuned, profile_for, save_character_tuning
+from ..game import builds
+from .profiles import WIN_ODDS, character_tuning, load_tuned, profile_for, save_character_tuning, tuned_root
 
 
 def _lower_priority() -> bool:
@@ -51,9 +52,9 @@ def _character(value) -> str:
     return key
 
 
-def _players_table(character, rows, catalog, words, arms, cards=False) -> str:
+def _players_table(character, rows, catalog, words, arms, cards=False, read_builds=()) -> str:
     found = players.decks(rows, character, catalog, words)
-    lines = [f"{character}: {found['runs']} solo A10 standard runs of builds {', '.join(players.BUILDS)} by the "
+    lines = [f"{character}: {found['runs']} solo A10 standard runs of builds {', '.join(read_builds)} by the "
              f"{found['players']} highest-rated Spire Codex players who have them, {found['won']} won (public data, not this agent)"]
     for act in (1, 2, 3):
         row = found.get(f"act{act}")
@@ -144,6 +145,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m sts_agent.pilot", description=__doc__.splitlines()[0])
     ap.add_argument("--game-dir", default="data/game", help="pinned_game_dir holding the game copy with Spire Mentor")
     ap.add_argument("--logs", default=None, help="Spire Mentor's log folder (default: %%LOCALAPPDATA%%/SpireMentor/logs)")
+    ap.add_argument("--build", default=None, help=f"the game build to work on: {', '.join(builds.BUILDS)} "
+                                                   f"(default: {builds.ENV} or {builds.DEFAULT})")
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("scenarios")
     s.add_argument("--save", action="store_true", help="keep them in the repository (snapshots.json), for machines without the logs")
@@ -196,11 +199,14 @@ def main(argv=None) -> int:
     f.add_argument("--save", action="store_true", help="keep them in the repository (snapshots_<character>.json)")
     pl = sub.add_parser("players")
     pl.add_argument("--players", type=int, default=players.PLAYERS, help="how many of the character's highest-rated accounts")
-    pl.add_argument("--runs", type=int, default=players.RUNS_EACH, help="solo A10 runs of the pinned builds read per account, newest first")
+    pl.add_argument("--runs", type=int, default=players.RUNS_EACH, help="solo A10 runs of the game build read per account, newest first")
     pl.add_argument("--arms", default="shared,character", help="plans whose verdicts are compared with the picks (as for `runs`)")
     pl.add_argument("--words", default="", help="words a card's text names, counted as kinds of their own (Shiv,Poison)")
     pl.add_argument("--cards", action="store_true", help="also list every card's pick rate")
     pl.add_argument("--offline", action="store_true", help="read only what earlier calls kept in the Spire Codex cache")
+    pl.add_argument("--builds", default=None, help="game builds whose runs are read, newest first, comma separated "
+                                                   "(default: the Spire Codex builds of the game build in use)")
+    pl.add_argument("--fetch-only", action="store_true", help="fetch and keep the runs, print only how many (needs no simulator)")
     pl.add_argument("--source", default=None, help="a full checkout of Spire Mentor's source (default: data/mentor_build)")
     for p in (s, sh, b, t, f, c, pl):
         p.add_argument("--character", type=_character, default=None if p is f else "IRONCLAD",
@@ -212,6 +218,8 @@ def main(argv=None) -> int:
         p.add_argument("--encounter", default=None, help="encounter ids, comma separated")
         p.add_argument("--limit", type=int, default=0, help="at most this many scenarios")
     args = ap.parse_args(argv)
+    if args.build and builds.select(args.build) is None:
+        ap.error(f"no version of the agent for game build {args.build!r}; it has {', '.join(builds.BUILDS)}")
 
     if args.cmd == "report":
         fights = sim.read_fights(args.file)
@@ -303,14 +311,20 @@ def main(argv=None) -> int:
         print(_runs_table(runs.report(rows)))
         print(f"done in {time.time() - started:.0f}s")
         return 0
-    rs = engine.load(args.game_dir)
     if args.cmd == "players":
-        catalog, words = runs.Catalog(rs, runs.source_dir(args.source)), [w for w in args.words.split(",") if w]
-        raw = players.fetch(args.character, players=args.players, runs_each=args.runs, offline=args.offline,
+        read_builds = tuple(b for b in (args.builds or "").split(",") if b) or players.codex_builds()
+        raw = players.fetch(args.character, players=args.players, runs_each=args.runs, builds=read_builds, offline=args.offline,
                             progress=lambda i, n, kept: print(f"  player {i}/{n}: {kept} runs", flush=True))
         rows = players.read(raw, args.character)
-        print(_players_table(args.character, rows, catalog, words, args.arms.split(","), args.cards))
+        if args.fetch_only:
+            print(f"{args.character}: {len(raw)} runs of builds {', '.join(read_builds)} kept, {len(rows)} readable, "
+                  f"{sum(r['win'] for r in rows)} won")
+            return 0
+        rs = engine.load(args.game_dir)
+        catalog, words = runs.Catalog(rs, runs.source_dir(args.source)), [w for w in args.words.split(",") if w]
+        print(_players_table(args.character, rows, catalog, words, args.arms.split(","), args.cards, read_builds))
         return 0
+    rs = engine.load(args.game_dir)
     if args.cmd == "fight-starts":
         caps = {k: int(v) for k, v in (kv.split("=") for kv in args.per_tier.split(",") if kv)}
         rows = runs.read_runs(args.file)
@@ -326,8 +340,8 @@ def main(argv=None) -> int:
                     continue
             print(f"{character}: {len(usable)} fight starts usable of {len(found)} picked: "
                   f"{dict(sorted(Counter((s.tier, s.act) for s in usable).items()))}")
-            if args.save and usable and character == "IRONCLAD":
-                print("  not kept: Ironclad's kept fight starts are the logged ones (scenarios --save)")
+            if args.save and usable and character == "IRONCLAD" and builds.active().key == sim.LOGGED_BUILD:
+                print("  not kept: on this build Ironclad's kept fight starts are the logged ones (scenarios --save)")
             elif args.save and usable:
                 sim.save_snapshots(usable, sim.snapshot_path(character))
                 print(f"  kept in {sim.snapshot_path(character)}")
@@ -342,8 +356,8 @@ def main(argv=None) -> int:
     if args.cmd == "scenarios":
         print(f"{len(scenarios)} fight starts usable; skipped: {dict(skipped)}")
         if args.save:
-            sim.save_snapshots(scenarios)
-            print(f"kept in {sim.SNAPSHOT_PATH}")
+            sim.save_snapshots(scenarios, sim.snapshot_path(character))
+            print(f"kept in {sim.snapshot_path(character)}")
         for (tier, enc), n in sorted(Counter((s.tier, s.encounter) for s in scenarios).items()):
             print(f"  {tier:<7} {enc:<34} {n}")
         return 0
@@ -418,7 +432,7 @@ def main(argv=None) -> int:
         if not wanted:
             print("name encounters with --encounter, --tier or --all", file=sys.stderr)
             return 2
-        tuned_dir = args.tuned_dir or TUNED_DIR
+        tuned_dir = args.tuned_dir or tuned_root()
         live = sys.stdout.isatty()
         if args.reverse:
             wanted.reverse()

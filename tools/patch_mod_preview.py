@@ -1,7 +1,13 @@
-"""Add agent previews, deck/map observations and deterministic run setup to STS2MCP.
+"""Add agent previews, deck/map observations and deterministic run setup to STS2MCP,
+and make its source build against both game builds the agent supports.
 
 Usage: python tools/patch_mod_preview.py PATH_TO_STS2MCP_SOURCE
-Then rebuild/install the mod normally. The patch is additive and idempotent.
+Then rebuild/install the mod normally. The patch is idempotent. It adds the agent's
+extension files and lines, and it replaces the four upstream lines that stopped
+compiling on STS2 v0.111 (StartRunLobby.MaxPlayers, LoadRunLobby.ConnectedPlayerIds)
+with reflection helpers from mod/McpMod.AgentCompat.cs, which read the same values
+on v0.107.1 and report them as unknown where v0.111 has no such member. Upstream
+(Gennadiyev/STS2MCP main, 55e0648) has no v0.111 fix of its own.
 """
 from pathlib import Path
 import shutil
@@ -39,6 +45,27 @@ def patch(source: Path) -> None:
             raise SystemExit("Unsupported STS2MCP source: expected one enemy status anchor.")
         text = text.replace(enemy_anchor, enemy_anchor + "\n" + enemy_addition)
         changed = True
+    # v0.111: lobby members that no longer exist are read through McpMod.AgentCompat.cs.
+    # (old line, new line, how often the old line appears upstream)
+    compat = [
+        ('["max_players"] = lobby.MaxPlayers,', '["max_players"] = AgentCompatMaxPlayers(lobby),', 1),
+        ('info["connected_player_count"] = lobby.ConnectedPlayerIds?.Count ?? 0;',
+         'info["connected_player_count"] = AgentCompatConnectedPlayerIds(lobby)?.Count ?? 0;', 1),
+        ('var connectedPlayerIds = lobby.ConnectedPlayerIds;',
+         'var connectedPlayerIds = AgentCompatConnectedPlayerIds(lobby);', 1),
+        ('connectedPlayerIds.Contains(player.NetId) &&', 'connectedPlayerIds.Contains(player.NetId.ToString()) &&', 1),
+        ('bool isConnected = lobby.ConnectedPlayerIds?.Contains(sp.NetId) ?? false;',
+         'bool isConnected = AgentCompatConnectedPlayerIds(lobby)?.Contains(sp.NetId.ToString()) ?? false;', 1),
+    ]
+    for old, new, times in compat:
+        if new in text:
+            continue
+        if text.count(old) != times:
+            raise SystemExit(f"Unsupported STS2MCP source: expected {times} line(s) reading `{old}`.")
+        text = text.replace(old, new)
+        changed = True
+    if "lobby.MaxPlayers" in text or "lobby.ConnectedPlayerIds" in text:
+        raise SystemExit("Unsupported STS2MCP source: a lobby member that v0.111 removed is still read directly.")
     map_anchor = '        state["is_ancient"] = isAncient;'
     map_addition = '        if (isAncient) state["agent_map"] = BuildAgentAncientMap(runState);'
     if map_addition not in text:
@@ -61,8 +88,10 @@ def patch(source: Path) -> None:
                     source / "McpMod.AgentPreview.cs")
     shutil.copyfile(Path(__file__).resolve().parents[1] / "mod" / "McpMod.AgentStartup.cs",
                     source / "McpMod.AgentStartup.cs")
-    print("Patched previews, deck and its keyword tooltips, enemy moves, ancient map and run setup. "
-          "Rebuild and install STS2_MCP.dll.")
+    shutil.copyfile(Path(__file__).resolve().parents[1] / "mod" / "McpMod.AgentCompat.cs",
+                    source / "McpMod.AgentCompat.cs")
+    print("Patched previews, deck and its keyword tooltips, enemy moves, ancient map, run setup and the "
+          "v0.111 lobby members. Rebuild and install STS2_MCP.dll.")
 
 
 if __name__ == "__main__":

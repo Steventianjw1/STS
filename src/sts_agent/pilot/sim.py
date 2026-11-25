@@ -21,8 +21,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
+from ..game import builds
 from ..game.characters import CHARACTERS, character_key
-from . import engine
+from . import engine, profiles
 from .profiles import (HP_WORTH, LOSS_VALUE, Profile, default_profile, hp_carry, load_tuned, mentor_profile, profile_for,
                        save_character_tuning, save_tuned)
 from .search import CORES, decide, is_potion_action
@@ -33,7 +34,7 @@ from .search import CORES, decide, is_potion_action
 POTION_WORTH = 0.03
 MAX_ACTIONS = 2000
 ACCEPT_SE = 2.0     # how many standard errors a tuned candidate must beat the default by
-SNAPSHOT_PATH = Path(__file__).with_name("snapshots.json")   # fight starts kept in the repository, for a machine without the logs
+LOGGED_BUILD = "v0.107.1"       # the build whose Ironclad fight starts are logged live fights; every other set is simulated
 
 
 def mentor_log_dir() -> Path:
@@ -60,7 +61,7 @@ class Scenario:
     def build(self, rs, world_seed):
         return rs.build_scenario_state(world_seed, engine.character_name(self.character), list(self.deck), self.hp,
                                        self.max_hp, list(self.relics), self.encounter, self.ascension,
-                                       potions=list(self.potions) or None)
+                                       potions=list(self.potions) or None, **engine.version_args())
 
     def against(self, encounter: dict) -> Scenario:
         """The same run snapshot entering a different encounter."""
@@ -91,6 +92,11 @@ def scenarios_from_logs(rs, log_dir=None) -> tuple[list[Scenario], Counter]:
         if first.get("round") != 1:
             skipped["log starts mid-fight"] += 1
             continue
+        # A fight belongs to the game build it was fought on; logs that name none are from before v0.111 support.
+        logged = meta.get("game_version") or first.get("game_version") or (first.get("context") or {}).get("game_version")
+        if builds.find(logged or LOGGED_BUILD) is not builds.active():
+            skipped["another game build"] += 1
+            continue
         character = character_key(str(meta.get("character") or "Ironclad"))
         if character is None:
             skipped["unknown character"] += 1
@@ -117,21 +123,25 @@ def scenarios_from_logs(rs, log_dir=None) -> tuple[list[Scenario], Counter]:
     return out, skipped
 
 
-def snapshot_path(character="IRONCLAD") -> Path:
-    """Where a character's fight starts are kept: Ironclad's logged ones in ``snapshots.json``, every other
-    character's simulated ones (``runs.collect``) in ``snapshots_<character>.json`` beside it."""
-    return SNAPSHOT_PATH if character == "IRONCLAD" else SNAPSHOT_PATH.with_name(f"snapshots_{character.lower()}.json")
+def snapshot_path(character="IRONCLAD", build=None) -> Path:
+    """Where a character's fight starts are kept for a game build (the one in use when None): Ironclad's in
+    ``snapshots.json`` (logged live fights on v0.107.1, simulated ones on later builds), every other character's
+    simulated ones (``runs.fight_starts``) in ``snapshots_<character>.json`` beside it."""
+    folder = profiles.build_dir(build)
+    return folder / ("snapshots.json" if character == "IRONCLAD" else f"snapshots_{character.lower()}.json")
 
 
-def save_snapshots(scenarios, path=SNAPSHOT_PATH) -> None:
+def save_snapshots(scenarios, path=None) -> None:
     """Keep ``scenarios`` in the repository, one per line, so a clone without the logs can tune with them."""
-    Path(path).write_text("[\n" + ",\n".join(json.dumps(asdict(s)) for s in scenarios) + "\n]\n", encoding="utf-8")
+    path = Path(path or snapshot_path())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[\n" + ",\n".join(json.dumps(asdict(s)) for s in scenarios) + "\n]\n", encoding="utf-8")
 
 
-def load_snapshots(rs, path=SNAPSHOT_PATH) -> list[Scenario]:
+def load_snapshots(rs, path=None) -> list[Scenario]:
     """The kept fight starts this engine can rebuild."""
     try:
-        rows = json.loads(Path(path).read_text(encoding="utf-8"))
+        rows = json.loads(Path(path or snapshot_path()).read_text(encoding="utf-8"))
     except FileNotFoundError:
         return []
     out = []

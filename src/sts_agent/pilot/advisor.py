@@ -11,9 +11,19 @@ so the agent's own Autobattle bridge needs no change.
 
 Any failure inside the pilot falls back to Mentor's own search for that decision; a
 fight is never left without advice.
+
+Mentor up to 0.10 (game build v0.107.1) ran that search from its Python, through one
+function of the simulator, and the pilot stands in for that function. From 0.11 (v0.111)
+the advisor computes a fight's advice inside the simulator, so the pilot wraps the advice
+step instead: Mentor's own code rebuilds the fight, the pilot searches it, and Mentor's own
+code turns the pilot's result into the advice the mod plays. Two things differ there: a card
+choice a fight opens is answered by Mentor's search, which the pilot can no longer reach,
+and Mentor's Instinct net, which would otherwise answer every fight the installed mod
+ships a net for, is switched off for this advisor so the pilot's search decides.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import sys
@@ -30,6 +40,7 @@ from .search import decide
 SOURCE_ENV = "STS_AGENT_MENTOR_SOURCE"      # folder holding Mentor's realgame_advisor.py
 GAME_DIR_ENV = "STS_AGENT_GAME_DIR"         # pinned_game_dir
 ROOM_TIER = {"Boss": "Boss", "Elite": "Elite"}
+PROBE_SIMS = 16         # Mentor 0.11: the token search of the call that rebuilds the fight for the pilot
 
 logger = logging.getLogger("sts_agent.pilot")
 
@@ -120,9 +131,54 @@ def install(advisor, rs, potion_context=None) -> None:
             logger.exception("pilot search failed; this decision uses Mentor's own search")
             return core.mcts_recommend(state, **kwargs)
 
-    advisor.compute_combat_advice = combat_advice
-    advisor.compute_screen_advice = screen_advice
-    rs.mcts_recommend = recommend
+    def combat_advice_in_engine(state, cfg, sims, mirror=None):
+        """Mentor 0.11: the pilot's search between Mentor's own fight rebuild and its own advice step."""
+        enter(state)
+        context = read_potion_context(potion_context, act=turn.fight[0], floor=turn.fight[1])
+        turn.potion_used = getattr(mirror, "potion_used", False)
+        starting_count = context.get("starting_potion_count")
+        potions = state.get("potions")
+        if type(starting_count) is int and isinstance(potions, list):
+            chance = context.get("drop_chance_pct")
+            turn.drop_chance_pct = chance if type(chance) is int else None
+            turn.potion_used |= sum(not p.get("empty") for p in potions) < starting_count
+        try:
+            from display_names import _names         # Mentor's: the names its advice text uses
+            # Mentor's own function with a token search: it checks the request, keeps its mirror in step and
+            # hands back the fight as the simulator rebuilt it.
+            _, fight, call_cfg, _ = mentor_advice(state, cfg, PROBE_SIMS, mirror)
+            encounter, tier, character, profile = profile_of(fight)
+            search = advisor._mcts_kwargs(call_cfg, sims)
+            d = decide(core, fight, profile, seed=search.get("seed") or 0,
+                       carry=(search.get("win_hp_carry"), search.get("win_potion_carry")), tier=tier,
+                       drop_chance_pct=turn.drop_chance_pct, potion_used=turn.potion_used, character=character)
+            advice, rows = rs.advice_from_result(state, d.result, dataclasses.asdict(cfg), max(int(d.sims or sims), 1),
+                                                 _names(), None)
+            logger.info("pilot %s: %s %s  (%d sims, %.2fs, win %s)", encounter or turn.room, d.rule, d.action, d.sims,
+                        d.seconds, "?" if d.win_chance is None else f"{d.win_chance:.0%}")
+            return advice, fight, dataclasses.replace(call_cfg, sims=sims), rows
+        except Exception:
+            logger.exception("pilot search failed; this decision uses Mentor's own search")
+            return mentor_advice(state, cfg, sims, mirror)
+
+    if hasattr(rs, "advice_from_result"):       # Mentor 0.11 and later
+        if hasattr(advisor, "InstinctAdvisor"):
+            class SearchInsteadOfInstinct(advisor.InstinctAdvisor):
+                """Mentor's Instinct net, declined: with the pilot on, the fight search answers, and that is the pilot's."""
+
+                def capabilities(self):
+                    return []
+
+                def advise(self, *args, **kwargs):
+                    raise advisor.InstinctUnavailable("the STS agent's pilot decides fights")
+
+            advisor.InstinctAdvisor = SearchInsteadOfInstinct      # main() builds its own when given --instinct-weights
+            advisor.INSTINCT = SearchInsteadOfInstinct()
+        advisor.compute_combat_advice = combat_advice_in_engine
+    else:
+        advisor.compute_combat_advice = combat_advice
+        advisor.compute_screen_advice = screen_advice
+        rs.mcts_recommend = recommend
 
 
 def main(argv=None) -> int:

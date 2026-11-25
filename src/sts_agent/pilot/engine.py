@@ -6,7 +6,11 @@ with the engine build the installed mod plays with. Only the extension is loaded
 of Mentor's Python is.
 
 A machine without the game (one that only tunes) names a folder holding the module in
-``STS_AGENT_ENGINE_DIR``, or keeps a build from Mentor's source in ``data/engine``.
+``STS_AGENT_ENGINE_DIR``, or keeps a build from Mentor's source in the folder the game build
+in use names (``game.builds``: ``data/engine`` for v0.107.1, ``data/engine_0.11.8`` for v0.111).
+
+Mentor's simulator from 0.11 on models several game builds in one module and takes the build
+with every fight and run it builds (``version_args``); the 0.10.6 one models v0.107.1 only.
 """
 from __future__ import annotations
 
@@ -19,13 +23,13 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from ..game import builds
 from ..game.game_pin import frozen_copy
 from .profiles import HP_WEIGHT
 
 ENGINE_SUBDIR = Path("mods") / "SpireMentor" / "SimAdvisor" / "_internal" / "sts2_rs"
 ENGINE_PYTHON = (3, 13)                 # what the mod's own sts2_rs.pyd is built for
 ENGINE_ENV = "STS_AGENT_ENGINE_DIR"     # a folder holding the sts2_rs module, used instead of the installed mod's
-BUILT_DIR = Path("data") / "engine"     # where a build from Mentor's source is kept
 HP_WEIGHT_ENV = "STS2_RUNAI_HP_WEIGHT"   # the engine's own setting; read once, at its first search
 ROOM_TIERS = {"Monster": ("Weak", "Normal"), "Elite": ("Elite",), "Boss": ("Boss",)}
 
@@ -45,7 +49,7 @@ def load(pinned_game_dir="data/game"):
     global _engine
     if _engine is None:
         named = os.environ.get(ENGINE_ENV)
-        folders = [Path(named)] if named else [engine_dir(pinned_game_dir), BUILT_DIR]
+        folders = [Path(named)] if named else [engine_dir(pinned_game_dir), Path(builds.active().engine_dir)]
         folder = next((f for f in folders if any(f.glob("sts2_rs*"))), None)
         if folder is None:
             raise EngineError("Spire Mentor's simulator (sts2_rs) was not found in " + " or ".join(str(f) for f in folders)
@@ -65,6 +69,12 @@ def load(pinned_game_dir="data/game"):
     return _engine
 
 
+def version_args() -> dict:
+    """The keyword that tells the simulator which game build to play; nothing for the one that models a single build."""
+    version = builds.active().engine_version
+    return {"game_version": version} if version else {}
+
+
 def character_name(character) -> str:
     """The engine's spelling of a character given by game ID ("SILENT" -> "Silent")."""
     return str(character or "IRONCLAD").capitalize()
@@ -73,7 +83,7 @@ def character_name(character) -> str:
 def fingerprint(rs) -> str:
     """A digest of one fixed search. Two machines that print the same one simulate and search alike."""
     deck = ["STRIKE_IRONCLAD"] * 5 + ["DEFEND_IRONCLAD"] * 4 + ["BASH"]
-    state = rs.build_scenario_state(1, "Ironclad", deck, 80, 80, ["BURNING_BLOOD"], "VANTOM_BOSS", 10)
+    state = rs.build_scenario_state(1, "Ironclad", deck, 80, 80, ["BURNING_BLOOD"], "VANTOM_BOSS", 10, **version_args())
     result = rs.mcts_recommend(state, sims=3000, threads=1, seed=7, hidden_info="beliefdraw")
     return hashlib.sha256(json.dumps(result, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
