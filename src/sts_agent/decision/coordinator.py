@@ -548,10 +548,11 @@ class RunCoordinator:
     def _reward_routine(self, v: ScreenView) -> tuple | None:
         """(candidate, reason) for the next step on a rewards screen that needs no judgment, else None.
 
-        Gold, relics and a potion with a free slot cost nothing to take, and opening a card reward only
-        shows its cards. Relics go before potions so a relic that adds slots counts. A card reward that
-        was opened and skipped stays in the game's list; it is never opened again. What is left for the
-        model is a potion with a full belt and reward kinds that are a choice in themselves."""
+        Gold, relics and potions that all fit the free slots cost nothing to take, and opening a card
+        reward only shows its cards. Relics go before potions so a relic that adds slots counts. A card
+        reward that was opened and skipped stays in the game's list; it is never opened again. What is
+        left for the model is more potions than free slots (which to keep is a choice: a rest with Tiny
+        Mailbox offers two) and reward kinds that are a choice in themselves."""
         if v.kind != "rewards" or not v.ready or v.unsupported or v.terminal:
             return None
         details = v.facts.get("screen_details") or {}
@@ -567,9 +568,9 @@ class RunCoordinator:
             if x:
                 return claim(x), why
         held, slots = v.facts.get("potions"), v.facts.get("max_potion_slots")
-        x = next((x for x in items if x.get("type") == "potion" and claim(x)), None)
-        if x and isinstance(held, list) and type(slots) is int and len(held) < slots:
-            return claim(x), "A potion slot is free."
+        potions = [x for x in items if x.get("type") == "potion" and claim(x)]
+        if potions and isinstance(held, list) and type(slots) is int and len(potions) <= slots - len(held):
+            return claim(potions[0]), "A potion slot is free."
         cards = [x for x in items if x.get("type") == "card" and claim(x)]
         if len(cards) > self._skipped_card_rewards:
             return claim(cards[self._skipped_card_rewards]), "Opening a card reward only shows its cards."
@@ -605,6 +606,16 @@ class RunCoordinator:
             for c in cards[:self._skipped_card_rewards]:
                 hidden[c["action_id"]] = ("A card reward listed on this screen is not offered: you already opened it "
                                           "here and skipped its cards.")
+        held, slots = v.facts.get("potions"), v.facts.get("max_potion_slots")
+        if v.kind == "rewards" and isinstance(held, list) and type(slots) is int and len(held) >= slots:
+            # With every slot full the game accepts the claim and does nothing, which reads as an unresolved action.
+            potions = [c for c in v.candidates if c["kind"] == "claim_reward" and c["details"].get("type") == "potion"]
+            if potions:
+                line = ("Not offered while every potion slot is full: "
+                        + ", ".join(str(c["details"].get("potion_name") or c["details"].get("description")) for c in potions)
+                        + ". To take one, first discard a held potion (discard_potion_N); the reward is then offered "
+                          "again. Otherwise leave it.")
+                hidden.update({c["action_id"]: line for c in potions})
         rejects = self._balance_rejects(v)
         if rejects:
             line = ("Not offered, because each adds only to a role this deck already holds too many of "
@@ -1403,9 +1414,14 @@ class RunCoordinator:
         expected_gold = (view.facts.get("player") or {}).get("gold")
         current = view
         for number, aid in enumerate(ch.shop_plan, 1):
+            gold = (current.facts.get("player") or {}).get("gold")
+            if type(gold) is int and type(expected_gold) is int and gold > expected_gold:
+                # A relic paid out on the purchase (Lucky Fysh gives gold for each card added): the rest of the
+                # plan is as affordable as it was. Only less gold than expected stops it.
+                expected_gold = gold
             if (current.kind != "shop" or current.encounter_key != view.encounter_key
                     or not current.ready or stock(current) != expected_stock
-                    or (current.facts.get("player") or {}).get("gold") != expected_gold):
+                    or gold != expected_gold):
                 self._outcome(seq, "shop_plan_stopped_state_changed", None, current,
                               "shop, prices, stock or gold changed unexpectedly; unexecuted actions abandoned")
                 return
