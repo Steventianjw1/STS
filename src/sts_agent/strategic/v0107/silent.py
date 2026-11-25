@@ -10,7 +10,7 @@ rewards, counted by ``evidence.deck_balance``'s role rules). The build names com
 guides (builds guide and Silent tier list), which describe later patches.
 """
 
-PROMPT_VERSION = "silent-strategic-planner-prompt-4"
+PROMPT_VERSION = "silent-strategic-planner-prompt-5"
 
 DECK_GUIDANCE = """\
 THE SILENT'S DECK. Stability comes first: Weak on the enemy every turn, and Block that does not hang on one card. What that deck looks like is known. In 166 solo A10 runs on this game version by the highest-rated Spire Codex players (142 won), the deck entering the act 1, 2 and 3 bosses held about 22, 29 and 37 cards. It is not kept thin: they took 86% of the card rewards in act 1, 72% in act 2 and 60% in act 3, as often with a large deck as with a small one, and what they added after act 1 was Skills and Powers (attacks stay near 8 while Skills go from 11 to 21).

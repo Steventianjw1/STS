@@ -12,7 +12,7 @@ Spire Codex guides (builds guide, Necrobinder tier list, "Offensive Necrobinder"
 Potential"), which describe other patches.
 """
 
-PROMPT_VERSION = "necrobinder-strategic-planner-prompt-2"
+PROMPT_VERSION = "necrobinder-strategic-planner-prompt-3"
 
 DECK_GUIDANCE = """\
 THE NECROBINDER'S DECK. The deck stays smaller than the other characters' by removing cards and by refusing attacks, not by refusing everything. In 137 solo A10 runs on this game version by the highest-rated Spire Codex players (104 won), the deck entering the act 1, 2 and 3 bosses held about 19, 25 and 32 cards after four removals a run, and they took 84% of the card rewards in act 1, 65% in act 2 and 54% in act 3. They followed no size limit: with 24 or more cards in act 2 they still took six rewards in ten, as with fewer, and in simulated runs a deck held to 18 cards from the first picks lost the act 1 boss more often. Removals come before additions from act 2 on, where those players made half of theirs: at a shop buy the removal before any card. In act 1 the shop's gold first goes to what wins the act 1 fights, and a removal is bought with what is left (in simulated runs buying it first in act 1 lost the act 1 boss more often). Prefer events and relics that remove or transform; remove starter Strikes first (four in five of those players' act 1 removals, half later), then curses, and a Defend only late, because this deck's damage comes from Osty, Doom and a few multiplied attacks while its plain Block is thin.

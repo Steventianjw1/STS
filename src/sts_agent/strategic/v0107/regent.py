@@ -4,7 +4,7 @@ Owner's guidance: balance Star gain against Star cost, while blocking and scalin
 (potentially with Stars or with the sword).
 """
 
-PROMPT_VERSION = "regent-strategic-planner-prompt-2"
+PROMPT_VERSION = "regent-strategic-planner-prompt-3"
 
 DECK_GUIDANCE = """\
 THE REGENT'S DECK. Stars are a second resource beside energy: some cards gain them, others cost them on top of their energy cost (a card's star_cost), and the starting relic gives a few at the start of each combat. Keep gain and cost in balance. The deck_balance track "stars" compares the Stars the deck's cards gain in one pass through the deck with the Star costs it holds. While it is short, a Star-cost card will often sit in hand unplayable, so take Star gain first and skip further Star costs however strong the card reads; a Star-cost card is priced by both costs, so check that the deck can pay its Stars in the turn it is drawn. While it is over-supplied, Stars go unspent: a strong Star-cost card or a payoff for gaining and spending Stars is then worth more than its text alone, and plain Star gain is a skip. The relic's opening Stars pay for one or two early plays, not for a deck of Star costs.
