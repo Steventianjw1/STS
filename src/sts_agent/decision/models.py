@@ -216,8 +216,13 @@ def _no_const(name):
     raise ChoiceError(f"nonfinite number {name}")
 
 
+_OPTIONAL_CHOICE_KEYS = ("rest_option", "smith_card", "route_plan", "shop_plan")
+
+
 def parse_choice(text: Any, frame: DecisionFrame, *, require_rest_option: bool = True,
                  require_smith_card: bool = True) -> Choice:
+    """``require_rest_option`` / ``require_smith_card`` False accept travel to a fire without its
+    option, and Smith without its card: the fire, or its upgrade grid, then asks on arrival."""
     if not isinstance(text, str):
         raise ChoiceError(f"expected text, got {type(text).__name__}")
     body = text.strip()
@@ -226,13 +231,24 @@ def parse_choice(text: Any, frame: DecisionFrame, *, require_rest_option: bool =
     try:
         data = json.loads(body, object_pairs_hook=_no_dupes, parse_constant=_no_const)
     except json.JSONDecodeError as e:
-        raise ChoiceError(f"malformed JSON: {e}") from None
+        # The one malformed shape seen live (5 of 5): a reply that closes its nested route_plan object
+        # and stops, leaving the outer object open. Supplying that brace guesses nothing about content.
+        try:
+            if e.pos != len(body):
+                raise e
+            data = json.loads(body + "}", object_pairs_hook=_no_dupes, parse_constant=_no_const)
+        except json.JSONDecodeError:
+            raise ChoiceError(f"malformed JSON: {e}") from None
     if not isinstance(data, dict):
         raise ChoiceError("response must be a JSON object")
     want = {"action_id", "reason", "turn_intent"}
     # An echoed frame_id is tolerated and ignored (older prompts asked for it; copying a
     # long opaque id only produced avoidable rejections).
     data.pop("frame_id", None)
+    # An optional key sent as null or "" counts as left out: that is not worth a second model call.
+    for k in _OPTIONAL_CHOICE_KEYS:
+        if k in data and data[k] in (None, ""):
+            del data[k]
     is_map = (frame.screen or {}).get("kind") == "map"
     at_fire = is_map and is_rest_destination(frame.candidate(data.get("action_id")))
     if at_fire and (require_rest_option or "rest_option" in data):

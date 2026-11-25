@@ -546,7 +546,42 @@ class ExpertDecisionStats:
             evidence["limitations"].append("Runs span all game versions; no version filter was applied.")
         if reason:
             evidence["reason"] = reason
+        if view.kind not in ("card_reward", "shop") and self.config.history_enabled:   # where an upgrade is chosen
+            self._add_upgrade_effects(evidence, deadline=deadline)
         support["upgrade_priority"] = evidence
+
+    def _add_upgrade_effects(self, evidence, *, deadline):
+        """What upgrading each not-yet-upgraded card changes, from the card catalog.
+
+        The game shows an upgraded card only after it is picked on the grid, so without this the
+        smith card is chosen blind (observed: a 3-cost Power upgraded for a cost cut it does not get)."""
+        try:
+            items = self.client.get("/api/cards", {"lang": self.config.lang}, deadline=deadline).data.get("items")
+        except Exception as exc:   # advisory: a catalog problem never costs the rest of the evidence
+            evidence["upgrade_effects"] = {"status": "unavailable",
+                                           "reason": str(exc) if isinstance(exc, StatsUnavailable) else type(exc).__name__}
+            return
+        catalog = {_id(x["id"]): x for x in items or [] if isinstance(x, dict) and _id(x.get("id"))}
+        found = 0
+        for card in evidence["cards"]:
+            entry = catalog.get(card.get("id"))
+            change = entry.get("upgrade") if entry else None
+            if card.get("upgraded") is True or not isinstance(change, dict) or not change:
+                continue
+            numbers = {k: v for k, v in change.items() if k not in ("cost", "description_changed")}
+            effect = {"changes": numbers} if numbers else {}
+            if "cost" in change:
+                effect["cost"] = f"{entry.get('cost')} -> {change['cost']}"
+            after = entry.get("upgrade_description")
+            if change.get("description_changed") and isinstance(after, str):
+                effect["text_after"] = re.sub(r"\[/?[A-Za-z_]+(?:[=:][^\]]*)?\]", "", after).replace("\n", " ")[:300]
+            card["upgrade_effect"] = effect
+            found += 1
+        evidence["upgrade_effects"] = {
+            "status": "available" if found else "unavailable",
+            "source": API_ROOT + "/api/cards",
+            "note": "Catalog of the newest game build: the kind and size of each change is reliable, absolute "
+                    "numbers may differ from the card text of the build being played."}
 
     def _deck_advice(self, view, deck, *, deadline):
         result = {"source": API_ROOT, "label": "COMMUNITY DECK ADVICE; separate from expert rates",

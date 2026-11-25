@@ -12,7 +12,7 @@ from .characters import strategy_for
 from .models import (DIMENSIONS, MAX_ENGINE_PIECES, PLAN_ENGINE, PLAN_LISTS, PLAN_TEXTS, StrategicAssessment,
                      StrategicSnapshot)
 
-PROMPT_VERSION = "strategic-planner-prompt-15"
+PROMPT_VERSION = "strategic-planner-prompt-16"
 _FACTS_STABLE_FIRST = ("deck", "relics", "glossary", "potions", "resources", "run", "recent_outcomes", "opportunities")
 
 _BEHAVIOR = """\
@@ -24,7 +24,9 @@ Potion advice is conditional strategic guidance; it never executes a potion acti
 
 _BEHAVIOR += """
 
-resources.last_observed_max_energy is historical combat evidence, not current energy or guaranteed future capacity. If resources.max_energy is null, current capacity remains unknown; do not guess a base value. Check costs and card zones before claiming interactions: a card with standalone Exhaust goes to exhaust after play and cannot then be retrieved by discard-only effects such as Headbutt. Exhausting another card does not imply self-exhaust. Compare whole affordable shop expenditures with saving gold, including defense, draw, HP costs and potions. Routine reward collection and card pickers reuse this assessment; write durable capability judgments and avoid prescribing unseen future offers. Current facts always override a reused plan.
+resources.last_observed_max_energy is historical combat evidence, not current energy or guaranteed future capacity. If resources.max_energy is null, current capacity remains unknown; do not guess a base value. Check costs and card zones before claiming interactions: a card with standalone Exhaust goes to exhaust after play and cannot then be retrieved by discard-only effects such as Headbutt. Exhausting another card does not imply self-exhaust. Compare whole affordable shop expenditures with saving gold, including defense, draw, HP costs and potions. Routine reward collection, card pickers, events, treasure rooms and fires reuse this assessment; write durable capability judgments and avoid prescribing unseen future offers. Current facts always override a reused plan.
+
+DO NOT DECIDE THE CURRENT SCREEN. The opportunities that are choices on this screen (map nodes, event options, offered cards, relics, shop items) are settled right after you by a separate decision step that sees statistics, route projections and prices you are not given. Say what the deck and the run need and how to recognise it; never write a summary, priority or standing_plan entry that names which of this screen's options to take (not "take the 49 gold", not "take the elite route"). A relic description that carries a bracketed OBSERVED note about its counter reports that its limited uses are spent: plan without that effect.
 
 Keep the full assessment compact: aim for roughly 800 words or fewer, a one- or two-sentence summary, one short sentence per judgment, up to three priorities, and only the strongest one to three evidence pointers per conclusion. Keep standing-plan entries short and avoid repeating the card inventory, rules text, or the same concern across fields. Reassess the previous plan against current facts without expanding its prose each revision. These are brevity targets, not validation limits; use extra detail only when it changes a decision.
 

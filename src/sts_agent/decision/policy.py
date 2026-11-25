@@ -135,7 +135,9 @@ class LLMDecisionPolicy:
                 continue
             answers += 1
             try:
-                res.choice = parse_choice(text, frame)
+                # A fire's option or the smith card left out is settled on arrival by a small call on
+                # that screen; rejecting the reply instead resent the whole map frame (4 of 10 fires).
+                res.choice = parse_choice(text, frame, require_rest_option=False, require_smith_card=False)
                 self.progress.emit("reply_accepted", "decision", attempt, **context)
                 return res
             except ChoiceError as e:
