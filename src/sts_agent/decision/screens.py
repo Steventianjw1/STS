@@ -47,7 +47,9 @@ CAPABILITIES: dict[str, dict] = {
                      "notes": "Index = relic holders (same list in state and action)."},
     "treasure": {"status": SOURCE_INSPECTED, "actions": ["claim_treasure_relic", "proceed"],
                  "notes": "The mod opens the chest as a side effect of reading state."},
-    "bundle_select": {"status": UNSUPPORTED, "actions": [], "notes": "Actions exist in the mod; adapter not implemented."},
+    "bundle_select": {"status": SOURCE_INSPECTED,
+                      "actions": ["select_bundle", "confirm_bundle_selection", "cancel_bundle_selection"],
+                      "notes": "Picking a pack opens its preview; the confirm that follows is sent without a model call."},
     "crystal_sphere": {"status": UNSUPPORTED, "actions": [], "notes": "Minigame actions exist in the mod; adapter not implemented."},
     "fake_merchant": {"status": UNSUPPORTED, "actions": [], "notes": "Shop-like event; adapter not implemented."},
     "overlay": {"status": UNSUPPORTED, "actions": [], "notes": "Unrecognized overlay; the mod itself reports manual interaction."},
@@ -205,6 +207,9 @@ def automatic_action(view: ScreenView) -> dict | None:
         return None
     details = view.facts.get("screen_details") or {}
     candidates = [c for c in view.candidates if c["kind"] != "discard_potion"]
+    if view.kind == "bundle_select" and details.get("preview_showing"):
+        # The pack was chosen on the screen before; its preview only asks to confirm that choice.
+        return next((c for c in candidates if c["kind"] == "confirm_bundle_selection"), None)
     if view.kind == "card_select" and details.get("preview_showing"):
         # The card choice is complete; confirm the resulting preview even if
         # the UI also offers a back button to undo that choice.
@@ -677,6 +682,32 @@ def _relic_select(raw, obs):
     return _finish(v, b, obs, potions=False)
 
 
+def _bundle_select(raw, obs):
+    """Choose one of several packs of cards (Neow's Scroll Boxes). A pick opens a preview with Confirm and Back."""
+    r = raw.get("bundle_select") if isinstance(raw.get("bundle_select"), dict) else {}
+    bundles = [{"index": _i(x.get("index")),
+                "cards": [_card_info(c) for c in x.get("cards") or [] if isinstance(c, dict)]}
+               for x in r.get("bundles") or [] if isinstance(x, dict)]
+    preview = r.get("preview_showing") is True
+    v, b = _room("bundle_select", raw, obs, {"prompt": _s(r.get("prompt"), 300), "bundles": bundles,
+                                             "preview_showing": preview, "can_confirm": r.get("can_confirm"),
+                                             "can_cancel": r.get("can_cancel")})
+    if preview:
+        if r.get("can_confirm") is True:
+            b.add("confirm_bundle", "confirm_bundle_selection", "Confirm the chosen pack", {},
+                  {"action": "confirm_bundle_selection"})
+        if r.get("can_cancel") is True:
+            b.add("cancel_bundle", "cancel_bundle_selection", "Go back to the packs", {},
+                  {"action": "cancel_bundle_selection"})
+    else:
+        for x in bundles:
+            if x["index"] is not None:
+                names = ", ".join(str(c["name"]) for c in x["cards"]) or "unknown cards"
+                b.add(f"bundle_{x['index']}", "select_bundle", f"Take the pack: {names} (all of its cards are added)", x,
+                      {"action": "select_bundle", "index": x["index"]})
+    return _finish(v, b, obs, potions=False)
+
+
 def _treasure(raw, obs):
     t = raw.get("treasure") if isinstance(raw.get("treasure"), dict) else {}
     relics = [{"index": _i(x.get("index")), "id": _s(x.get("id"), 80), "name": _s(x.get("name"), 120),
@@ -702,7 +733,7 @@ def _unsupported(kind):
 _ROOM_BUILDERS = {
     "rewards": _rewards, "card_reward": _card_reward, "map": _map, "event": _event, "rest_site": _rest,
     "shop": _shop, "card_select": _card_select, "relic_select": _relic_select, "treasure": _treasure,
-    "bundle_select": _unsupported("bundle_select"), "crystal_sphere": _unsupported("crystal_sphere"),
+    "bundle_select": _bundle_select, "crystal_sphere": _unsupported("crystal_sphere"),
     "fake_merchant": _unsupported("fake_merchant"), "overlay": _unsupported("overlay"),
 }
 
