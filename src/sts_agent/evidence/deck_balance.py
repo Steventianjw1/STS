@@ -197,9 +197,10 @@ PLANS_V0107 = {
 #     under 20% for the Ironclad alone (14% with four); elsewhere it holds between 20 and 30% as far as
 #     the offers reach, so ``scaling_full`` is set past them.
 #   - the first picks (the first three rewards of act 1) go to the roles taken at least as often there as
-#     a card with no role: damage scaling and Block for the Ironclad (40 and 34% against 32%), Regent
-#     (36 and 39% against 34%) and Necrobinder (47 and 41% against 29%), every role for the Silent and
-#     the Defect (whose no-role cards were taken 24 and 19%).
+#     a card with no role: damage scaling and Block for the Ironclad (40 and 34% against 32%) and the
+#     Necrobinder (47 and 41% against 29%), every role for the Silent and the Defect (whose no-role
+#     cards were taken 24 and 19%). The Regent's rates are level (Block 39%, damage scaling 36%, no role
+#     34%, damage 26%), and there the simulated runs chose: damage and Block (see below).
 #   - tracks. Weak: the Ironclad took a first source 55% and a second 31%: one. The Silent 38% with one,
 #     25 to 32% with two to four, 14% with five: two, too many from five. The Defect 44/22/12%: one, a
 #     third is too many. The Necrobinder 72/67/57/55/46%: four, one per 7 cards. The Regent 30% with one,
@@ -233,7 +234,7 @@ PLANS_V0111 = {
         note="Weak first and in numbers, Block and a first damage multiplier, removals before additions from act 2, "
              "energy and draw in every act; plain attacks stop after the first few"),
     "REGENT": DeckPlan(
-        early_roles=("block", "damage_scaling"), thin_from_act=None, front_min=99, build_first=("block_scaling",),
+        early_roles=("damage", "block"), thin_from_act=None, front_min=99, build_first=("block_scaling",),
         caps={"damage": (4, 5, 6)}, scaling_min={"block_scaling": 4}, scaling_full=7,
         tracks=("stars", "weak"),
         targets={"star_deficit": 3, "star_slack": 3, "weak_per_cards": 0, "weak_min": 1, "weak_over": 2},
