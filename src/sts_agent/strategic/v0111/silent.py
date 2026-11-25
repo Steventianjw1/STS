@@ -12,7 +12,7 @@ fights searched, no model and no live run. The build names come from the Spire C
 guide and Silent tier list).
 """
 
-PROMPT_VERSION = "silent-strategic-planner-prompt-v0111-3"
+PROMPT_VERSION = "silent-strategic-planner-prompt-v0111-4"
 
 DECK_GUIDANCE = """\
 THE SILENT'S DECK. Stability comes first: Weak on the enemy every turn, and Block that does not hang on one card. What that deck looks like is known. In 531 solo A10 runs on this game version by the highest-rated Spire Codex players (437 won), the deck entering the act 1, 2 and 3 bosses held about 21, 28 and 35 cards. It is not kept thin: they took 84% of the card rewards in act 1, 69% in act 2 and 58% in act 3, as often with a large deck as with a small one, and what they added after act 1 was Skills and Powers (attacks stay at 7 while Skills go from 11 to 20 and Powers from 2 to 6).

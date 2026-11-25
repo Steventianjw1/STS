@@ -22,7 +22,7 @@ from .models import DecisionFrame, route_plan_mode
 
 # One version per game build (``game.builds``): a build's prompt carries its characters' guidance, so the
 # version that names the text is the build's own. ``DECISION_PROMPT_VERSION`` is the one of the build in use.
-DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-35", "v0.111.0": "decision-prompt-38"}
+DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-35", "v0.111.0": "decision-prompt-39"}
 
 
 def decision_prompt_version(build=None) -> str:
@@ -371,8 +371,11 @@ Route for the deck as it is now, inside the elite stance below. An elite turns p
 _REST_BUDGET = """\
 RESTING VERSUS UPGRADING, at a rest site and on the map when the room you travel to is one. Resting is not timid and upgrading is not greedy: each is a price. Count the HP this deck spends on purpose before the next rest site: cards and relics that cost HP when played or at the start of a fight (current_facts.hp_costs lists them when the deck holds any), the damage taken in the turns it needs to put its Powers into play, and the worst order it can draw its Block in. A deck that wins once it is set up needs the HP to get there more than it needs one more upgrade. Rest when no available upgrade changes how the next fights go, when a relic already upgrades the cards you add, or when the run is ahead and HP is what keeps it ahead. Upgrade when HP covers the rooms before the next heal and the upgrade changes something concrete: a key card becomes cheaper or playable a turn sooner, scaling that every later turn multiplies grows, a card the deck plays in every pass does more each time, or a number crosses a threshold that matters against a named enemy. Rank upgrades by that and not by how strong the card is in general, and rank them again after removals: an upgrade that did little in a large deck matters once the deck is small enough to draw that card in every pass. Before a boss, rest when the plan for that fight accepts damage in its opening turns."""
 
+# What is measured comes from the other tuning work on this build (the 20 highest-rated Spire Codex accounts' solo A10
+# runs, 8.5k to 10k card rewards a character): the rate at which a card that draws or gives energy was taken does not
+# move with how many the deck holds or with its Powers. The comparison with the setup held is the narrated player's.
 _ACCESS = """\
-DRAW, ENERGY AND GETTING POWERS INTO PLAY ARE NOT AMONG THE FOUR ROLES. deck_balance lists such cards under added.other, and deck_balance_offers marks one neutral whatever the deck needs, so for these cards neutral is not a verdict. Judge them by whether the deck can find and pay for what it holds. Count its setup (the Powers, and the other cards costing 2 or more that it wants in play early) against what finds and pays for that setup (cards that draw, give energy, keep cards in hand or cost 0). When the setup outnumbers what serves it (several Powers and one or no card that draws or gives energy; recent fights that ended with Powers unplayed), a draw, energy or hand-keeping card answers the current limit: take it ahead of another card for a role that is already covered, and say which the deck lacks, cards or energy. More draw without the energy to play what it finds adds nothing, and neither does energy with nothing to spend it on. The need is capped like a role: once the deck plays its setup in the first turns of a fight, one more such card is neutral again and is judged by its quality."""
+DRAW, ENERGY AND GETTING POWERS INTO PLAY ARE NOT AMONG THE FOUR ROLES. Where this character's plan counts them (a deck_balance track named flow), the track's status wanted means a card that draws or gives energy improves the deck at any count: deck_balance_offers marks it improves, and it is taken after the missing or short roles and tracks, not before them. For every other character deck_balance lists such cards under added.other and marks one neutral whatever the deck needs, so for these cards neutral is not a verdict. What is known: the best players took a card that draws or gives energy about three times in ten whatever the deck already held of them and however many Powers it held (the Ironclad nearly half the time), so such a card is never a skip on count alone, and nothing in their picks shows a cap. What decides between it and another card the deck does not otherwise need is whether the deck can find and pay for what it holds. Count its setup (the Powers, and the other cards costing 2 or more that it wants in play early) against what finds and pays for that setup (cards that draw, give energy, keep cards in hand or cost 0). When the setup outnumbers what serves it (several Powers and one or no card that draws or gives energy; recent fights that ended with Powers unplayed), the draw, energy or hand-keeping card is the better of the two: say which the deck lacks, cards or energy. More draw without the energy to play what it finds adds nothing, and neither does energy with nothing to spend it on. Once the deck plays its setup in the first turns of a fight, one more such card is judged by its quality like any other."""
 
 _GRID_DRAWS = """\
 A removal is worth what it does to the draws that remain: give up the card that most delays the ones the plan needs, usually a starter Strike, then the starter card nothing in the deck improves. Check the target against the deck as it is now: a card that has since been upgraded, or that a held card or relic makes better (a Power that pays for that kind of card, an enchantment on it), is no longer the one to give up. When the removal is random, or nothing in the deck is unwanted, declining it is right. A transform is a removal plus an unknown card: good on a starter card when it is free or cheap."""
@@ -413,7 +416,8 @@ _ENGINE = (
     "worse than its text. An engine without pieces means the deck has no such loop yet; never reason from pieces "
     "that are not held.")
 _REPEAT = (", unless the only such card repeats what an added card already does (a second attack that hits ALL "
-           "enemies while one is held, a second copy): a repeat is not a fill.")
+           "enemies while one is held, a second copy): a repeat is not a fill, and the best players took a second attack that "
+           "hits ALL enemies about half as often as the first.")
 
 
 def _v0111_noncombat() -> str:

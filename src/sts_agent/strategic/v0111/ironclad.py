@@ -13,7 +13,7 @@ simulated numbers are ``pilot.runs`` on Spire Mentor's v0.111.0 simulator: 120 A
 run-policy net, fights searched, no model and no live run.
 """
 
-PROMPT_VERSION = "ironclad-strategic-planner-prompt-v0111-4"
+PROMPT_VERSION = "ironclad-strategic-planner-prompt-v0111-5"
 
 DECK_GUIDANCE = """\
 THE IRONCLAD'S DECK. The starter already hits hard and the starting relic heals after every fight, so the deck is not built by adding attacks. What it is built from is known. In 532 solo A10 runs on this game version by the highest-rated Spire Codex players (397 won), the deck entering the act 1, 2 and 3 bosses held about 19, 26 and 32 cards. It is not kept thin: they took 84% of the card rewards in act 1, 64% in act 2 and 51% in act 3, in act 2 as often with a large deck as with a small one, and what they added after act 1 was Skills and Powers (attacks go from 8 to 11 while Skills go from 8 to 15 and Powers from 1 to 5).
