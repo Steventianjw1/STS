@@ -211,6 +211,13 @@ PLANS_V0107 = {
 #     did not; a card that gains Stars 26 to 31%, and 33 to 39% from three Stars owed; with four or more
 #     Stars spare the two swap (23% and 30%). Owed up to 3, spare up to 3. A card that kills Osty
 #     (Necrobinder) was taken 29% with none held (39% in act 1) and 11% with one: one is carried.
+#   - draw and energy. A card that draws or gives energy was taken at the same rate whatever the deck held
+#     of them and whatever Powers it held, so there is nothing to cap and nothing to call short: with none
+#     to five or more held 49/47/46/47/46/41% (Ironclad), 27/28/33/30/29/31% (Silent), 33/32/32/30/30/32%
+#     (Defect), 29/28/29/24/22/23% (Regent), 31/31/33/30/33/27% (Necrobinder). For the Ironclad alone that
+#     rate is far above another card with no role (30% falling to 15% as the deck gains Powers), so its
+#     plan has the track "flow": such a card always fills something, and never leads. The others' rates
+#     are those of any card with no role.
 #   - removals by act: 0.4/1.6/1.1, 0.6/1.6/1.2, 0.5/1.8/0.9, 0.5/1.8/1.0, 0.8/2.0/1.2 in the order above:
 #     bought first from act 2 on.
 #
@@ -246,9 +253,9 @@ PLANS_V0111 = {
     "IRONCLAD": DeckPlan(
         early_roles=("damage_scaling", "block"), thin_from_act=None, front_min=99, build_first=("block_scaling",),
         caps={"damage": (5, 7, 8)}, scaling_min={"block_scaling": 4}, scaling_full=4,
-        tracks=("weak",), targets={"weak_per_cards": 0, "weak_min": 1}, removals_from_act=2,
-        note="one Weak source and Block that grows first, draw, energy and Exhaust utility added in every act; "
-             "attacks stop once the deck holds what the best decks hold"),
+        tracks=("weak", "flow"), targets={"weak_per_cards": 0, "weak_min": 1}, removals_from_act=2,
+        note="one Weak source and Block that grows first, draw and energy taken at any count, Exhaust utility added in "
+             "every act; attacks stop once the deck holds what the best decks hold"),
     "SILENT": DeckPlan(
         early_roles=("damage_scaling", "damage", "block"), thin_from_act=None,
         build_first=("block_scaling", "damage_scaling"), caps={"damage": (5, 7, 8)}, never_over=("block",),
@@ -364,6 +371,16 @@ STAR_COST = {"SEVEN_STARS": 7, "DECISIONS_DECISIONS": 6, "COMET": 5, "NEUTRON_AE
              "METEOR_SHOWER": 2, "PARTICLE_WALL": 2, "QUASAR": 2, "CLOAK_OF_STARS": 1, "CRESCENT_SPEAR": 1}
 # v0.111 lowered three Star costs (Alignment and Resonance 3 to 2, Guiding Star 2 to 1); the Stars gained did not change.
 _STAR_COSTS = {"v0.107.1": STAR_COST, "v0.111.0": {**STAR_COST, "ALIGNMENT": 2, "RESONANCE": 2, "GUIDING_STAR": 1}}
+# Cards whose text gains energy (v0.111; by id, because the game writes energy as icons too). With the cards that
+# draw, they are what the track "flow" counts.
+ENERGY_GAIN = frozenset({
+    "BLOODLETTING", "DRUM_OF_BATTLE", "FORGOTTEN_RITUAL", "OFFERING", "PYRE",                               # Ironclad
+    "ADRENALINE", "SIDESTEP", "TACTICIAN",                                                                  # Silent
+    "CHARGE_BATTERY", "ENERGY_SURGE", "SCAVENGE", "SUBROUTINE", "SUNDER", "SUPERCRITICAL", "TURBO",         # Defect
+    "ALIGNMENT", "BIG_BANG", "CONVERGENCE", "HEGEMONY", "ORBIT", "REFINE_BLADE",                            # Regent
+    "BORROWED_TIME", "DELAY", "DEMESNE", "FRIENDSHIP", "INVOKE", "NEUROSURGE", "WISP",                      # Necrobinder
+    "AUTOMATION", "BRIGHTEST_FLAME", "OUTMANEUVER", "PRODUCTION", "RELAX", "RESTLESSNESS"})                 # colorless
+_DRAWS = re.compile(r"\bdraws? (?:\d+|X) (?:additional )?cards?\b", re.I)
 
 RULES = {
     "counted": "cards added beyond the starter (rarity not Basic); curses and statuses are counted apart; a card "
@@ -432,13 +449,15 @@ def _star_cost(card) -> int:
 
 
 def card_marks(card) -> dict:
-    """What one card is to the character tracks: Weak applied, Osty summoned or lost, Frost, Stars gained and spent."""
+    """What one card is to the character tracks: Weak applied, Osty summoned or lost, Frost, draw or energy,
+    Stars gained and spent."""
     kind = str(_field(card, "type") or "").strip().lower()
     if kind in _DEAD_TYPES:
         return {}
     text = _text(card)
     marks = {"weak": bool(_WEAKENS.search(text)), "summon": bool(_SUMMONS.search(text)),
              "osty_dies": bool(_OSTY_DIES.search(text)), "frost": bool(_FROST.search(text)),
+             "flow": bool(_DRAWS.search(text)) or _cid(card).removesuffix("_CARD") in ENERGY_GAIN,
              "star_gain": STAR_GAIN.get(_cid(card), 0), "star_cost": _star_cost(card)}
     return {k: v for k, v in marks.items() if v}
 
@@ -517,8 +536,17 @@ def _track_frost(plan, deck_size, marks, names, act=None):
                     + (f"; from {most} on another adds little" if most is not None else "")}
 
 
+def _track_flow(plan, deck_size, marks, names, act=None):
+    """Cards that draw or give energy, for a character whose best decks take one at any count. The status is
+    always "wanted": such a card fills something whatever the deck holds, and is never what the phase takes first."""
+    return {"count": marks["flow"], "cards": names["flow"], "status": "wanted",
+            "rule": "cards that draw or give energy, the starter's included: this character's best players took one "
+                    "about half the time it was offered however many the deck held, twice as often as another card "
+                    "with no role. One is worth taking at any count; it does not come before a missing or short role"}
+
+
 _TRACKS = {"weak": _track_weak, "summon": _track_summon, "osty": _track_osty, "deck_size": _track_deck_size,
-           "stars": _track_stars, "frost": _track_frost}
+           "stars": _track_stars, "frost": _track_frost, "flow": _track_flow}
 NEEDS, EXCESS = ("missing", "short"), ("over_supplied", "full")
 
 
@@ -603,7 +631,7 @@ def balance(deck, act=None, character=None, plan: DeckPlan | None = None) -> dic
     plan = plan or plan_for(character)
     counts = {role: 0 for role in (*ROLES, "other")}
     names = {role: [] for role in counts}
-    marks = {key: 0 for key in ("weak", "summon", "osty_dies", "frost", "star_gain", "star_cost")}
+    marks = {key: 0 for key in ("weak", "summon", "osty_dies", "frost", "flow", "star_gain", "star_cost")}
     mark_names = {key: [] for key in marks}
     starter, dead, size, added = {role: 0 for role in FRONT}, 0, 0, 0
     for entry in deck:
@@ -668,6 +696,8 @@ def _track_effect(state, marks, earns_slot) -> tuple:
         worse.append("osty")
     if "frost" in status and marks.get("frost"):
         (fills if status["frost"] in NEEDS else worse if status["frost"] in EXCESS else []).append("frost")
+    if "flow" in status and marks.get("flow"):
+        fills.append("flow")
     if "stars" in status:
         gain, cost = marks.get("star_gain", 0), marks.get("star_cost", 0)
         if status["stars"] == "short":
@@ -726,7 +756,8 @@ def _track_text(name, row) -> str:
         if row["target"] is None:
             return f"deck size {row['count']}, no target in this act"
         return f"deck size {row['count']} against a target of {row['target']}: {row['status'].replace('_', ' ')}"
-    label = {"weak": "Weak sources", "summon": "Summon cards", "osty": "cards that kill Osty", "frost": "Frost cards"}[name]
+    label = {"weak": "Weak sources", "summon": "Summon cards", "osty": "cards that kill Osty", "frost": "Frost cards",
+             "flow": "draw and energy cards"}[name]
     target = f" of {row['target']} wanted" if row.get("target") else ""
     return f"{label} {row['count']}{target}: {row['status'].replace('_', ' ')}"
 
