@@ -1,0 +1,187 @@
+{
+ "evidence": {
+  "knobs_Elite": {
+   "chosen": "default",
+   "kind": "simulator, candidates at Mentor's search budget",
+   "last_round": {
+    "fights": 32,
+    "ranked": [
+     {
+      "decisions": 22.1,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 31.81,
+      "hp_lost": 20.47,
+      "name": "dominance",
+      "potions_used": 0.31,
+      "race_changed_per_fight": 3.75,
+      "seconds_per_decision": 0.087,
+      "value": 0.9383,
+      "win_rate": 0.9062
+     },
+     {
+      "decisions": 22.3,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 31.28,
+      "hp_lost": 21.0,
+      "name": "default",
+      "potions_used": 0.31,
+      "race_changed_per_fight": 3.97,
+      "seconds_per_decision": 0.08,
+      "value": 0.9361,
+      "win_rate": 0.9062
+     },
+     {
+      "decisions": 22.9,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 30.97,
+      "hp_lost": 21.31,
+      "name": "leaf-playouts-3",
+      "potions_used": 0.28,
+      "race_changed_per_fight": 4.09,
+      "seconds_per_decision": 0.14,
+      "value": 0.9356,
+      "win_rate": 0.9062
+     },
+     {
+      "decisions": 22.2,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 30.84,
+      "hp_lost": 21.44,
+      "name": "engine-pick",
+      "potions_used": 0.28,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.041,
+      "value": 0.9354,
+      "win_rate": 0.9062
+     },
+     {
+      "decisions": 20.3,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 33.97,
+      "hp_lost": 18.31,
+      "name": "mentor",
+      "potions_used": 0.72,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.04,
+      "value": 0.9348,
+      "win_rate": 0.9062
+     }
+    ],
+    "round": 1
+   },
+   "snapshots": 32,
+   "versus_default": {},
+   "versus_mentor": {
+    "fights": 32,
+    "hp_end": -2.6875,
+    "hp_end_se": 1.8754,
+    "value": 0.0013,
+    "value_se": 0.0079,
+    "won": 0.0,
+    "won_se": 0.0
+   }
+  },
+  "versus_mentor": {
+   "by_tier": {
+    "Elite": {
+     "arm": {
+      "decisions": 23.4,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 29.34,
+      "hp_lost": 22.94,
+      "potions_used": 0.41,
+      "race_changed_per_fight": 4.06,
+      "seconds_per_decision": 0.475,
+      "value": 0.924,
+      "win_rate": 0.9062
+     },
+     "fights": 32,
+     "hp_end": -1.5312,
+     "hp_end_se": 1.8244,
+     "mentor": {
+      "decisions": 22.2,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 30.88,
+      "hp_lost": 21.41,
+      "potions_used": 0.72,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.121,
+      "value": 0.9198,
+      "win_rate": 0.9062
+     },
+     "value": 0.0042,
+     "value_se": 0.0069,
+     "won": 0.0,
+     "won_se": 0.0
+    },
+    "Normal": {
+     "arm": {
+      "decisions": 21.2,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 32.41,
+      "hp_lost": 7.12,
+      "potions_used": 0.16,
+      "race_changed_per_fight": 3.44,
+      "seconds_per_decision": 0.462,
+      "value": 1.1493,
+      "win_rate": 1.0
+     },
+     "fights": 32,
+     "hp_end": 0.5938,
+     "hp_end_se": 0.8612,
+     "mentor": {
+      "decisions": 18.0,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 31.81,
+      "hp_lost": 7.72,
+      "potions_used": 0.47,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.106,
+      "value": 1.1374,
+      "win_rate": 1.0
+     },
+     "value": 0.0119,
+     "value_se": 0.0054,
+     "won": 0.0,
+     "won_se": 0.0
+    }
+   },
+   "kind": "simulator; the pilot arm minus Mentor's search on the same fights"
+  },
+  "win_odds": {
+   "arm": "pilot",
+   "by_group": {
+    "other": {
+     "above_ironclad_line": {
+      "allowed": 0.22,
+      "fights_worth": 70.0,
+      "in_lost_fights": 0.0
+     },
+     "fights": 112,
+     "fit": [
+      1.721,
+      1.215
+     ],
+     "hold_line": 0.965,
+     "ironclad_line": 0.9,
+     "kept": false,
+     "lost": 14
+    }
+   },
+   "kind": "simulator; every decision's share of won playouts against the fight's outcome, each fight weighing the same, fight starts entered at full and at half HP; a fit is kept only when these fights show Ironclad's potion hold line to be unsafe for the character and the fit is the more cautious"
+  }
+ },
+ "knobs": {
+  "Elite": {}
+ },
+ "win_odds": {}
+}

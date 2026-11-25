@@ -246,6 +246,49 @@ def playouts_for(tier) -> int:
 # took about two hours a boss on sixteen threads for Ironclad and chose the default 24 times of 24. The
 # fight starts for it are kept (``snapshots_<character>.json``, acts 1 and 2 only) and ``tune --character``
 # does it. ``tuned/<CHARACTER>/_character.json`` holds what was compared for each character.
+# Game build v0.111. Everything above was measured on v0.107.1. On v0.111 it was measured again for all five
+# characters, the Ironclad among them: this build has no logged fights, so every fight start comes from simulated
+# A10 runs (120 a character, acts 1 and 2; ``builds/v0.111.0/snapshots*.json``). 2026-11-25, Spire Mentor 0.11.8's
+# simulator, fingerprint b3df13b15b37b75e, no live fight. 32 elite and 32 hallway starts a character and the
+# Ironclad's 24 boss starts, the pilot at these defaults against Mentor's search on the same fights; the elite and
+# hallway starts again from half HP; the knobs on the elite starts. What it showed:
+#   - Wins: level with Mentor's search within noise. Elites -1.9 +-1.7 points over 160 fights (the Ironclad and
+#     the Silent two fights behind, the Regent one, the Defect two ahead, the Necrobinder level), hallway fights
+#     -0.6 +-0.6 (one fight of 160), the Ironclad's bosses -4.2 +-4.2 (one of 24). The five fights only the pilot
+#     lost were won by Mentor's search with 3 to 9 HP left, and in none of them did the pilot hold an unused
+#     potion. From half HP, 64 elite fights of the Ironclad and the Silent were won 75.0% by both.
+#   - HP and potions: the hold kept 0.48 +-0.05 potions an elite for 3.3 +-0.8 HP (6.9 HP per potion kept) and
+#     0.36 +-0.04 a hallway fight for 1.5 +-0.5 HP (4.2 per potion); 7.9 and 5.7 HP per potion on v0.107.1.
+#   - The pilot's parts alone, on those 64 contested elites: the race at Mentor's budget won 70.3% (-4.7 +-2.7
+#     points, three fights) and the pilot's budget with the engine's own pick 73.4% (-1.6 +-2.7). Neither part is
+#     ahead alone and neither is behind beyond noise; together they were level.
+#   - The win chance: the reading above (fitted on v0.107.1) is safe for every character here. Of the decisions it
+#     read as safe, 70 to 88 fights' worth a character, at most 0.05 of a fight's worth sat in a lost fight (the
+#     line allows 0.22 to 0.28). The fits these fights give would hold potions above a share of 0.867 (Ironclad),
+#     0.967 (Silent), 0.991 (Defect), 0.883 (Regent) and 0.965 (Necrobinder), where the reading holds them above
+#     0.900: a hundred fights do not place that line, so no character has a reading of its own.
+#   - The knobs (the engine's own pick, three playouts a leaf, dominance pruning; 32 elite starts a character at
+#     Mentor's thinking time): the default stayed for all five. The candidates' values lay within 0.007 of the
+#     default for the Ironclad, the Silent and the Necrobinder; for the Defect and the Regent the engine's own
+#     pick was 0.068 below and 0.003 above it, and three playouts a leaf 0.066 below it for the Regent.
+# So v0.111 fights with the same defaults, and ``builds/v0.111.0/tuned/<CHARACTER>/_character.json`` (the
+# Ironclad's is ``builds/v0.111.0/tuned/_character.json``) holds what was compared. Not done on v0.111: tuning
+# per encounter (the Ironclad's v0.107.1 files are not used here), boss fight starts of the other four
+# characters, and fights beyond act 2.
+#
+# Spire Mentor 0.11 also fights with a policy net of its own ("Instinct") where it plays the character and
+# the game build, and that is what plays the fights when the pilot is not installed. It was set against both
+# searches on the same fights: Instinct played 16 A10 runs through act 2 (three or four a character, all 16
+# beat both bosses), and at the start of every elite and boss fight and every fourth hallway fight the run's
+# combat state was copied and fought by Mentor's search and by the pilot. Over the 103 elite and boss fights:
+#     Instinct          won 100%    HP at the end 41.9   potions used 0.55
+#     Mentor's search   won 99.0%   HP at the end 42.3   potions used 1.37
+#     the pilot         won 99.0%   HP at the end 39.1   potions used 0.53
+# Instinct ended level with Mentor's search in HP (-0.5 +-1.0) on 0.82 +-0.07 fewer potions a fight, and 2.7
+# +-1.3 HP above the pilot on the same number of potions (+0.02 +-0.09). It spends them elsewhere: 0.59 an elite
+# and 0.47 a boss, where the pilot spends 0.23 and 1.22 (it ended elites 7.2 +-1.2 HP above the pilot and bosses
+# 7.1 +-2.3 below). These are the decks Instinct drafts for itself, which won nearly every fight under any of
+# the three; decks a model drafts were not tested, and neither was a whole run fought by the pilot.
 @dataclass(frozen=True)
 class CharacterTuning:
     """What was fitted for one character as a whole; empty for Ironclad, whose numbers are this module's own."""

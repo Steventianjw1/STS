@@ -133,6 +133,9 @@ pilot = false                     # true: the agent's own combat search (src/sts
                                   # potions for fights in doubt. Above 80% estimated drop chance, it considers
                                   # spending one early in hallways and elites before applying the usual hold rule.
                                   # Needs `python tools/fetch_mentor_source.py` once; applies from the next fight.
+                                  # With Spire Mentor 0.11 (game v0.111), false means Mentor fights with its own policy
+                                  # net ("Instinct") where it plays the character; true replaces that with the agent's
+                                  # search. In simulated v0.111 fights the two won alike (src/sts_agent/pilot/profiles.py).
 # pilot_source = "data/mentor_source"
 
 # Interface (`./start` or `sts-agent ui`). One window holds the game and the panels around it: control bar
