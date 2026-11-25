@@ -145,6 +145,7 @@ class RunCoordinator:
     def __init__(self, client, policy: LLMDecisionPolicy, *, planner=None, recorder=None, expert_stats=None, autobattle=None,
                  own_pilot: bool = False, offer_handoff: bool = False, limits: Limits | None = None, scope: str = "run", run_id: str, run_id_source: str,
                  facts_source: str = "observed", objective: str, what_if_tools: bool = True,
+                 reward_routine: bool = True,
                  state_path=None, pilot_potion_context=None, clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep,
                  log: Callable[[str], None] = print, hooks: SessionHooks | None = None):
@@ -163,6 +164,11 @@ class RunCoordinator:
         self._selection_complete: str | None = None
         # The card named with the decision to smith, until the fire's upgrade grid opens: card and room.
         self._smith_plan: dict | None = None
+        # Card rewards of this room's rewards screen that were opened and skipped: the game keeps listing them.
+        self._skipped_card_rewards = 0
+        self.reward_routine = reward_routine         # collect rewards that need no judgment without a model call
+        self._relic_counters: dict = {}              # relic id -> last counter the game showed outside combat
+        self.treasures_opened = 0                    # treasure rooms entered this run
         self._handoff = False                        # True only while deciding a held offer
         self.whatif = WhatIfTools(self) if what_if_tools else None
         self.lim = limits or Limits()
@@ -188,6 +194,7 @@ class RunCoordinator:
         self.pending_combat_finished = False
         self.last_planner_result = None
         self.strat_route_key = None
+        self.strat_place = None                      # (act, floor) of the last planner refresh
         self.energy_observation: dict | None = None
         self.shop_entry: dict | None = None
         self.seq = 0
@@ -505,6 +512,14 @@ class RunCoordinator:
                 self._finish_combat(v, "victory")
             self.history, self.turn_intent, self.incoming_changes = [], None, []
             self.encounter_key = key
+            self._skipped_card_rewards = 0
+            if v.kind == "treasure":
+                self.treasures_opened += 1
+        if not v.in_combat and not self._fight_overlay(v):
+            # Outside fights only: a counter some relics show during a fight alone is not a count of uses.
+            for r in v.facts.get("relics") or []:
+                if r.get("id") and type(r.get("counter")) is int:
+                    self._relic_counters[str(r["id"])] = r["counter"]
         if v.in_combat:
             self.seen_combat = True
             if self.combat is None or self.combat.key != v.encounter_key:
@@ -521,6 +536,94 @@ class RunCoordinator:
             self._rest_checkpoint(v)
         elif v.kind == "rewards":
             self._note_potion_drop(v)
+
+    def _counter_note(self, relic: dict) -> str | None:
+        """What a relic's vanished counter means, as an observation; None while it shows one or never did."""
+        last = self._relic_counters.get(str(relic.get("id")))
+        if last is None or relic.get("counter") is not None:
+            return None
+        return (f"OBSERVED: this relic showed a counter earlier in the run (last seen {last}) and shows none now. "
+                "For an effect its text limits to a number of uses, those uses are spent.")
+
+    def _reward_routine(self, v: ScreenView) -> tuple | None:
+        """(candidate, reason) for the next step on a rewards screen that needs no judgment, else None.
+
+        Gold, relics and a potion with a free slot cost nothing to take, and opening a card reward only
+        shows its cards. Relics go before potions so a relic that adds slots counts. A card reward that
+        was opened and skipped stays in the game's list; it is never opened again. What is left for the
+        model is a potion with a full belt and reward kinds that are a choice in themselves."""
+        if v.kind != "rewards" or not v.ready or v.unsupported or v.terminal:
+            return None
+        details = v.facts.get("screen_details") or {}
+        items = details.get("items") or []
+        if any(x.get("index") is None for x in items):
+            return None
+        by_id = {c["action_id"]: c for c in v.candidates}
+
+        def claim(x):
+            return by_id.get(f"reward_{x['index']}")
+        for kind, why in (("gold", "Gold costs nothing to take."), ("relic", "A reward relic costs nothing to take.")):
+            x = next((x for x in items if x.get("type") == kind and claim(x)), None)
+            if x:
+                return claim(x), why
+        held, slots = v.facts.get("potions"), v.facts.get("max_potion_slots")
+        x = next((x for x in items if x.get("type") == "potion" and claim(x)), None)
+        if x and isinstance(held, list) and type(slots) is int and len(held) < slots:
+            return claim(x), "A potion slot is free."
+        cards = [x for x in items if x.get("type") == "card" and claim(x)]
+        if len(cards) > self._skipped_card_rewards:
+            return claim(cards[self._skipped_card_rewards]), "Opening a card reward only shows its cards."
+        if (cards and len(cards) == len(items) and details.get("can_proceed") is True and "proceed" in by_id):
+            return by_id["proceed"], "The card reward left here was already seen and skipped."
+        return None
+
+    def _balance_rejects(self, v: ScreenView) -> dict:
+        """Offered cards that would only add to a role the deck already holds too many of, by action_id.
+
+        They are withheld from the model at card rewards and shops: left to its judgment, nearly
+        every such card found a reason to be taken. A card reward keeps them unless it can be skipped."""
+        if (v.kind not in ("card_reward", "shop") or v.in_combat or self._handoff or self._fight_overlay(v)
+                or v.facts.get("combat_context")):
+            return {}
+        if v.kind == "card_reward" and not any(c["kind"] == "skip_card_reward" for c in v.candidates):
+            return {}
+        state = deck_balance.balance(v.facts.get("deck"))
+        if not state:
+            return {}
+        offers = deck_balance.offer_effects(state, [
+            (c["action_id"], c["details"]) for c in v.candidates
+            if c["kind"] == "select_card_reward"
+            or (c["kind"] == "shop_purchase" and c["details"].get("category") == "card")])
+        return {o["action_id"]: o for o in offers if o["effect"] == "worsens"}
+
+    def _hidden_candidates(self, v: ScreenView) -> dict:
+        """Candidates withheld from the model on this screen: action_id -> the limitation line that says why."""
+        hidden = {}
+        if v.kind == "rewards" and self._skipped_card_rewards:
+            cards = [c for c in v.candidates if c["kind"] == "claim_reward" and c["details"].get("type") == "card"]
+            for c in cards[:self._skipped_card_rewards]:
+                hidden[c["action_id"]] = ("A card reward listed on this screen is not offered: you already opened it "
+                                          "here and skipped its cards.")
+        rejects = self._balance_rejects(v)
+        if rejects:
+            line = ("Not offered, because each adds only to a role this deck already holds too many of "
+                    "(current_facts.deck_balance): "
+                    + "; ".join(f"{o['name']} ({', '.join(o['adds_to_over_supplied'])})" for o in rejects.values()) + ".")
+            hidden.update({aid: line for aid in rejects})
+        return hidden
+
+    def _balance_skip(self, v: ScreenView) -> tuple | None:
+        """(skip candidate, reason) when every card of a card reward breaks the deck's balance."""
+        if v.kind != "card_reward" or not v.ready:
+            return None
+        cards = [c for c in v.candidates if c["kind"] == "select_card_reward"]
+        rejects = self._balance_rejects(v)
+        if not cards or any(c["action_id"] not in rejects for c in cards):
+            return None
+        skip = next(c for c in v.candidates if c["kind"] == "skip_card_reward")
+        return skip, ("Every offered card adds only to a role the deck already holds too many of: "
+                      + "; ".join(f"{o['name']} ({', '.join(o['adds_to_over_supplied'])})".replace("_", " ")
+                                  for o in rejects.values()) + ".")
 
     def _note_potion_drop(self, v: ScreenView):
         """Whether the fight just won dropped a potion, read from its first rewards screen (the drop counter)."""
@@ -756,8 +859,11 @@ class RunCoordinator:
             for r in f["relics"]:
                 rid = r.get("id") or r.get("name") or "UNKNOWN"
                 seen[rid] = seen.get(rid, 0) + 1
+                spent = self._counter_note(r)
                 items.append({"id": rid if seen[rid] == 1 else f"{rid}#{seen[rid]}", "name": r.get("name") or rid,
-                              "description": _clip(r.get("description")), "counter": r.get("counter")})
+                              "description": _clip((r.get("description") or "") + (f" [{spent}]" if spent else ""))
+                              if spent or r.get("description") is not None else None,
+                              "counter": r.get("counter")})
             relics = {"items": items}
         potions = None
         if f.get("potions") is not None:
@@ -851,8 +957,13 @@ class RunCoordinator:
             return
         if (v.in_combat or self._fight_overlay(v) or self._handoff) and self.strat_revision > 0:
             return  # ordinary card plays never trigger a refresh; refresh after the combat ends
-        if (self.planner.assessment is not None and self.strat_facts is not None
-                and v.kind in ("rewards", "card_reward", "card_select")
+        details = v.facts.get("screen_details") or {}
+        can_wait = (v.kind in ("rewards", "card_reward", "card_select", "treasure", "rest_site")
+                    # an ancient opens the act and plans its route; any other event is one bounded choice
+                    or (v.kind == "event" and details.get("is_ancient") is not True)
+                    # a map with one way on decides no route (at most how to use the fire it leads to)
+                    or (v.kind == "map" and sum(c["kind"] == "choose_map_node" for c in v.candidates) == 1))
+        if (self.planner.assessment is not None and self.strat_facts is not None and can_wait
                 and (v.facts.get("run") or {}).get("character") == self.strat_facts["run"]["character"]
                 and (v.facts.get("run") or {}).get("act") == self.strat_facts["run"]["act"]):
             # Fold the fight outcome, reward claims and drafted/changed cards into
@@ -860,6 +971,13 @@ class RunCoordinator:
             # pending outcome so the refresh still sees every accumulated change.
             return
         facts = self._strategic_facts(v)
+        place = (facts["run"]["act"], facts["run"]["floor"])
+        if (self.strat_revision > 0 and not self.pending_combat_finished and self.strat_facts is not None
+                and self.planner.assessment is not None and place == self.strat_place and None not in place
+                and facts["deck"] == self.strat_facts["deck"]):
+            # One plan per floor while the deck is unchanged: the plan made before this floor's
+            # choice (an ancient's relic above all) already weighed it, and the frame shows the result.
+            return
         route_key = ((facts["run"]["act"], facts["run"]["floor"],
                       tuple((c["details"].get("col"), c["details"].get("row"))
                             for c in v.candidates if c["kind"] == "choose_map_node"))
@@ -897,6 +1015,7 @@ class RunCoordinator:
         self.hooks.strategy(result, list(reasons))
         self.last_planner_result = result
         self.strat_facts, self.pending_combat_finished = facts, False
+        self.strat_place = place
         if route_key is not None:
             self.strat_route_key = route_key
         if result.model_called:
@@ -929,7 +1048,7 @@ class RunCoordinator:
                 status = "current"
             else:
                 status = "reused_between_refreshes"
-                base["note"] = ("Full refresh deferred through reward collection and card pickers. Current facts, "
+                base["note"] = ("Full refresh deferred until the next route, shop or act-opening choice. Current facts, "
                                 "recent fight outcomes and candidates override old deck, relics, HP, gold, potions "
                                 "and opportunities; assess newly revealed offers directly and revise the plan if needed.")
         else:
@@ -947,6 +1066,11 @@ class RunCoordinator:
         lims = list(v.limitations)
         if blocked:
             lims.append(f"Not offered because the game rejected them in this exact state: {blocked}")
+        hidden = self._hidden_candidates(v)
+        if hidden:
+            cands = [c for c in cands if c["action_id"] not in hidden
+                     and not any(aid in hidden for aid in v.bindings[c["action_id"]].get("steps", []))]
+            lims.extend(sorted(set(hidden.values())))
         cap = CAPABILITIES.get(v.kind, {})
         overlay = self._fight_overlay(v) or self._handoff
         boss = None if v.in_combat or overlay else self._act_boss(v)
@@ -961,7 +1085,16 @@ class RunCoordinator:
             self.last_progress += self.clock() - started  # evidence latency is not a game stall
             self._note_support(v, support)
             self.hooks.evidence(v.kind, support)
+            if hidden and isinstance(support, dict) and isinstance(support.get("options"), list):
+                support = {**support, "options": [o for o in support["options"]
+                                                  if not isinstance(o, dict) or o.get("action_id") not in hidden]}
         facts = v.facts
+        notes = {str(r.get("id")): self._counter_note(r) for r in facts.get("relics") or []}
+        if any(notes.values()):
+            facts = {**facts, "relics": [{**r, "counter_note": notes[str(r.get("id"))]}
+                                         if notes.get(str(r.get("id"))) else r for r in facts["relics"]]}
+        if self.treasures_opened and not v.in_combat and not overlay:
+            facts = {**facts, "run_progress": {"treasure_chests_opened_this_run": self.treasures_opened}}
         if self.pending_combat_finished:
             facts = {**facts, "recent_combat_outcomes": {
                 "label": "Observed fight results since the plan may have last been refreshed.",
@@ -980,7 +1113,11 @@ class RunCoordinator:
             if self.shop_entry is None or self.shop_entry["encounter_key"] != v.encounter_key:
                 self.shop_entry = {"encounter_key": v.encounter_key,
                                    "gold": (v.facts.get("player") or {}).get("gold")}
-            support = {**(support or {}), "shop_budget": _shop_packages(v, self.shop_entry["gold"])}
+            support = {**(support or {}), "shop_budget": _shop_packages(v, self.shop_entry["gold"], hidden)}
+        if v.kind == "map":
+            spending = _spending_outlook(v, support)
+            if spending:
+                support = {**(support or {}), "spending": spending}
         if boss:   # every screen between fights, the map included
             facts = {**facts, "act_boss": boss}
         if v.kind in _DECK_CHOICE_KINDS and not v.in_combat and not overlay:
@@ -1077,13 +1214,21 @@ class RunCoordinator:
         smith = self._smith_target(v)
         if cand is None:
             cand = smith
+        # Reward collection and a card reward whose every card breaks the deck's balance are not judgments.
+        routine = None
+        if cand is None and not self._handoff:
+            for source, found in (("reward_routine", self._reward_routine(v) if self.reward_routine else None),
+                                  ("deck_balance", self._balance_skip(v))):
+                if found and (v.fingerprint, found[0]["action_id"]) not in self.stats.blocked:
+                    routine, cand = (source, found[1]), found[0]
+                    break
         if cand is not None:
             aid = cand["action_id"]
             if (v.fingerprint, aid) in self.stats.blocked:
                 raise _Stop(STOP_REPEATED_REJECTIONS, "forced progress action was rejected in this state", v)
-            source = ("smith_plan" if cand is smith else
+            source = (routine[0] if routine else "smith_plan" if cand is smith else
                       "single_map_destination" if v.kind == "map" else "forced_progress")
-            reason = ("Chosen together with the decision to smith." if cand is smith
+            reason = (routine[1] if routine else "Chosen together with the decision to smith." if cand is smith
                       else "Only one map destination is available." if v.kind == "map"
                       else "Confirm the selected cards." if v.kind == "card_select" and
                       v.facts["screen_details"].get("preview_showing")
@@ -1148,20 +1293,28 @@ class RunCoordinator:
         cand = frame.candidate(ch.action_id)
         binding = frame.bindings[ch.action_id]
         self.turn_intent = ch.turn_intent or None
+        previous_plan, stale_before = self.route_plan, self.stats.stale
         if ch.route_plan is not None:   # a map screen, or an ancient that planned the act with its choice
             self.route_plan = _stored_route_plan(ch.route_plan, frame, v, len(self.route_outcomes))
             self._publish_route()
         self.log(f"[{seq}] {v.kind}: {cand['description']} - {ch.reason}")
         self.hooks.decision(seq, v.kind, cand["description"], ch.reason, ch.turn_intent or "", result.source)
 
-        if v.kind == "map" and is_rest_destination(cand) and ch.rest_option is not None:
-            return self._execute_rest_plan(seq, cand, ch, binding, v)
-        elif v.kind == "shop" and ch.shop_plan is not None:
-            self._execute_shop_plan(seq, ch, frame, v)
-        elif cand["kind"] == "reward_batch":
-            self._execute_reward_batch(seq, ch, binding, v)
-        else:
-            return self._execute_action(seq, cand, ch, binding, v)
+        try:
+            if v.kind == "map" and is_rest_destination(cand) and ch.rest_option is not None:
+                return self._execute_rest_plan(seq, cand, ch, binding, v)
+            elif v.kind == "shop" and ch.shop_plan is not None:
+                self._execute_shop_plan(seq, ch, frame, v)
+            elif cand["kind"] == "reward_batch":
+                self._execute_reward_batch(seq, ch, binding, v)
+            else:
+                return self._execute_action(seq, cand, ch, binding, v)
+        finally:
+            if ch.route_plan is not None and self.stats.stale > stale_before:
+                # The choice was made for a screen that had already changed and was never sent:
+                # its route is not the one being travelled, so the plan before it stands.
+                self.route_plan = previous_plan
+                self._publish_route()
 
     def _smith_target(self, v: ScreenView) -> dict | None:
         """The upgrade grid's card that was named with the decision to smith, or None.
@@ -1382,7 +1535,7 @@ class RunCoordinator:
                 raise _Stop(STOP_REPEATED_REJECTIONS, f"last: {resp.error}", fresh)
             return
         self.stats.consecutive_rejections = 0
-        post, verdict = self._wait_resolution(fresh, binding["resolution"])
+        post, verdict = self._wait_resolution(fresh, binding["resolution"], travel=cand["kind"] == "choose_map_node")
         self._outcome(seq, verdict, resp.to_record(), post, "", t0=t0)
         if verdict in ("no_visible_change", "timeout_after_change"):
             raise _Stop(STOP_UNRESOLVED_ACTION, f"{ch.action_id} accepted but did not resolve ({verdict})", post)
@@ -1399,6 +1552,8 @@ class RunCoordinator:
                 self._selection_complete = post.fingerprint   # the next decision on this exact grid is Confirm
         if cand["kind"] == "use_potion" and self.combat:
             self.combat.potions_used += 1
+        if cand["kind"] == "skip_card_reward" and post.kind == "rewards" and not self._fight_overlay(pre):
+            self._skipped_card_rewards += 1
         if cand["kind"] == "choose_rest_option" and cand["details"].get("id") == SMITH and ch.smith_card:
             self._smith_plan = {"card": ch.smith_card, "encounter_key": post.encounter_key}
         if cand["kind"] == "choose_map_node" and self.map_memory is not None:
@@ -1417,7 +1572,7 @@ class RunCoordinator:
         self.stats.ambiguous += 1
         if self.rec:
             self.rec.error("ambiguous_action_response", {"seq": seq, "error": str(err)[:300]})
-        post, verdict = self._wait_resolution(pre, binding["resolution"])
+        post, verdict = self._wait_resolution(pre, binding["resolution"], travel=cand["kind"] == "choose_map_node")
         if post.fingerprint != pre.fingerprint:
             self._outcome(seq, "ambiguous_inferred_executed", {"error": str(err)[:300]}, post, verdict, t0=t0)
             if verdict == "timeout_after_change":
@@ -1428,11 +1583,15 @@ class RunCoordinator:
                       "no visible change; request may still be pending", t0=t0)
         raise _Stop(STOP_AMBIGUOUS_UNRESOLVED, "request outcome unknown and no visible change; not resending", post)
 
-    def _wait_resolution(self, pre: ScreenView, resolution: str) -> tuple[ScreenView, str]:
+    def _wait_resolution(self, pre: ScreenView, resolution: str, *, travel: bool = False) -> tuple[ScreenView, str]:
+        """``travel``: the action moved to a map node. While the move plays, the game still shows the
+        map of the floor being left, ready and without the chosen node; that is not the next screen."""
         timeout = (self.lim.end_turn_resolution_timeout_s if resolution == "end_turn"
                    else self.lim.play_resolution_timeout_s)
         deadline = self.clock() + timeout
         changed, stable, prev, last = False, 0, None, pre
+        leaving = (lambda v: travel and pre.kind == "map" and v.kind == "map"
+                   and v.facts.get("run") == pre.facts.get("run"))
         while True:
             v = self._observe_tolerant("resolve", deadline)
             if v is not None:
@@ -1448,11 +1607,13 @@ class RunCoordinator:
                                 or v.combat_round > pre.combat_round)
                     if self._handoff and v.kind != pre.kind:
                         return v, "resolved"   # the picker closed; Mentor is already playing the fight on
-                    if stable >= self.lim.settle_polls and done:
+                    if stable >= self.lim.settle_polls and done and not leaving(v):
                         return v, "resolved"
             if self.clock() >= deadline:
                 if not changed and resolution == "toggle":
                     return last, "accepted_unobservable"  # API does not expose grid selection state
+                if changed and leaving(last) and last.ready:
+                    return last, "resolved"   # still that map after the full wait: decide on it, as before
                 return last, "timeout_after_change" if changed else "no_visible_change"
             self.sleep(self.lim.poll_interval_s)
 
@@ -1500,6 +1661,8 @@ class RunCoordinator:
                 "last_combat_facts": self.last_combat_facts,
                 "energy_observation": self.energy_observation, "shop_entry": self.shop_entry,
                 "map_memory": self.map_memory,
+                "skipped_card_rewards": self._skipped_card_rewards, "relic_counters": self._relic_counters,
+                "treasures_opened": self.treasures_opened,
                 "combat": None if c is None else {"key": c.key, "encounter_type": c.encounter_type,
                                                   "start_hp": c.start_hp, "rounds": c.rounds,
                                                   "potions_used": c.potions_used, "act": c.act, "floor": c.floor,
@@ -1555,11 +1718,15 @@ class RunCoordinator:
         self.rest_checkpoints = list(st.get("rest_checkpoints") or [])
         self.coverage = st.get("coverage") or {}
         self._coverage_seen = {tuple(k) for k in st.get("coverage_seen") or []}
+        self._relic_counters = {**{str(k): n for k, n in (st.get("relic_counters") or {}).items() if type(n) is int},
+                                **self._relic_counters}
+        self.treasures_opened = max(self.treasures_opened, st.get("treasures_opened") or 0)
         same_place = here == saved
         c = st.get("combat")
         # Encounter memory only continues inside the very same room.
         if same_place and st.get("encounter_key") in (v.encounter_key, (c or {}).get("key")):
             self.encounter_key = st["encounter_key"]
+            self._skipped_card_rewards = st.get("skipped_card_rewards") or 0
             self.history = list(st.get("history") or [])[-8:]
             self.turn_intent = st.get("turn_intent")
             self.incoming_changes = list(st.get("incoming_changes") or [])
@@ -1744,7 +1911,44 @@ def _card_zone_constraints(view: ScreenView) -> dict | None:
                           "Unlisted interactions remain unknown; inspect their text."}
 
 
-def _shop_packages(view: ScreenView, entry_gold) -> dict:
+def _spending_outlook(view: ScreenView, support) -> dict | None:
+    """Gold in hand and empty potion slots against the shops each offered route passes.
+
+    The route projections count HP only: a path through a shop loses the gold it is expected to
+    spend there and gains nothing for what the gold buys. This states that side in plain numbers."""
+    player = view.facts.get("player") or {}
+    gold, slots, held = player.get("gold"), view.facts.get("max_potion_slots"), view.facts.get("potions")
+    if type(gold) is not int:
+        return None
+    support = support if isinstance(support, dict) else {}
+    paths = [p for p in (support.get("paths") or {}).get("candidates") or [] if isinstance(p, dict)]
+    spend = ((support.get("hp_risk") or {}).get("shop_spend") or {}).get("mean")
+    by_opening = {}
+    for p in paths:
+        aid, nodes = p.get("first_action_id"), p.get("nodes") or []
+        if not aid:
+            continue
+        row = by_opening.setdefault(aid, {"action_id": aid, "paths_listed": 0, "paths_with_a_shop": 0,
+                                          "rooms_to_first_shop": None})
+        row["paths_listed"] += 1
+        if "shop" in nodes:
+            row["paths_with_a_shop"] += 1
+            first = nodes.index("shop") + 1
+            row["rooms_to_first_shop"] = first if row["rooms_to_first_shop"] is None else min(first, row["rooms_to_first_shop"])
+    free = slots - len(held) if type(slots) is int and isinstance(held, list) else None
+    visits = round(gold / spend, 1) if type(spend) in (int, float) and spend > 0 else None
+    return {
+        "label": "GOLD AND POTION SLOTS VS. THE SHOPS ON EACH OPENING; arithmetic on observed values, not a ranking",
+        "gold": gold, "pooled_spend_per_shop_visit": spend, "gold_as_shop_visits": visits,
+        "potions_held": len(held) if isinstance(held, list) else None, "free_potion_slots": free,
+        "shops_by_opening": sorted(by_opening.values(), key=lambda r: r["action_id"]) or None,
+        "note": "Every HP projection here ignores what gold buys: a route through a shop is charged the gold and "
+                "credited nothing for the potions, removal, relic or card it turns into. Gold still held at the act "
+                "boss did nothing in any fight of the act. paths_with_a_shop counts only the listed non-dominated "
+                "routes; null shops_by_opening means no routes were listed."}
+
+
+def _shop_packages(view: ScreenView, entry_gold, hidden=()) -> dict:
     """Partial basket comparisons; shop_plan can select any feasible offered sequence."""
     gold = (view.facts.get("player") or {}).get("gold")
     result = {"entry_gold": entry_gold, "current_gold": gold,
@@ -1755,7 +1959,7 @@ def _shop_packages(view: ScreenView, entry_gold) -> dict:
               "packages": [], "truncated": False}
     if type(gold) is not int:
         return result
-    items = [c for c in view.candidates if c["kind"] == "shop_purchase"
+    items = [c for c in view.candidates if c["kind"] == "shop_purchase" and c["action_id"] not in hidden
              and type(c["details"].get("price")) is int and c["details"]["price"] >= 0]
     slots = view.facts.get("max_potion_slots")
     free_slots = max(0, slots - len(view.facts.get("potions") or [])) if type(slots) is int else None

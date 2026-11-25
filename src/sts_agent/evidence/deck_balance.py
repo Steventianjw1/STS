@@ -21,6 +21,7 @@ ROLES = FRONT + SCALING
 FRONT_MIN, FRONT_LEAD = 4, 2
 SCALING_FULL = 2            # lasting sources of one kind of scaling beyond which another adds little
 MAX_NAMES = 10              # card names listed per role
+HAND = 5                    # cards drawn each turn, for the per-hand densities
 
 _MARKUP = re.compile(r"\[/?[A-Za-z_]+(?:[=:][^\]]*)?\]")
 _GAINS_BLOCK = re.compile(r"\bgains? (?:another )?(?:\d+ )?(?:additional )?Block\b|\bdouble your Block\b", re.I)
@@ -115,6 +116,9 @@ def balance(deck) -> dict | None:
             names[role].append(label)
     status = _statuses(counts)
     sides = {"damage": counts["damage"] + counts["damage_scaling"], "block": counts["block"] + counts["block_scaling"]}
+    # How often the roles are drawn, starter cards included: counts alone hide a deck grown so large
+    # that its few Block cards rarely reach the hand.
+    per_hand = {role: round(HAND * (starter[role] + counts[role]) / size, 1) if size else None for role in FRONT}
     return {
         "label": "DECK BALANCE: the cards added beyond the starter, counted by what they do. Rules over card text, "
                  "not a strength score.",
@@ -124,6 +128,9 @@ def balance(deck) -> dict | None:
         "short": [r for r in ROLES if status[r] in ("missing", "short")],
         "over_supplied": [r for r in ROLES if status[r] in ("over_supplied", "full")],
         "lighter_side": None if sides["damage"] == sides["block"] else min(sides, key=sides.get),
+        "cards_per_hand": {"damage": per_hand["damage"], "block": per_hand["block"],
+                           "basis": f"expected cards of that role in a {HAND}-card hand, starter cards included: "
+                                    f"{HAND} x cards of the role / deck size"},
         "rules": RULES,
     }
 
@@ -169,6 +176,8 @@ def summary_text(state) -> str:
             f"card can hold two roles; relics and card quality are not weighed): {'; '.join(parts)}. Other added "
             f"cards (draw, energy, debuffs): {other['count']}. Starter cards still held: {start['damage']} attacks, "
             f"{start['block']} Block cards. Deck size {state['deck_size']}, of which "
-            f"{state['curses_and_statuses']} curses or statuses. Status rules: damage and Block are over-supplied "
+            f"{state['curses_and_statuses']} curses or statuses. In a 5-card hand that is on average "
+            f"{state['cards_per_hand']['damage']} damage cards and {state['cards_per_hand']['block']} Block cards, "
+            f"starter cards included. Status rules: damage and Block are over-supplied "
             f"at {FRONT_MIN} or more added cards and {FRONT_LEAD} or more ahead of the other; a scaling role is "
             f"covered by one lasting source and full at {SCALING_FULL}.")
