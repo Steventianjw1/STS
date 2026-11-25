@@ -11,7 +11,7 @@ rewards, counted by ``evidence.deck_balance``'s role rules). The build names com
 guides (builds guide and Defect tier list), which describe later patches.
 """
 
-PROMPT_VERSION = "defect-strategic-planner-prompt-3"
+PROMPT_VERSION = "defect-strategic-planner-prompt-2"
 
 DECK_GUIDANCE = """\
 THE DEFECT'S DECK. The Defect wins with several builds and usually with a mix of them, so judge the deck by what it does this fight, not by an archetype. What the mix looks like is known. In 133 solo A10 runs on this game version by the highest-rated Spire Codex players (96 won), the deck entering the act 1, 2 and 3 bosses held about 19, 27 and 35 cards, with as many Block cards as damage cards (four, seven and nine of each), 1.4, 2.3 and 2.9 cards that Channel Frost, and one Focus source from act 2. It is not kept thin: they took 89% of the card rewards in act 1, 73% in act 2 and 62% in act 3, as often with a large deck as with a small one.

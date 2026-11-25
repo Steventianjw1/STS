@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import json
 
+from ..game import builds
 from .characters import strategy_for
 from .models import DIMENSIONS, PLAN_LISTS, PLAN_TEXTS, StrategicAssessment, StrategicSnapshot
 
-PROMPT_VERSION = "strategic-planner-prompt-16"
+PROMPT_VERSION = "strategic-planner-prompt-15"
 _FACTS_STABLE_FIRST = ("deck", "relics", "glossary", "potions", "resources", "run", "recent_outcomes", "opportunities")
 
 _BEHAVIOR = """\
@@ -32,17 +33,20 @@ standing_plan is the maintained plan every later reward, shop, rest, event and r
 
 BUILD THE DECK FOR THIS ACT'S BOSS. An "act_boss:" opportunity whose id ends in ":deck" lists what that boss fight asks of the deck: each need in brackets, the kind of card that supplies it, and why: the reference data a rule read or, where it says "Owner's guidance", what the person running this agent knows about the fight and the data omits. That guidance outranks your own reading of the boss. Different bosses ask for different decks (for example attacks that hit several times against a boss that loses only 1 HP to the next hit, cards that Exhaust other cards against a boss that fills the piles with Status cards, attacks that hit ALL enemies against a boss fought as several monsters), so the plan for the act starts from this entry, from the first reward of the act and not in the last rooms before the boss. For every listed need, check the deck: when cards already supply it, name them in boss_prep; when none does, put the need in deck_needs with the boss named, ordered with the other needs by how soon each is tested, and write skip_rule so that an offered card supplying an uncovered boss need passes even when it is not otherwise the strongest offer. Put under avoid what that boss blunts (for example leaning on debuffs against a boss that negates them, or on Skills against one that grows stronger with each Skill played). boss_prep ends with which needs are covered and which are still open. Where a need offers two answers (EITHER ... OR ...), choose the one the current deck is already closer to, name it in boss_prep, and plan deck_needs and avoid for that answer only. The needs ignore relics and potions: set one aside only by naming what in the deck or relics already answers it. When current_facts.run.act changes, drop the previous boss's needs and rebuild from the new boss's entry."""
 
-# How a strong player reasons from one screen to the next, taken from narrated A10 runs: what limits the deck
-# now, when a payoff may be held before its enabler, and the boss fight as a sequence. Reasons, not rates.
-_BEHAVIOR += """
-
+# Game build v0.111 only: how a strong player reasons from one screen to the next, from notes on three narrated
+# A10 runs by one player (the Defect and the Necrobinder on v0.111.0, the Silent on v0.110.1). What limits the deck
+# now, when a payoff may be held before its enabler, the boss fight as a sequence. Reasons, not rates, and
+# nothing measured changes. The saved v0.107.1 version keeps its planner prompt as it was.
+_JUDGMENT = """\
 NAME THE LIMIT, AND KEEP THE REASONS. At any moment one thing holds the run back more than the rest: damage in the next fights, Block in the next fights, growth for the act boss, finding the cards that matter (draw, and the weak cards in their way), the energy to play them, or HP. Say which it is in summary and make it the first deck_needs entry; the other needs follow in the order they will be tested. The limit moves. Once damage or scaling is covered it is usually finding and paying for what the deck holds, or HP, and a plan that keeps asking for what is now covered makes the deck worse. Work it out again at every revision from the deck, the relics and the last fights, not from the previous plan. Every standing_plan entry rests on a reason that a change can take away: after a removal, a relic, an upgrade or a change in energy, rank upgrade_targets and removal_targets again instead of carrying them over. An upgrade that does little in a large deck becomes the first target once removals let that card be drawn in every pass; a card that has been upgraded, or that a held card or relic now improves, stops being a removal target; a card that carried the early fights need not be the one to build around later. Name the reason in change_note.
 
 A PAYOFF HELD BEFORE ITS ENABLER. Do not plan around cards the deck has not been offered, with one exception that the plan must then track. A card that does little until another kind of card arrives is a bet. It is sound only when the payoff is large for the act boss or in every fight, the enabler is a kind of card this character is offered often and the deck wants anyway (the deck_balance entry or an existing need asks for it), the deck's Block and damage can carry a dead card through the fights before the next rest site, and the map ahead has rest sites, shops or potions to spare. While the deck holds such a card, its enabler is the first or second deck_needs entry with this act as its horizon, skip_rule passes the first card that supplies it, and avoid names a second copy of the payoff and any second card that waits for an enabler. When the act ends without the enabler, list the card under removal_targets. With low HP or a hard fight next, skip_rule asks for cards that work the turn they are drawn, and no such bet is advised.
 
 boss_prep IS A SEQUENCE, NOT A WISH FOR MORE SCALING. Write it in the order the fight runs: what the opening turns cost (the damage accepted while setting up, HP the deck or its relics spend), which cards must be in play early, what answers the boss's largest hit, what finally deals the damage, and what happens when the Block or the key card is drawn late. The HP to arrive with follows from the opening cost; state it, because the rest sites and the route before the boss exist to supply it.
 
-HP AND GOLD ARE BUDGETS. A deck that pays HP in every fight (cards or relics that cost HP, Powers put into play under attack) needs its rest sites for that: say so under immediate_threats and weigh it against upgrades. Gold kept has a use only when a named purchase is coming, a removal or a shop before the boss that could sell what the limit needs; otherwise it is there to fix the current limit, and a shop that sells nothing for a named problem is left with the gold. Inside the elite stance for this character and act, elites turn present strength into relics: advise more of them when the deck has just become stronger and the boss still asks for more, and fewer once this run's fights show the deck already handles the act and its boss, when rest sites and upgrades protect a winning position better, most of all in act 3."""
+HP AND GOLD ARE BUDGETS. A deck that pays HP in every fight (cards or relics that cost HP, Powers put into play under attack) needs its rest sites for that: say so under immediate_threats and weigh it against upgrades. Gold kept has a use only when a named purchase is coming, a removal or a shop before the boss that could sell what the limit needs; otherwise it is there to fix the current limit, and a shop that sells nothing for a named problem is left with the gold. Inside the elite stance for this character and act, elites turn present strength into relics: advise more of them when the deck has just become stronger and the boss still asks for more, and once this run's fights show the deck already handles the act and its boss, weigh one more elite against the rest sites and upgrades that protect a winning position. That is a judgment about the next elite, never a reason to plan none."""
+
+_BEHAVIOR_BY_BUILD = {"v0.111.0": _JUDGMENT}     # what a build's version adds to the shared behaviour
 
 _BALANCE = """\
 KEEP THE DECK BALANCED. This comes before every other deck-building consideration in standing_plan, the act boss's needs and the elite needs included. A deck that wins has four things at once and not too much of any one: damage, Block, something that makes its damage grow during a fight, and something that makes its Block grow or repeat. The opportunity with id "deck_balance" (not a choice on this screen) counts the cards added beyond the starter in each of those four roles by rules over their text, and gives each role a status: missing or short (the deck needs it), balanced or covered (it needs nothing more), over-supplied or full (another card of it would make the deck worse). It also names a phase and the roles to take first:
@@ -121,6 +125,8 @@ def system_instruction(*, character: str | None = None, combat_delegated: bool =
     """Build the selected character's strategy with the shared assessment contract."""
     strategy = strategy_for(character)
     behavior = [f"[{prompt_version_for(character)}]\n{_BEHAVIOR}"]
+    if builds.active().key in _BEHAVIOR_BY_BUILD:
+        behavior.append(_BEHAVIOR_BY_BUILD[builds.active().key])
     behavior.extend(text for text in (strategy.deck_guidance, strategy.elite_guidance) if text)
     if strategy.act_stance:
         behavior.append(_ELITES_BY_ACT)
