@@ -109,17 +109,18 @@ def is_potion_action(action) -> bool:
     return action.get("action") in ("drink_potion", "potion")
 
 
-def _hold(rows, tier) -> list:
+def _hold(rows, tier, character=None) -> list:
     """The drinks to keep back: every one, while the best other move wins the fight anyway.
 
-    Win chances are the fight's real ones (``profiles.win_chance``), not the search's own share of won
-    playouts. A row without a win chance is never held: the hold acts only on what the search measured.
+    Win chances are the fight's real ones (``profiles.win_chance``, read for the character playing), not
+    the search's own share of won playouts. A row without a win chance is never held: the hold acts only
+    on what the search measured.
     """
     others = [r for r in rows if not is_potion_action(r["action"])]
     if not others or len(others) == len(rows):
         return []
     ref = min(others, key=lambda r: r.get("pick_rank") if r.get("pick_rank") is not None else 1 << 30)
-    if ref.get("p_win") is None or win_chance(ref["p_win"], tier) < SAFE_WIN:
+    if ref.get("p_win") is None or win_chance(ref["p_win"], tier, character) < SAFE_WIN:
         return []
     return [r for r in rows if is_potion_action(r["action"]) and r.get("p_win") is not None]
 
@@ -202,13 +203,14 @@ def play_out(rs, state, action, world, sims, knobs) -> tuple:
 
 
 def decide(rs, state, profile: Profile, seed=0, carry=(None, None), tier=None, *,
-           drop_chance_pct: int | None = None, potion_used: bool = False) -> Decision:
+           drop_chance_pct: int | None = None, potion_used: bool = False, character=None) -> Decision:
     """Choose the action to play in ``state`` (an engine ``CombatState`` with a decision open).
 
     ``tier`` is the fight's ("Weak", "Normal", "Elite", "Boss"): it sets the rules a profile leaves
     open (whether potions are held, whether close moves are played out) and how the search's win
     chance reads as a real one. Without it no such rule applies. High drop odds waive the hold
-    until a potion has been used.
+    until a potion has been used. ``character`` (a game ID) reads the win chance by that
+    character's own fit; without it Ironclad's is used.
     """
     started = time.perf_counter()
     threads = max(1, min(profile.threads, CORES))
@@ -232,7 +234,7 @@ def decide(rs, state, profile: Profile, seed=0, carry=(None, None), tier=None, *
         hold_enabled = profile.hold_potions if profile.hold_potions is not None else holds_potions(tier)
         likely_replacement = drop_chance_pct is not None and drop_chance_pct > REPLACEMENT_DROP_PCT
         if hold_enabled and (potion_used or not likely_replacement):
-            held = _hold(rows, tier)
+            held = _hold(rows, tier, character)
             if held:
                 open_rows = [r for r in rows if all(r is not h for h in held)]
                 if any(best is h for h in held):
@@ -251,7 +253,7 @@ def decide(rs, state, profile: Profile, seed=0, carry=(None, None), tier=None, *
             crown(result, out.action, "pilot_choice", "of the cards the search holds equal, the least useful is given up")
         elif out.rule == "hold":
             crown(result, out.action, "pilot_hold", "the potion is kept: the fight is not in doubt without it")
-    out.win_chance = win_chance(out.p_win, tier) if out.p_win is not None else None
+    out.win_chance = win_chance(out.p_win, tier, character) if out.p_win is not None else None
     out.seconds = time.perf_counter() - started
     return out
 

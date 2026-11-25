@@ -8,15 +8,23 @@ deployed advisor and is the baseline every other profile is measured against. Pr
 tuned per encounter by ``sim.tune`` are kept in ``tuned/`` beside this file, one
 ``<ENCOUNTER_ID>.json`` each, and override the tier defaults. One file per encounter lets
 machines tune different encounters and merge their results through Git without a conflict.
+
+Everything above was measured with Ironclad, whose files sit in ``tuned/`` itself. The other four
+characters have a folder each, ``tuned/<CHARACTER>/``: per-encounter files of the same shape, and
+one ``_character.json`` with what was fitted for the character as a whole (``CharacterTuning``):
+the knobs of its tier defaults and how its search's share of won playouts reads as a win chance.
+The simulator plays each character's playouts with that character's own net, so that reading is
+not Ironclad's.
 """
 from __future__ import annotations
 
 import json
 import math
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 
 TUNED_DIR = Path(__file__).with_name("tuned")
+CHARACTER_FILE = "_character.json"      # in a character's folder: what was fitted for the character as a whole
 
 # What a fight's outcome is worth to the run. A win is 1 plus the engine's own worth of the HP it
 # keeps (full HP = 2/7); a loss ends the run.
@@ -167,9 +175,13 @@ def holds_potions(tier) -> bool:
 WIN_ODDS = {"Boss": (4.394, 1.568), None: (3.355, 1.087)}      # (intercept, slope) by tier; None = every other tier
 
 
-def win_chance(raw, tier=None) -> float:
-    """The chance the fight is won, for the search's own ``p_win`` in a fight of ``tier``."""
-    intercept, slope = WIN_ODDS.get(tier) or WIN_ODDS[None]
+def win_chance(raw, tier=None, character=None) -> float:
+    """The chance the fight is won, for the search's own ``p_win`` in a fight of ``tier``.
+
+    ``character`` (a game ID) reads it by that character's own fit when one was made for the tier.
+    """
+    odds = character_tuning(character).win_odds if character else {}
+    intercept, slope = odds.get("Boss" if tier == "Boss" else "other") or WIN_ODDS.get(tier) or WIN_ODDS[None]
     p = min(max(float(raw), 1e-3), 1 - 1e-3)        # the search reports 0 and 1 for none or all of its playouts
     return 1.0 / (1.0 + math.exp(-(intercept + slope * math.log(p / (1 - p)))))
 
@@ -192,18 +204,73 @@ def playouts_for(tier) -> int:
     return PLAYOUT_WORLDS.get(tier, 0)
 
 
-def default_profile(tier, act=None) -> Profile:
-    return DEFAULTS.get(tier) or DEFAULTS["Normal"]
+@dataclass(frozen=True)
+class CharacterTuning:
+    """What was fitted for one character as a whole; empty for Ironclad, whose numbers are this module's own."""
+    knobs: dict = field(default_factory=dict)       # tier -> Profile fields changed from that tier's default
+    win_odds: dict = field(default_factory=dict)    # "Boss" / "other" -> (intercept, slope) of ``win_chance``
+    evidence: dict = field(default_factory=dict)
+
+
+_NO_TUNING = CharacterTuning()
+_character_cache: dict = {}
+
+
+def tuned_dir(character=None, folder=TUNED_DIR) -> Path:
+    """Where a character's tuned files are kept: ``tuned/`` for Ironclad, ``tuned/<CHARACTER>/`` otherwise."""
+    return Path(folder) if character in (None, "IRONCLAD") else Path(folder) / character
+
+
+def character_tuning(character, folder=TUNED_DIR, fresh=False) -> CharacterTuning:
+    """The character-wide tuning kept for ``character`` (a game ID); nothing for Ironclad or an untuned character."""
+    if character in (None, "IRONCLAD"):
+        return _NO_TUNING
+    key = (character, str(folder))
+    if fresh or key not in _character_cache:
+        try:
+            data = json.loads((tuned_dir(character, folder) / CHARACTER_FILE).read_text(encoding="utf-8"))
+            known = {f.name for f in fields(Profile)}
+            _character_cache[key] = CharacterTuning(
+                knobs={tier: {k: v for k, v in row.items() if k in known} for tier, row in (data.get("knobs") or {}).items()},
+                win_odds={k: (float(v[0]), float(v[1])) for k, v in (data.get("win_odds") or {}).items()},
+                evidence=data.get("evidence") or {})
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
+            _character_cache[key] = _NO_TUNING
+    return _character_cache[key]
+
+
+def save_character_tuning(character, *, knobs=None, win_odds=None, evidence=None, folder=TUNED_DIR) -> None:
+    """Merge ``knobs`` (by tier), ``win_odds`` (by "Boss"/"other") and ``evidence`` (by key) into the character's file."""
+    path = tuned_dir(character, folder) / CHARACTER_FILE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    for key, new in (("knobs", knobs), ("win_odds", win_odds), ("evidence", evidence)):
+        data[key] = {**(data.get(key) or {}), **(new or {})}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    draft = path.with_suffix(".json.tmp")
+    draft.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    draft.replace(path)
+    _character_cache.pop((character, str(folder)), None)
+
+
+def default_profile(tier, act=None, character=None) -> Profile:
+    """The untuned profile of a tier, with the knobs fitted for ``character`` as a whole when there are any."""
+    base = DEFAULTS.get(tier) or DEFAULTS["Normal"]
+    knobs = character_tuning(character).knobs.get(tier if tier in DEFAULTS else "Normal") if character else None
+    return replace(base, **knobs) if knobs else base
 
 
 def mentor_profile(tier) -> Profile:
     return MENTOR_BOSS if tier == "Boss" else MENTOR
 
 
-def load_tuned(folder=TUNED_DIR) -> dict[str, Profile]:
-    """Every tuned profile in ``folder``, by encounter id; a file that does not read as one is left out."""
+def load_tuned(folder=TUNED_DIR, character=None) -> dict[str, Profile]:
+    """Every tuned profile of ``character`` (Ironclad when None) in ``folder``, by encounter id; a file that
+    does not read as one is left out."""
     out = {}
-    for path in sorted(Path(folder).glob("*.json")):
+    for path in sorted(tuned_dir(character, folder).glob("*.json")):
         try:
             out[path.stem] = Profile.from_dict(json.loads(path.read_text(encoding="utf-8"))["profile"])
         except (OSError, ValueError, KeyError, TypeError):
@@ -211,9 +278,9 @@ def load_tuned(folder=TUNED_DIR) -> dict[str, Profile]:
     return out
 
 
-def save_tuned(key, profile: Profile, evidence: dict, folder=TUNED_DIR) -> None:
+def save_tuned(key, profile: Profile, evidence: dict, folder=TUNED_DIR, character=None) -> None:
     """Record ``profile`` as the tuned one for ``key`` together with the numbers that chose it."""
-    folder = Path(folder)
+    folder = tuned_dir(character, folder)
     folder.mkdir(parents=True, exist_ok=True)
     draft = folder / f"{key}.json.tmp"          # written whole, then swapped in: a fight starting now reads old or new
     draft.write_text(json.dumps({"profile": profile.to_dict(), "evidence": evidence}, indent=1, sort_keys=True) + "\n",
@@ -221,7 +288,10 @@ def save_tuned(key, profile: Profile, evidence: dict, folder=TUNED_DIR) -> None:
     draft.replace(folder / f"{key}.json")
 
 
-def profile_for(encounter_id, tier, act=None, tuned: dict[str, Profile] | None = None) -> Profile:
-    """The tuned profile of this encounter, else the default of its tier and act."""
-    tuned = load_tuned() if tuned is None else tuned
-    return tuned.get(encounter_id) or default_profile(tier, act)
+def profile_for(encounter_id, tier, act=None, tuned: dict[str, Profile] | None = None, character=None) -> Profile:
+    """The tuned profile of this encounter for ``character``, else the character's default of its tier and act.
+
+    ``tuned`` are that character's per-encounter profiles (``load_tuned``); read from disk when None.
+    """
+    tuned = load_tuned(character=character) if tuned is None else tuned
+    return tuned.get(encounter_id) or default_profile(tier, act, character)

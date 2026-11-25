@@ -290,7 +290,8 @@ def cmd_doctor(args) -> int:
     line("ok", f"state readable: state_type={obs['state_type']} phase={obs['phase']}")
     char = obs["run"]["character"]
     if char is not None and "ironclad" not in char.lower():
-        line("WARN", f"character is {char!r}; runs so far have only used the Ironclad, so this character is untried")
+        line("WARN", f"character is {char!r}; live runs so far have only used the Ironclad. This character's strategy "
+                     "and pilot settings come from owner guidance and simulated runs, not from live play")
     texts = [c["description"] or "" for c in obs["hand"] or []] + [c["name"] or "" for c in obs["hand"] or []]
     if any(not t.isascii() for t in texts):
         line("WARN", "card text is not English. The baseline effect parser only reads English descriptions "

@@ -16,11 +16,10 @@ from __future__ import annotations
 
 import json
 
-from ..game.characters import is_silent
-from ..strategic import silent
+from ..strategic.characters import STRATEGIES, strategy_for
 from .models import DecisionFrame, route_plan_mode
 
-DECISION_PROMPT_VERSION = "decision-prompt-33"
+DECISION_PROMPT_VERSION = "decision-prompt-34"
 DEFAULT_MAX_INPUT_BYTES = None
 MENTOR_PILOT, OWN_PILOT = "spire_mentor_autobattle", "sts_agent_pilot"   # screen.combat_pilot: whose search plays the fights
 DEFAULT_OBJECTIVE = ("Win the run (ordinary victory) with the current character at the current difficulty. "
@@ -95,6 +94,23 @@ current_facts.deck_balance counts the cards added beyond the starter by rules ov
 - Boss demands and elite gaps say WHICH card should fill a role (fast scaling rather than slow, an attack that hits ALL enemies rather than one more single-target hit). They never raise HOW MANY cards a role holds: a boss that rewards scaling is answered by the first one or two scaling sources, not by a third.
 - At a removal or transform, give up a card of an over-supplied or full role (or a starter Strike or Defend on that side) before one of a missing or short role.
 The counts are of cards, not strength, and ignore relics and upgrades. You may overrule a status only by naming the card or relic and what it does (a relic that gives Strength every fight covers damage_scaling; a Block card that needs a condition this deck rarely meets is not full Block). State the balance effect of your choice in one clause of the reason."""
+
+# The same module for a character with its own deck plan (``strategic.characters``): what comes first, how
+# many sources fill a scaling role and the character's tracks are read from deck_balance, not fixed here.
+_BALANCE_CHARACTER = """\
+A BALANCED DECK COMES FIRST, IN THE ORDER THIS CHARACTER'S PLAN NEEDS IT. A deck that wins this run has four things at once and not too much of any one: damage, Block, something that makes its damage grow during a fight, and something that makes its Block grow or repeat. Judge every change to the deck (a card reward, a purchase, a card an event or relic adds, a transform, a removal) by what it does to that balance before anything else: ahead of deck_needs, boss demands, elite gaps, pick rates and how strong the card is by itself. current_facts.deck_balance.plan states this character's plan in one sentence, and deck_balance.tracks counts what the character's own mechanic needs (the character's deck guidance explains each track); a track has a status like a role's, and priority lists the tracks and roles to take first. What comes first depends on deck_balance.phase (its phase_rule restates it for this character):
+- early_damage (the first cards added in act 1; the name comes from the Ironclad's plan, and what this character takes first is what priority lists): take the best card offered for a track or role on that list, even when the rest of the deck is still unbalanced. Take a card for something else instead only when it is clearly the strongest card on offer (a rare or a card well known to carry runs), and say so. Skipping is wrong here whenever a card for that list is offered.
+- act1_build (the rest of act 1): the rules below apply, with one change: the deck is still small, so a solid neutral card is worth taking over a skip. Skip only cards that worsen the balance and cards that are weak.
+- late_purity (act 2 onwards, and already in act 1 for a character whose plan keeps the deck small): the rules below apply strictly. Take what priority lists first. Keep the deck thin: skip a neutral card unless it is clearly strong, and prefer removing a Strike or Defend to adding a mediocre card.
+
+current_facts.deck_balance counts the cards added beyond the starter by rules over their text (deck_balance.rules says what counts for each role, this character's own mechanics included). status gives each role one word: missing (no card yet) and short (well behind the other of damage and Block) are what the deck needs; over_supplied (damage or Block well ahead of the other) and full (as many lasting sources of that scaling as deck_balance.limits.scaling_full) are what another card would make worse; balanced and covered need nothing more. Each track under tracks has its own count, its rule and a status read the same way: missing or short is a need, over_supplied is something to stop adding (for a deck_size track: the deck is at its target size). short and over_supplied list the roles and tracks in each state. lighter_side says whether the damage side (damage plus its scaling) or the block side holds fewer added cards. current_facts.deck_balance_offers (when present) applies all of this to each card offered here, for the deck as it would be after taking it: roles, fills_short (roles and tracks it supplies), fills_priority (it supplies the first priority), adds_to_over_supplied (roles and tracks it worsens), and effect (improves, worsens, mixed or neutral). In early_damage the listed first roles count as needed and are never marked worsens.
+- effect worsens: skip the card, or leave it in the shop. The deck already has that, or the card costs what this deck cannot pay (a track names which), and one more such card delays the cards of the roles it lacks. A deck_needs entry, a boss demand, an elite gap, a held relic that likes the card or a high pick rate does not change this. The one exception: you can name the fight on the route ahead that this deck loses without the card, and say why the cards already held do not win it.
+- effect improves: these are the candidates to take, ahead of a neutral card of similar quality. It marks a role or track the deck lacks, not a good card: a card that supplies it only on paper (a condition this deck does not meet, a Power too slow or too small to matter in the fights ahead) is still a skip. When several offers improve, prefer one with fills_priority, then the one on the lighter_side, then a missing role or track over a short one; after that use deck_needs, boss demands and elite gaps to choose among them.
+- effect mixed or neutral: the balance does not decide. Judge the card by the standing plan as before. In act1_build take a solid one; in late_purity skipping is the default for a card that fills nothing. A clearly strong neutral card still beats a weak card that improves.
+- In late_purity, when no offer improves the balance, skipping or keeping the gold is usually right. Never take the least bad card of an over-supplied role only because the reward would otherwise go unused.
+- Boss demands and elite gaps say WHICH card should fill a role (fast scaling rather than slow, an attack that hits ALL enemies rather than one more single-target hit). They never raise HOW MANY cards a role holds beyond deck_balance.limits.
+- At a removal or transform, give up a card of an over-supplied or full role (or a starter Strike or Defend on that side) before one of a missing or short role or track.
+The counts are of cards, not strength, and ignore relics and upgrades. You may overrule a status only by naming the card or relic and what it does (a relic that supplies what a track counts covers that track; a Block card that needs a condition this deck rarely meets is not full Block). State the balance effect of your choice in one clause of the reason."""
 
 _CARD_REWARD = """\
 At a card reward compare every offered card with skipping. Read deck_balance_offers first: it decides before the standing plan does. Among the offers it leaves open, prefer a card that fills a deck_needs entry now over one that is merely strong in general, and treat anything matching the standing plan's avoid list as a skip unless you can name the concrete fights it wins. Conditional synergy counts only when the other half is already held: a card in the deck that is drawn often enough to matter, or a relic, which is active in every fight and so always counts. A card that supplies an act-boss deck demand the deck does not yet cover (boss_readiness marks it under answers_boss_demands) fills a need in the same way as a deck_needs entry."""
@@ -310,7 +326,10 @@ _MODULES = {
     "rest": _REST,
     "grid": _GRID, "ancient_route": _ANCIENT_ROUTE,
     "elite_stance_act1": _ELITE_ACT1, "elite_stance_later": _ELITE_LATER,
-    "silent_deck": silent.DECK_GUIDANCE, "silent_elites": silent.ELITE_GUIDANCE,
+    "deck_balance_character": _BALANCE_CHARACTER,
+    # each character's own guidance, the same text the planner gets: "<character>_deck", "<character>_elites"
+    **{f"{key.lower()}_{part}": text for key, strategy in STRATEGIES.items()
+       for part, text in (("deck", strategy.deck_guidance), ("elites", strategy.elite_guidance)) if text},
     "evidence_profile": _E_PROFILE, "evidence_duplicate": _E_DUPLICATE,
     "evidence_upgrade_pick": _E_UPGRADE_PICK, "evidence_upgrade_choice": _E_UPGRADE_CHOICE,
     "evidence_elite_pick": _E_ELITE_PICK, "evidence_boss_pick": _E_BOSS_PICK, "evidence_map": _E_MAP,
@@ -358,14 +377,20 @@ def prompt_modules(frame: DecisionFrame, *, tools: bool = False) -> list[str]:
         # right after the plan rules it qualifies; the agent's own pilot keeps potions, Mentor's search does not
         body = ("noncombat", "autobattle_own_pilot" if screen["combat_pilot"] == OWN_PILOT else "autobattle_pilot", *body[1:])
     run = frame.facts.get("run") or {}
-    playing_silent = is_silent(run.get("character"))
-    if playing_silent and "noncombat" in body:
-        body = (*body, "silent_deck")
+    strategy = strategy_for(run.get("character"))
+    own = strategy.key.lower()
+    if strategy.own_balance:        # the balance module that reads this character's plan and tracks
+        body = tuple("deck_balance_character" if name == "deck_balance" else name for name in body)
+    if strategy.deck_guidance and "noncombat" in body:
+        body = (*body, f"{own}_deck")
     act = run.get("act")
     if (kind in _ELITE_STANCE_KINDS or plans_route) and not screen.get("during_combat") and type(act) is int:
-        # last, after the evidence notes that define the fields it names; an unknown act gets neither stance
-        stance = "silent_elites" if playing_silent else "elite_stance_act1" if act == 1 else "elite_stance_later"
-        body = (*body, stance)
+        # last, after the evidence notes that define the fields it names; an unknown act gets no stance.
+        # A character's own stance comes first; the shared stance by act follows unless the character's replaces it.
+        if strategy.elite_guidance:
+            body = (*body, f"{own}_elites")
+        if strategy.act_stance:
+            body = (*body, "elite_stance_act1" if act == 1 else "elite_stance_later")
     names = ["core", *body, "contract"]
     if kind in _CONTRACT_BY_KIND and not screen.get("during_combat"):
         names.append(_CONTRACT_BY_KIND[kind])

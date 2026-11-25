@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from ..game.characters import is_silent
+from ..game.characters import character_key
 from .elite_readiness import _cid, card_traits
 
 # need -> the kind of card that supplies it
@@ -42,9 +42,16 @@ TRAIT = {"aoe": "aoe_attack", "multi_hit": "multi_hit_attack", "exhaust": "exhau
          "artifact": "applies_debuff"}
 # Needs with two valid answers: the matching deck cards are listed, but "met" stays undecided.
 _EITHER_OR = {"artifact"}
-_SILENT_SCALING_NEEDS = {"fast_scaling", "scaling"}
-_SILENT_SCALING_TEXT = re.compile(r"\b(?:shivs?|poison)\b", re.I)
-_SILENT_SCALING_BASIS = "Possible scaling pieces. Judge the deck's generators, payoffs, and setup time together."
+# A character whose damage grows through its own mechanic rather than Strength: the cards that speak of
+# that mechanic are listed as possible scaling pieces, and whether they add up is left to judgment.
+_SCALING_NEEDS = {"fast_scaling", "scaling"}
+_SCALING_TEXT = {
+    "SILENT": re.compile(r"\b(?:shivs?|poison)\b", re.I),
+    "NECROBINDER": re.compile(r"\b(?:doom|osty|souls?)\b", re.I),
+    "REGENT": re.compile(r"\b(?:forges?|sovereign blade)\b|\b(?:gain|spend)[^.]*\bstars?\b", re.I),
+    "DEFECT": re.compile(r"\b(?:focus|orbs?|lightning|dark)\b|\bincrease the damage of ALL\b", re.I),
+}
+_SCALING_BASIS = "Possible scaling pieces. Judge the deck's generators, payoffs, and setup time together."
 
 # The game's own power descriptions, matched by what they say rather than by power name, so the
 # same rule fires on any monster that carries a power with that effect.
@@ -168,18 +175,19 @@ def demand_text(demands, budget: int = 950) -> str:
     return text[:budget]
 
 
-def _matches(need, card, traits, playing_silent):
-    if playing_silent and need in _SILENT_SCALING_NEEDS:
-        return traits["strength_gain"] or bool(_SILENT_SCALING_TEXT.search(card.get("description") or ""))
+def _matches(need, card, traits, own_scaling):
+    """``own_scaling``: the text rule of a character whose scaling is its own mechanic, else None."""
+    if own_scaling is not None and need in _SCALING_NEEDS:
+        return traits["strength_gain"] or bool(own_scaling.search(card.get("description") or ""))
     return traits.get(TRAIT.get(need), False)
 
 
-def _deck_cards(deck, cards, need, playing_silent):
+def _deck_cards(deck, cards, need, own_scaling):
     names = []
     for entry in deck:
         card = cards.get(_cid(entry.get("id")))
         if card and _matches(need, card, card_traits(card, entry.get("upgraded", entry.get("is_upgraded")) is True),
-                             playing_silent):
+                             own_scaling):
             names.append(card.get("name") or entry.get("id"))
     return sorted(set(names))
 
@@ -188,31 +196,31 @@ def coverage(demands, deck, cards, *, character=None) -> list | None:
     """Per demand, the deck cards that supply it by catalog traits. ``met`` None = not decided here."""
     if demands is None:
         return None
-    playing_silent = is_silent(character)
+    own_scaling = _SCALING_TEXT.get(character_key(character))
     out = []
     for d in demands:
         need = d["need"]
-        silent_scaling = playing_silent and need in _SILENT_SCALING_NEEDS
-        if need not in TRAIT and not silent_scaling:
+        by_mechanic = own_scaling is not None and need in _SCALING_NEEDS
+        if need not in TRAIT and not by_mechanic:
             out.append({"need": need, "deck_cards": None, "met": None, "basis": "advice only: card data cannot check it"})
         elif deck is None:
             out.append({"need": need, "deck_cards": None, "met": None, "basis": "deck unknown"})
-        elif silent_scaling:
-            names = _deck_cards(deck, cards, need, playing_silent)
-            out.append({"need": need, "deck_cards": names, "met": None, "basis": _SILENT_SCALING_BASIS})
+        elif by_mechanic:
+            names = _deck_cards(deck, cards, need, own_scaling)
+            out.append({"need": need, "deck_cards": names, "met": None, "basis": _SCALING_BASIS})
         elif need in _EITHER_OR:
-            out.append({"need": need, "deck_cards": _deck_cards(deck, cards, need, playing_silent), "met": None,
+            out.append({"need": need, "deck_cards": _deck_cards(deck, cards, need, own_scaling), "met": None,
                         "basis": "two valid answers: deck_cards are the deck's debuff sources; many favour "
                                  "stripping, few favour not relying on debuffs"})
         else:
-            names = _deck_cards(deck, cards, need, playing_silent)
+            names = _deck_cards(deck, cards, need, own_scaling)
             out.append({"need": need, "deck_cards": names, "met": bool(names)})
     return out
 
 
 def offered_answers(offered_ids, cards, bosses, *, character=None) -> list:
     """Which boss demands each offered card supplies, and the low-death builds at that boss it defines."""
-    playing_silent = is_silent(character)
+    own_scaling = _SCALING_TEXT.get(character_key(character))
     out = []
     for cid in offered_ids:
         card = cards.get(cid)
@@ -224,10 +232,10 @@ def offered_answers(offered_ids, cards, bosses, *, character=None) -> list:
         for boss in bosses:
             for d in boss.get("demands") or []:
                 need = d["need"]
-                if _matches(need, card, traits, playing_silent):
+                if _matches(need, card, traits, own_scaling):
                     answer = {"need": need, "boss": boss.get("name"), "already_met_by_deck": d.get("met")}
-                    if playing_silent and need in _SILENT_SCALING_NEEDS:
-                        answer["basis"] = _SILENT_SCALING_BASIS
+                    if own_scaling is not None and need in _SCALING_NEEDS:
+                        answer["basis"] = _SCALING_BASIS
                     answers.append(answer)
             for b in (boss.get("builds") or {}).get("lowest_death_rate") or []:
                 if cid in b["defining_cards"]:

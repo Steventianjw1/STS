@@ -452,6 +452,9 @@ def _rewards(raw, obs):
 def _card_info(c):
     return {"index": _i(c.get("index")), "id": _s(c.get("id"), 80), "name": _s(c.get("name"), 120),
             "type": _s(c.get("type"), 40), "cost": _s(c.get("cost"), 8), "rarity": _s(c.get("rarity"), 40),
+            # the Regent's second cost; the mod sends it only for a card that has one
+            **({"star_cost": str(c["star_cost"])[:8]} if isinstance(c.get("star_cost"), (int, str))
+               and not isinstance(c.get("star_cost"), bool) else {}),
             "is_upgraded": c.get("is_upgraded") if isinstance(c.get("is_upgraded"), bool) else None,
             "description": _s(c.get("description"))}
 

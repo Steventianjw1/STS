@@ -21,9 +21,10 @@ import threading
 import types
 from pathlib import Path
 
+from ..game.characters import character_key
 from . import engine
 from .potion_context import context_path, read as read_potion_context
-from .profiles import default_profile, load_tuned
+from .profiles import load_tuned, profile_for
 from .search import decide
 
 SOURCE_ENV = "STS_AGENT_MENTOR_SOURCE"      # folder holding Mentor's realgame_advisor.py
@@ -35,7 +36,7 @@ logger = logging.getLogger("sts_agent.pilot")
 
 def install(advisor, rs, potion_context=None) -> None:
     """Route the advisor's combat search, for a move and for a card choice inside a fight, through the pilot."""
-    table, tuned = engine.encounters(rs), load_tuned()
+    table, tuned = engine.encounters(rs), {}        # tuned: per-encounter profiles by character, read on first use
     core = types.SimpleNamespace(mcts_recommend=rs.mcts_recommend, mcts_score_action_forced=rs.mcts_score_action_forced,
                                  state_to_dict=rs.state_to_dict)
     turn = threading.local()
@@ -64,7 +65,11 @@ def install(advisor, rs, potion_context=None) -> None:
         entry = next((e for e in table if e["id"] == encounter), None)
         tier = ROOM_TIER.get(turn.room) or (entry["tier"] if entry else "Normal")
         act = entry["act"] if entry else key[0]
-        return encounter, tier, tuned.get(encounter) or default_profile(tier, act)
+        # The engine names the character on the fight itself; an unknown one fights with Ironclad's profiles.
+        character = character_key((wire.get("player") or {}).get("class")) or "IRONCLAD"
+        if character not in tuned:
+            tuned[character] = load_tuned(character=character)
+        return encounter, tier, character, profile_for(encounter, tier, act, tuned[character], character)
 
     def enter(state):
         run = state.get("run_state") or {}
@@ -104,10 +109,10 @@ def install(advisor, rs, potion_context=None) -> None:
             return core.mcts_recommend(state, **kwargs)
         turn.main = False
         try:
-            encounter, tier, profile = profile_of(state)
+            encounter, tier, character, profile = profile_of(state)
             d = decide(core, state, profile, seed=kwargs.get("seed") or 0,
                        carry=(kwargs.get("win_hp_carry"), kwargs.get("win_potion_carry")), tier=tier,
-                       drop_chance_pct=turn.drop_chance_pct, potion_used=turn.potion_used)
+                       drop_chance_pct=turn.drop_chance_pct, potion_used=turn.potion_used, character=character)
             logger.info("pilot %s: %s %s  (%d sims, %.2fs, win %s)", encounter or turn.room, d.rule, d.action, d.sims, d.seconds,
                         "?" if d.win_chance is None else f"{d.win_chance:.0%}")
             return d.result

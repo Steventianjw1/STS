@@ -65,6 +65,11 @@ def load(pinned_game_dir="data/game"):
     return _engine
 
 
+def character_name(character) -> str:
+    """The engine's spelling of a character given by game ID ("SILENT" -> "Silent")."""
+    return str(character or "IRONCLAD").capitalize()
+
+
 def fingerprint(rs) -> str:
     """A digest of one fixed search. Two machines that print the same one simulate and search alike."""
     deck = ["STRIKE_IRONCLAD"] * 5 + ["DEFEND_IRONCLAD"] * 4 + ["BASH"]
