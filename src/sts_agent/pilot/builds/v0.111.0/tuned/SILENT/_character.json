@@ -85,6 +85,99 @@
     "won": 0.0,
     "won_se": 0.0
    }
+  },
+  "versus_mentor": {
+   "by_tier": {
+    "Elite": {
+     "arm": {
+      "decisions": 28.2,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 29.28,
+      "hp_lost": 25.25,
+      "potions_used": 0.28,
+      "race_changed_per_fight": 6.38,
+      "seconds_per_decision": 0.586,
+      "value": 0.7822,
+      "win_rate": 0.8438
+     },
+     "fights": 32,
+     "hp_end": -2.4688,
+     "hp_end_se": 1.4156,
+     "mentor": {
+      "decisions": 28.2,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 31.75,
+      "hp_lost": 22.78,
+      "potions_used": 0.81,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.125,
+      "value": 0.9166,
+      "win_rate": 0.9062
+     },
+     "value": -0.1344,
+     "value_se": 0.0988,
+     "won": -0.0625,
+     "won_se": 0.0435
+    },
+    "Normal": {
+     "arm": {
+      "decisions": 27.6,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 32.25,
+      "hp_lost": 13.12,
+      "potions_used": 0.09,
+      "race_changed_per_fight": 6.12,
+      "seconds_per_decision": 0.713,
+      "value": 0.9994,
+      "win_rate": 0.9375
+     },
+     "fights": 32,
+     "hp_end": -1.2812,
+     "hp_end_se": 0.8258,
+     "mentor": {
+      "decisions": 26.8,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 33.53,
+      "hp_lost": 11.84,
+      "potions_used": 0.22,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.163,
+      "value": 1.0009,
+      "win_rate": 0.9375
+     },
+     "value": -0.0015,
+     "value_se": 0.003,
+     "won": 0.0,
+     "won_se": 0.0
+    }
+   },
+   "kind": "simulator; the pilot arm minus Mentor's search on the same fights"
+  },
+  "win_odds": {
+   "arm": "pilot",
+   "by_group": {
+    "other": {
+     "above_ironclad_line": {
+      "allowed": 0.23,
+      "fights_worth": 71.0,
+      "in_lost_fights": 0.0
+     },
+     "fights": 112,
+     "fit": [
+      2.594,
+      0.936
+     ],
+     "hold_line": 0.967,
+     "ironclad_line": 0.9,
+     "kept": false,
+     "lost": 18
+    }
+   },
+   "kind": "simulator; every decision's share of won playouts against the fight's outcome, each fight weighing the same, fight starts entered at full and at half HP; a fit is kept only when these fights show Ironclad's potion hold line to be unsafe for the character and the fit is the more cautious"
   }
  },
  "knobs": {
