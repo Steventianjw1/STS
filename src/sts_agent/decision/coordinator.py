@@ -823,7 +823,7 @@ class RunCoordinator:
                                              "(not a choice on this screen)."),
                         "details": _clip(boss_demands.demand_text(b.get("deck_demands")))})
             extra = extra[:8]
-            state = deck_balance.balance(f.get("deck"))
+            state = deck_balance.balance(f.get("deck"), run.get("act"))
             if state:   # not a choice either: what the deck holds too little and too much of
                 extra.insert(0, {"id": "deck_balance", "kind": "other",
                                  "description": "Balance of the current deck over damage, Block and the scaling of "
@@ -984,7 +984,7 @@ class RunCoordinator:
         if boss:   # every screen between fights, the map included
             facts = {**facts, "act_boss": boss}
         if v.kind in _DECK_CHOICE_KINDS and not v.in_combat and not overlay:
-            state = deck_balance.balance(v.facts.get("deck"))
+            state = deck_balance.balance(v.facts.get("deck"), (v.facts.get("run") or {}).get("act"))
             if state:   # the deck as it stands, then what each card offered here would do to it
                 facts = {**facts, "deck_balance": state}
                 offered = deck_balance.offer_effects(state, [

@@ -5,6 +5,13 @@ that makes its damage grow during a fight, and something that makes its Block gr
 This module counts the observed deck in those four roles and says which are missing, short,
 over-supplied or full, and what each offered card would do to that picture.
 
+What the deck should take first changes over the run (``phase``). The first picks of act 1 go to
+damage: the starter deck kills too slowly for the act 1 elites and boss, and a simulator check of
+drafting (synthetic, act 1 fights only) found a damage-first deck winning as often as a balanced
+one, while skipping cards to stay balanced lost most act 1 boss fights. From act 2 on, enemies hit
+hard enough that Block scaling and a thin deck decide fights, so the balance rules are applied
+strictly there.
+
 The counts are explicit rules over each card's own type and text as the game shows it; they need
 no catalog and no network. They count cards, not strength: relics, upgrades and card quality are
 not weighed, so the result is evidence for a judgment and never a score.
@@ -21,6 +28,17 @@ ROLES = FRONT + SCALING
 FRONT_MIN, FRONT_LEAD = 4, 2
 SCALING_FULL = 2            # lasting sources of one kind of scaling beyond which another adds little
 MAX_NAMES = 10              # card names listed per role
+EARLY_PICKS = 3             # act 1 cards added beyond the starter before damage stops coming first
+
+EARLY, BUILD, LATE = "early_damage", "act1_build", "late_purity"
+PHASE_RULES = {
+    EARLY: f"the first {EARLY_PICKS} cards added in act 1: damage and damage scaling come first and are never "
+           "over-supplied; a card of another role is taken only when it is clearly the strongest card offered",
+    BUILD: "the rest of act 1: fill missing or short roles first and skip cards that worsen the balance; a solid "
+           "neutral card is still worth taking, because the deck is still too small to win act 1 boss fights",
+    LATE: "act 2 onwards: Block scaling comes first while it is missing, then the other missing or short roles; "
+          "skip cards that worsen the balance and, for a thin deck, skip neutral cards unless clearly strong",
+}
 
 _MARKUP = re.compile(r"\[/?[A-Za-z_]+(?:[=:][^\]]*)?\]")
 _GAINS_BLOCK = re.compile(r"\bgains? (?:another )?(?:\d+ )?(?:additional )?Block\b|\bdouble your Block\b", re.I)
@@ -88,13 +106,32 @@ def _statuses(counts) -> dict:
     return out
 
 
-def balance(deck) -> dict | None:
-    """Role counts and statuses for an observed permanent deck; None when the deck is unknown."""
+def phase(act, added) -> str:
+    """Which deck-building phase applies: by act, and in act 1 by the cards added beyond the starter.
+    An unknown act is read as act 1."""
+    if act is not None and act >= 2:
+        return LATE
+    return EARLY if added < EARLY_PICKS else BUILD
+
+
+def _priority(stage, status) -> list:
+    """The roles to take first in this phase, most urgent first."""
+    if stage == EARLY:
+        return ["damage", "damage_scaling"]
+    short = [r for r in ROLES if status[r] in ("missing", "short")]
+    if stage == LATE and "block_scaling" in short:
+        short = ["block_scaling"] + [r for r in short if r != "block_scaling"]
+    return short
+
+
+def balance(deck, act=None) -> dict | None:
+    """Role counts, statuses and the phase's priorities for an observed permanent deck; None when the
+    deck is unknown. ``act`` is the current act number when known."""
     if not isinstance(deck, list):
         return None
     counts = {role: 0 for role in (*ROLES, "other")}
     names = {role: [] for role in counts}
-    starter, dead, size = {role: 0 for role in FRONT}, 0, 0
+    starter, dead, size, added = {role: 0 for role in FRONT}, 0, 0, 0
     for entry in deck:
         if not isinstance(entry, dict):
             continue
@@ -109,16 +146,19 @@ def balance(deck) -> dict | None:
                 if role in starter:
                     starter[role] += n
             continue
+        added += n
         label = str(entry.get("name") or entry.get("id") or "?") + (f" x{n}" if n > 1 else "")
         for role in roles or ("other",):
             counts[role] += n
             names[role].append(label)
     status = _statuses(counts)
+    stage = phase(act if type(act) is int else None, added)
     sides = {"damage": counts["damage"] + counts["damage_scaling"], "block": counts["block"] + counts["block_scaling"]}
     return {
         "label": "DECK BALANCE: the cards added beyond the starter, counted by what they do. Rules over card text, "
                  "not a strength score.",
-        "deck_size": size, "curses_and_statuses": dead, "starter_cards": starter,
+        "phase": stage, "phase_rule": PHASE_RULES[stage], "priority": _priority(stage, status),
+        "deck_size": size, "curses_and_statuses": dead, "starter_cards": starter, "cards_added": added,
         "added": {role: {"count": counts[role], "cards": sorted(names[role])[:MAX_NAMES]} for role in counts},
         "status": status,
         "short": [r for r in ROLES if status[r] in ("missing", "short")],
@@ -133,19 +173,26 @@ def offer_effects(state, offers) -> list:
 
     ``offers`` are (action_id, card) pairs. ``adds_to_over_supplied`` is judged on the deck as it
     would be after the pick, so the card that tips a role over is marked, not only the ones after it.
+    In the early phase damage and its scaling count as needed and never as over-supplied.
+    ``fills_priority`` marks a card for the phase's most urgent role.
     """
     if not state:
         return []
     counts = {role: state["added"][role]["count"] for role in ROLES}
+    early = state.get("phase") == EARLY
+    priority = state.get("priority") or []
+    top = set(priority) if early else set(priority[:1])
     out = []
     for action_id, card in offers:
         roles = card_roles(card)
         after = {role: counts[role] + (role in roles) for role in ROLES}
         after_status = _statuses(after)
-        over = [r for r in roles if (after_status[r] == "over_supplied" if r in FRONT else counts[r] >= SCALING_FULL)]
-        fills = [r for r in roles if state["status"][r] in ("missing", "short")]
+        over = [r for r in roles if not (early and r in priority)
+                and (after_status[r] == "over_supplied" if r in FRONT else counts[r] >= SCALING_FULL)]
+        fills = [r for r in roles if (early and r in priority) or state["status"][r] in ("missing", "short")]
         out.append({"action_id": action_id, "name": _field(card, "name"), "roles": list(roles) or ["other"],
-                    "fills_short": fills, "adds_to_over_supplied": over,
+                    "fills_short": fills, "fills_priority": bool(top.intersection(roles)),
+                    "adds_to_over_supplied": over,
                     "effect": ("mixed" if fills and over else "improves" if fills else "worsens" if over else
                                "neutral")})
     return out
@@ -163,7 +210,8 @@ def summary_text(state) -> str:
     other = state["added"]["other"]
     start = state["starter_cards"]
     # The verdict leads, so a bounded field that cuts the end loses detail and never the conclusion.
-    return (f"Missing or short: {', '.join(state['short']).replace('_', ' ') or 'none'}. Over-supplied or full: "
+    return (f"Phase {state['phase']}: {state['phase_rule']}; take first: "
+            f"{', '.join(state['priority']).replace('_', ' ') or 'nothing in particular'}. Missing or short: {', '.join(state['short']).replace('_', ' ') or 'none'}. Over-supplied or full: "
             f"{', '.join(state['over_supplied']).replace('_', ' ') or 'none'}. Lighter side: "
             f"{state['lighter_side'] or 'neither'}. Cards added beyond the starter, by rules over their text (a "
             f"card can hold two roles; relics and card quality are not weighed): {'; '.join(parts)}. Other added "
