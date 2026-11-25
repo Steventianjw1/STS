@@ -30,6 +30,7 @@ from .profiles import HP_WEIGHT
 ENGINE_SUBDIR = Path("mods") / "SpireMentor" / "SimAdvisor" / "_internal" / "sts2_rs"
 ENGINE_PYTHON = (3, 13)                 # what the mod's own sts2_rs.pyd is built for
 ENGINE_ENV = "STS_AGENT_ENGINE_DIR"     # a folder holding the sts2_rs module, used instead of the installed mod's
+REPO = Path(__file__).resolve().parents[3]      # the checkout this package runs from (src/sts_agent/pilot)
 HP_WEIGHT_ENV = "STS2_RUNAI_HP_WEIGHT"   # the engine's own setting; read once, at its first search
 ROOM_TIERS = {"Monster": ("Weak", "Normal"), "Elite": ("Elite",), "Boss": ("Boss",)}
 
@@ -44,12 +45,21 @@ def engine_dir(pinned_game_dir="data/game") -> Path:
     return frozen_copy(pinned_game_dir) / ENGINE_SUBDIR
 
 
+def build_dir() -> Path:
+    """Where a simulator built from Mentor's source is kept for the game build in use.
+
+    A relative folder that the working directory does not hold is the repository's: the mod
+    starts the pilot's advisor from the game's folder, not from here."""
+    folder = Path(builds.active().engine_dir)
+    return folder if folder.is_absolute() or folder.exists() else REPO / folder
+
+
 def load(pinned_game_dir="data/game"):
     """The ``sts2_rs`` module: the installed Spire Mentor's, else a build kept in ``data/engine``."""
     global _engine
     if _engine is None:
         named = os.environ.get(ENGINE_ENV)
-        folders = [Path(named)] if named else [engine_dir(pinned_game_dir), Path(builds.active().engine_dir)]
+        folders = [Path(named)] if named else [engine_dir(pinned_game_dir), build_dir()]
         folder = next((f for f in folders if any(f.glob("sts2_rs*"))), None)
         if folder is None:
             raise EngineError("Spire Mentor's simulator (sts2_rs) was not found in " + " or ".join(str(f) for f in folders)

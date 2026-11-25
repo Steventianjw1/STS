@@ -191,7 +191,9 @@ def main(argv=None) -> int:
     sys.path.insert(0, source)
     import runtime_paths                      # Mentor's: where its data lives
     bundle = engine.engine_dir(game_dir).parent
-    runtime_paths.data_root = lambda: bundle  # the installed localization and nets, which match the installed engine
+    if not bundle.is_dir():                   # Mentor 0.11 ships a native advisor: its data sits beside the exe
+        bundle = bundle.parent
+    runtime_paths.data_root = lambda: bundle  # the installed mod's localization and nets
     import realgame_advisor
     install(realgame_advisor, rs, context_path(game_dir))
     return realgame_advisor.main(sys.argv[1:] if argv is None else argv)
