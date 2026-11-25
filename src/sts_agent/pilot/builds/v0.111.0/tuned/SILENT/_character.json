@@ -1,0 +1,94 @@
+{
+ "evidence": {
+  "knobs_Elite": {
+   "chosen": "default",
+   "kind": "simulator, candidates at Mentor's search budget",
+   "last_round": {
+    "fights": 32,
+    "ranked": [
+     {
+      "decisions": 28.0,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 29.59,
+      "hp_lost": 24.94,
+      "name": "dominance",
+      "potions_used": 0.38,
+      "race_changed_per_fight": 6.19,
+      "seconds_per_decision": 0.329,
+      "value": 0.9218,
+      "win_rate": 0.9062
+     },
+     {
+      "decisions": 27.8,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 29.31,
+      "hp_lost": 25.22,
+      "name": "default",
+      "potions_used": 0.38,
+      "race_changed_per_fight": 6.25,
+      "seconds_per_decision": 0.311,
+      "value": 0.9206,
+      "win_rate": 0.9062
+     },
+     {
+      "decisions": 29.1,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 29.12,
+      "hp_lost": 25.41,
+      "name": "leaf-playouts-3",
+      "potions_used": 0.38,
+      "race_changed_per_fight": 6.56,
+      "seconds_per_decision": 0.401,
+      "value": 0.9199,
+      "win_rate": 0.9062
+     },
+     {
+      "decisions": 28.9,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 28.62,
+      "hp_lost": 25.91,
+      "name": "engine-pick",
+      "potions_used": 0.41,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.134,
+      "value": 0.917,
+      "win_rate": 0.9062
+     },
+     {
+      "decisions": 28.0,
+      "errors": 0,
+      "fights": 32,
+      "hp_end": 31.62,
+      "hp_lost": 22.91,
+      "name": "mentor",
+      "potions_used": 0.88,
+      "race_changed_per_fight": 0.0,
+      "seconds_per_decision": 0.139,
+      "value": 0.9144,
+      "win_rate": 0.9062
+     }
+    ],
+    "round": 1
+   },
+   "snapshots": 32,
+   "versus_default": {},
+   "versus_mentor": {
+    "fights": 32,
+    "hp_end": -2.3125,
+    "hp_end_se": 1.2775,
+    "value": 0.0063,
+    "value_se": 0.0038,
+    "won": 0.0,
+    "won_se": 0.0
+   }
+  }
+ },
+ "knobs": {
+  "Elite": {}
+ },
+ "win_odds": {}
+}
