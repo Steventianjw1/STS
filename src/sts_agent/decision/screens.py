@@ -50,7 +50,8 @@ CAPABILITIES: dict[str, dict] = {
     "bundle_select": {"status": SOURCE_INSPECTED,
                       "actions": ["select_bundle", "confirm_bundle_selection", "cancel_bundle_selection"],
                       "notes": "Picking a pack opens its preview; the confirm that follows is sent without a model call."},
-    "crystal_sphere": {"status": UNSUPPORTED, "actions": [], "notes": "Minigame actions exist in the mod; adapter not implemented."},
+    "crystal_sphere": {"status": SOURCE_INSPECTED, "actions": ["crystal_sphere_click_cell", "crystal_sphere_proceed"],
+                       "notes": "Played without a model call: every tile is hidden, so one step at a time is offered."},
     "fake_merchant": {"status": UNSUPPORTED, "actions": [], "notes": "Shop-like event; adapter not implemented."},
     "overlay": {"status": UNSUPPORTED, "actions": [], "notes": "Unrecognized overlay; the mod itself reports manual interaction."},
     "menu": {"status": UNSUPPORTED, "actions": [], "notes": "Menus, popups and run start are out of scope."},
@@ -711,6 +712,29 @@ def _bundle_select(raw, obs):
     return _finish(v, b, obs, potions=False)
 
 
+def _crystal_sphere(raw, obs):
+    """The Crystal Sphere minigame. Every tile is hidden and alike, so there is nothing to judge: one step at a
+    time is offered, which the coordinator sends as forced progress. Reveal around the clickable tile nearest the
+    middle with the tool the game has selected, and leave once the game allows it."""
+    r = raw.get("crystal_sphere") if isinstance(raw.get("crystal_sphere"), dict) else {}
+    cells = [(c["x"], c["y"]) for c in r.get("clickable_cells") or []
+             if isinstance(c, dict) and type(c.get("x")) is int and type(c.get("y")) is int]
+    leave = r.get("can_proceed") is True
+    revealed = r.get("revealed_items") if isinstance(r.get("revealed_items"), list) else []
+    v, b = _room("crystal_sphere", raw, obs,
+                 {"divinations": _s(r.get("divinations_left_text"), 80), "tool": _s(r.get("tool"), 20),
+                  "revealed_items": [_s(str(x), 200) for x in revealed[:20]], "can_proceed": leave},
+                 ready=leave or bool(cells))
+    if leave:
+        b.add("proceed", "proceed", "Leave the Crystal Sphere", {}, {"action": "crystal_sphere_proceed"})
+    elif cells:
+        mid_x, mid_y = ((_i(r.get("grid_width")) or 11) - 1) / 2, ((_i(r.get("grid_height")) or 11) - 1) / 2
+        x, y = min(cells, key=lambda c: (abs(c[0] - mid_x) + abs(c[1] - mid_y), c))
+        b.add("reveal", "crystal_sphere_click_cell", f"Reveal the tiles around ({x}, {y})", {"x": x, "y": y},
+              {"action": "crystal_sphere_click_cell", "x": x, "y": y})
+    return _finish(v, b, obs, potions=False)
+
+
 def _treasure(raw, obs):
     t = raw.get("treasure") if isinstance(raw.get("treasure"), dict) else {}
     relics = [{"index": _i(x.get("index")), "id": _s(x.get("id"), 80), "name": _s(x.get("name"), 120),
@@ -736,7 +760,7 @@ def _unsupported(kind):
 _ROOM_BUILDERS = {
     "rewards": _rewards, "card_reward": _card_reward, "map": _map, "event": _event, "rest_site": _rest,
     "shop": _shop, "card_select": _card_select, "relic_select": _relic_select, "treasure": _treasure,
-    "bundle_select": _bundle_select, "crystal_sphere": _unsupported("crystal_sphere"),
+    "bundle_select": _bundle_select, "crystal_sphere": _crystal_sphere,
     "fake_merchant": _unsupported("fake_merchant"), "overlay": _unsupported("overlay"),
 }
 
