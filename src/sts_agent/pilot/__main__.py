@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from collections import Counter
@@ -25,7 +26,7 @@ from pathlib import Path
 
 from ..game.characters import CHARACTERS, character_key
 from . import engine, runs, sim
-from .profiles import TUNED_DIR, character_tuning, load_tuned, profile_for, save_character_tuning
+from .profiles import TUNED_DIR, WIN_ODDS, character_tuning, load_tuned, profile_for, save_character_tuning
 
 
 def _lower_priority() -> bool:
@@ -123,7 +124,7 @@ def main(argv=None) -> int:
                    help="tune the character's knobs for each --tier as a whole, on its fight starts as they are, instead of per encounter")
     t.add_argument("--knobs", default=None, help="candidate names to compare, comma separated (default: all of sim.KNOBS)")
     c = sub.add_parser("calibrate")
-    c.add_argument("file", help="a file `bench --out` wrote")
+    c.add_argument("file", nargs="+", help="files `bench --out` wrote")
     c.add_argument("--arm", default="pilot", help="whose fights to read (the arm the character will fight with)")
     c.add_argument("--save", action="store_true", help="keep the fit as the character's win-chance reading")
     w = sub.add_parser("runs")
@@ -162,20 +163,58 @@ def main(argv=None) -> int:
         print(_table(sim.report({name: fights[name] for name in names})))
         return 0
     if args.cmd == "calibrate":
-        fights = [r for r in sim.read_fights(args.file).get(args.arm, [])
+        fights = [r for path in args.file for r in sim.read_fights(path).get(args.arm, [])
                   if "error" not in r and r.get("character", "IRONCLAD") == args.character]
-        fitted = {}
+        fitted, lines = {}, {}
         for group, rows in (("Boss", [r for r in fights if r["tier"] == "Boss"]), ("other", [r for r in fights if r["tier"] != "Boss"])):
             fit = sim.fit_win_odds(rows)
             won = sum(r["won"] for r in rows)
             print(f"{args.character} {group}: {len(rows)} fights, {won} won: "
                   + (f"intercept {fit[0]}, slope {fit[1]}" if fit else "no fit (it needs at least 3 won and 3 lost fights)"))
+            if fit:         # how the fit reads the shares it was made from, against what happened in those fights
+                bands = ((0.0, 0.02), (0.02, 0.1), (0.1, 0.3), (0.3, 0.6), (0.6, 1.01))
+                for lo, hi in bands:
+                    inside = [(sum(lo <= p < hi for p in r["shares"]) / len(r["shares"]), r["won"]) for r in rows if r.get("shares")]
+                    weight = sum(w for w, _ in inside)
+                    if weight > 0:
+                        mid = (lo + min(hi, 1.0)) / 2
+                        odds = fit[0] + fit[1] * math.log(max(mid, 1e-3) / max(1 - mid, 1e-3))
+                        print(f"    share {lo:.2f}-{min(hi, 1.0):.2f}: {weight:5.1f} fights' worth of decisions, "
+                              f"{sum(w for w, won in inside if won) / weight:.0%} of them in won fights; "
+                              f"the fit reads {mid:.2f} as {1 / (1 + math.exp(-odds)):.0%}")
             if fit:
-                fitted[group] = fit
-        if args.save and fitted:
-            save_character_tuning(args.character, win_odds=fitted, evidence={"win_odds": {
-                "arm": args.arm, "fights": len(fights), "kind": "simulator; every decision's share of won playouts against "
-                "the fight's outcome, each fight weighing the same"}})
+                # A fit is kept only when it moves the potion hold line off Ironclad's by more than the fights
+                # that happened to be played can explain; otherwise the character keeps Ironclad's reading.
+                shared = sim.hold_line(WIN_ODDS.get("Boss" if group == "Boss" else None))
+                line, span = sim.hold_line(fit), sim.hold_line_interval(rows)
+                differs = span is not None and not span[0] <= shared <= span[1]
+                print(f"    potions are held above a share of {line:.3f} by this fit (fights drawn again: "
+                      f"{'%.3f to %.3f' % span if span else 'no interval'}); by Ironclad's above {shared:.3f}: "
+                      + ("the fit is kept" if differs else "not told apart, Ironclad's reading stays"))
+                lines[group] = {"fit": fit, "hold_line": round(line, 3), "interval": span, "ironclad_line": round(shared, 3),
+                                "kept": differs, "fights": len(rows), "lost": len(rows) - won}
+                if differs:
+                    fitted[group] = fit
+        # The same files usually hold Mentor's search on the same fights: how the arm compares, kept as evidence.
+        mentor = [r for path in args.file for r in sim.read_fights(path).get("mentor", [])
+                  if "error" not in r and r.get("character", "IRONCLAD") == args.character]
+        versus = {}
+        for tier in ("Weak", "Normal", "Elite", "Boss"):
+            row = sim.paired([r for r in mentor if r["tier"] == tier], [r for r in fights if r["tier"] == tier])
+            if row.get("fights", 0) >= 2:
+                versus[tier] = {**row, "arm": sim.summarize([r for r in fights if r["tier"] == tier and "@hp" not in r["scenario"]]),
+                                "mentor": sim.summarize([r for r in mentor if r["tier"] == tier])}
+                print(f"{args.character} {tier}: {args.arm} - mentor over {row['fights']} paired fights: value {row['value']:+.4f} "
+                      f"±{row['value_se']:.4f}, hp {row['hp_end']:+.2f} ±{row['hp_end_se']:.2f}, wins {row['won']:+.3f} ±{row['won_se']:.3f}")
+        if args.save and (lines or versus):
+            save_character_tuning(args.character, win_odds=fitted, evidence={
+                **({"win_odds": {"arm": args.arm, "by_group": lines,
+                                 "kind": "simulator; every decision's share of won playouts against the fight's outcome, "
+                                         "each fight weighing the same; a fit is kept only when the potion hold line it "
+                                         "gives differs from Ironclad's beyond the 5%-95% span of fights drawn again"}}
+                   if lines else {}),
+                **({"versus_mentor": {"kind": f"simulator; the {args.arm} arm minus Mentor's search on the same fights",
+                                      "by_tier": versus}} if versus else {})})
             print(f"  kept for {args.character}")
         return 0
     if args.cmd == "runs-report":

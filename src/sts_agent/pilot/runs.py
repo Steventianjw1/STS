@@ -9,7 +9,8 @@ decides the card rewards:
     shared      the champion's own preferences inside what the plan every character had (Ironclad's)
                 leaves open
     character   the same inside the character's own plan (``evidence.deck_balance.PLANS``)
-    character:scaling_full=4;targets.frost_min=3     a variant of that plan, for choosing its numbers
+    character:scaling_full=4;targets.frost_min=3;early_roles=block+damage
+                a variant of that plan, for choosing its numbers
 
 A plan arm reads the same evidence the planner and the decision model read (``deck_balance.balance``
 and ``offer_effects``) and obeys it literally (``choose_reward``); where the plan holds the deck to a
@@ -45,11 +46,16 @@ CARD_TEXT = Path("sts2-pycli") / "localization_eng" / "cards.json"
 SIMS, BOSS_SIMS = 1000, 4000        # the engine authors' own evaluation budget for a run's fights
 MAX_STEPS = 60000
 
-# How hard a plan steers the champion's preferences at a card reward: each offer's probability is
-# multiplied by the weight of what the plan says of it, and the highest product is taken (skipping
-# has weight 1). A card that worsens the balance is never taken; in the first picks a card for the
-# plan's first roles is taken whenever one is offered.
+# How hard a plan steers the champion's preferences at a card reward. The champion is nearly always sure
+# of one card (0.97 and more), so its probabilities are first flattened (the fourth root: a card it likes
+# 16 times less scores half), then multiplied by the weight of what the plan says of the card, and the
+# highest product is taken (skipping has weight 1). So a card for the plan's first priority beats a card
+# that fills nothing unless the champion likes it 256 times less, one that fills a missing or short role
+# or track unless 16 times less; a card that worsens the balance is never taken; once the plan keeps the
+# deck thin a card that fills nothing is taken only when the champion all but rules out skipping; and in
+# the first picks a card for the plan's first roles is taken whenever one is offered.
 WEIGHT = {"priority": 4.0, "improves": 2.0, "mixed": 1.0, "neutral": 1.0, "neutral_thin": 0.25, "worsens": 0.0}
+FLATTEN = 0.25
 
 
 def source_dir(given=None) -> Path:
@@ -126,32 +132,36 @@ def plan_of(arm, character) -> deck_balance.DeckPlan | None:
     fields = {}
     for change in filter(None, changes.split(";")):
         key, _, value = change.partition("=")
-        value = json.loads(value) if value[:1] in "[{\"-0123456789ntf" else value
+        if key in ("early_roles", "late_first", "tracks"):       # role lists are joined with "+": early_roles=block+damage
+            fields[key] = tuple(filter(None, value.split("+")))
+            continue
+        value = json.loads(value) if value[:1] in "-0123456789ntf" else value
         if key.startswith("targets."):
             targets[key[8:]] = value
         else:
-            fields[key] = tuple(value) if isinstance(value, list) else value
+            fields[key] = value
     return replace(plan, targets=targets, **fields)
 
 
 def choose_reward(state, effects, probs) -> int | None:
     """Which offered card a drafter obeying the plan takes: an index into ``effects``, or None to skip.
 
-    ``probs`` are the champion's own probabilities for each offer, the skip last. The plan multiplies
-    them (``WEIGHT``): a card for the phase's first priority counts four times, one that fills a
-    missing or short role or track twice, one that worsens the balance never, and a card that fills
-    nothing a quarter once the plan keeps the deck thin.
+    ``probs`` are the champion's own probabilities for each offer, the skip last. They are flattened
+    (``FLATTEN``) and the plan multiplies them (``WEIGHT``): a card for the phase's first priority
+    counts four times, one that fills a missing or short role or track twice, one that worsens the
+    balance never, and a card that fills nothing a quarter once the plan keeps the deck thin.
     """
     thin = state["phase"] == deck_balance.LATE
+    liked = [max(float(p), 0.0) ** FLATTEN for p in probs]
     scores = []
-    for row, p in zip(effects, probs):
+    for row, p in zip(effects, liked):
         kind = ("worsens" if row["effect"] == "worsens" else "priority" if row["fills_priority"] else
                 "improves" if row["effect"] == "improves" else "mixed" if row["effect"] == "mixed" else
                 "neutral_thin" if thin else "neutral")
         scores.append(p * WEIGHT[kind])
     forced = state["phase"] == deck_balance.EARLY and any(r["fills_priority"] and r["effect"] != "worsens" for r in effects)
     best = max(range(len(scores)), key=scores.__getitem__, default=None)
-    if best is None or scores[best] <= 0 or (not forced and scores[best] <= probs[-1]):
+    if best is None or scores[best] <= 0 or (not forced and scores[best] <= liked[-1]):
         return None
     return best
 

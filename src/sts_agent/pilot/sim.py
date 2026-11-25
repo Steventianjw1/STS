@@ -483,3 +483,27 @@ def fit_win_odds(fights) -> tuple | None:
         if abs(da) + abs(db) < 1e-7:
             break
     return (round(a, 3), round(b, 3)) if b > 0 else None
+
+
+def hold_line(fit) -> float:
+    """The share of won playouts a fit reads as ``search.SAFE_WIN``: above it the pilot keeps its potions."""
+    import math
+    from .search import SAFE_WIN
+    x = (math.log(SAFE_WIN / (1 - SAFE_WIN)) - fit[0]) / fit[1]
+    return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, x))))
+
+
+def hold_line_interval(fights, resamples=200, seed=1) -> tuple | None:
+    """The 5% and 95% points of ``hold_line`` over fits to the fights drawn again with replacement:
+    how far the line moves with which fights happened to be played. None when too few resamples fit."""
+    import random
+    rng = random.Random(seed)
+    lines = []
+    for _ in range(resamples):
+        fit = fit_win_odds([rng.choice(fights) for _ in fights])
+        if fit:
+            lines.append(hold_line(fit))
+    if len(lines) < resamples // 2:
+        return None
+    lines.sort()
+    return round(lines[len(lines) // 20], 3), round(lines[-1 - len(lines) // 20], 3)

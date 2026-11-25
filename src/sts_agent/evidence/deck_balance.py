@@ -9,8 +9,8 @@ What the deck should take first changes over the run (``phase``) and with the ch
 (``DeckPlan``, one per character in ``PLANS``). Ironclad's plan is the one every character had
 before: the first picks of act 1 go to damage, because the starter deck kills too slowly for the
 act 1 elites and boss, and from act 2 on Block scaling and a thin deck decide fights. The other
-four follow their owner's guidance, with the numbers set by simulated runs (``pilot.runs``; what
-was measured is recorded beside each plan). A character also has ``tracks``: counts of what its
+four follow the owner's guidance for each, with the numbers set by simulated runs (``pilot.runs``;
+what was measured is recorded with the plans). A character also has ``tracks``: counts of what its
 own mechanic needs (the Silent's Weak, the Necrobinder's Osty and deck size, the Regent's Stars
 gained against Stars spent, the Defect's Frost), each with a status like a role's.
 
@@ -52,25 +52,53 @@ class DeckPlan:
 
 
 # One plan per character. IRONCLAD is the plan measured on the logged A10 Ironclad runs and is what a
-# character without an entry gets. The others put the owner's guidance into the same terms. Their numbers
-# were first read off the decks Spire Mentor's run-policy net builds in simulated A10 runs (about 80 runs a
-# character, the deck at each act boss, runs that beat the boss against runs that did not) and then compared
-# as whole plans against Ironclad's (``pilot.runs``; the comparison is recorded with each plan). Simulator
-# evidence throughout: a stand-in drafter, a small fight search, no live run.
+# character without an entry gets. The others put the owner's guidance into the same terms.
+#
+# How their numbers were set (simulator evidence throughout: ``pilot.runs``, engine fingerprint
+# cc2c06eb91b21a2a, ascension 10, 80 seeds a character, runs ended at the act 2 boss, fights searched
+# with 400 simulations a decision and 1600 at bosses; a stand-in drafter, no model and no live run):
+#   1. Read off the decks Spire Mentor's run-policy net builds by itself, at each act boss, in runs that
+#      beat the boss and runs that did not. Runs that won held one Frost card per 8 to 10 cards (Defect),
+#      Star costs within a Star of the Stars gained (Regent), fewer attacks and more Block and scaling
+#      than runs that lost (Necrobinder), and 3.5 damage-scaling cards at the act 2 boss (Regent) where
+#      every other character's held about 2.
+#   2. Each plan drafted the same 80 seeds as Ironclad's plan ("shared") did for that character. Paired
+#      differences, plan minus shared, with standard errors:
+#        SILENT       floor +0.04 +-0.71, act 1 boss +0.0 +-4.4 points, act 2 boss -1.3 +-2.8 points
+#        NECROBINDER  floor -0.06 +-0.68, act 1 boss +0.0 +-5.0 points, act 2 boss -3.7 +-2.8 points
+#        REGENT       floor -0.28 +-0.43, act 1 boss -2.5 +-2.5 points, act 2 boss +8.7 +-4.1 points
+#        DEFECT       floor +0.42 +-0.71, act 1 boss +0.0 +-4.0 points, act 2 boss +5.0 +-4.3 points
+#      So the Regent's plan beat the act 2 boss more often than the shared plan did, and the others are
+#      level with it: they are kept because they say what the owner asked for at no measured cost, not
+#      because they were shown to be stronger.
+#   3. Ironclad's own plan against the net by itself: floor -0.82 +-0.72, act 2 boss +0.0 +-6.4 points,
+#      with a deck 3 cards smaller. For the other four the shared plan cost act 2 boss wins against the net
+#      (Regent -11.3 +-5.0 points, Defect -13.8 +-6.4, Necrobinder -7.5 +-3.5); their own plans gave most
+#      of that back for the Regent (-2.5 +-4.0) and part of it for the Defect (-8.7 +-6.5).
 PLANS = {
     "IRONCLAD": DeckPlan(note="damage first in act 1, then a balanced deck that is kept thin from act 2"),
-    # Owner: consistent Weak and Block, damage scaling taken for the bosses.
+    # Owner: consistent Weak and Block, damage scaling taken for the bosses. One Weak source per 10 cards
+    # raised the Weak sources held at the act 1 boss from 1.5 to 1.8. Asking for one per 6 cards and Block
+    # before damage in the first picks (2.1 held) was no better: floor -0.11 +-0.71 against shared, act 1
+    # boss -3.7 +-4.5 points.
     "SILENT": DeckPlan(
         early_roles=("damage", "block"), scaling_full=3, late_first=("damage_scaling", "block_scaling"),
         tracks=("weak",), targets={"weak_per_cards": 10, "weak_min": 2},
         note="Weak applied every turn and reliable Block come first; damage scaling is taken for each act's boss"),
-    # Owner: removals and a smaller deck, Block and Osty's HP preserved, then scaling.
+    # Owner: removals and a smaller deck, Block and Osty's HP preserved, then scaling. The deck is held small
+    # from act 2 and not before: skipping cards that fill nothing already in act 1 lost the act 1 boss more
+    # often, at a target of 18 cards (floor -1.69 +-0.75 against shared, act 1 boss -11.3 +-5.6 points) and of
+    # 22 (floor -1.05 +-0.79). From act 2, a target of 22 and no target measured the same (-0.03 and -0.06
+    # +-0.68), so 22 is kept: the plan then buys twice the shop removals (0.8 a run against 0.4). Its Summon
+    # and Osty tracks changed no outcome (floor +0.00 +-0.53 without them).
     "NECROBINDER": DeckPlan(
-        early_roles=("block", "damage"), early_picks=2, thin_from_act=1, deck_target=18, scaling_full=3,
+        early_roles=("block", "damage"), early_picks=2, deck_target=22, scaling_full=3,
         late_first=("damage_scaling", "block_scaling"), tracks=("deck_size", "osty", "summon"),
         targets={"summon_min": 2},
-        note="a small deck: removals before additions, Block and Osty's HP kept up, and room left only for scaling"),
-    # Owner: Star gain balanced against Star cost, Block alongside, scaling by Stars or by the sword.
+        note="a small deck from act 2: removals before additions, Block and Osty's HP kept up, and room left only "
+             "for scaling"),
+    # Owner: Star gain balanced against Star cost, Block alongside, scaling by Stars or by the sword. Forge
+    # cards are common and add up, so five sources fill damage scaling here, not two.
     "REGENT": DeckPlan(
         early_roles=("damage", "block"), scaling_full=5, late_first=("block_scaling", "damage_scaling"),
         tracks=("stars",), targets={"star_deficit": 3, "star_slack": 2},
@@ -255,7 +283,8 @@ def _track_deck_size(plan, deck_size, marks, names):
     status = "covered" if target is None or deck_size < target else "over_supplied"
     return {"count": deck_size, "target": target, "cards": [], "status": status,
             "rule": f"deck size against the {target} cards this plan holds to: at or above it a card is added only "
-                    "when it fills a missing or short role or track, and a removal comes before an addition"}
+                    "when it fills a missing or short role or track or adds scaling the deck is not yet full of, and "
+                    "a removal comes before an addition"}
 
 
 def _track_stars(plan, deck_size, marks, names):
@@ -383,8 +412,11 @@ def balance(deck, act=None, character=None, plan: DeckPlan | None = None) -> dic
     }
 
 
-def _track_effect(state, marks, fills_role) -> tuple:
-    """(tracks the card fills, tracks it worsens) for the deck ``state`` describes."""
+def _track_effect(state, marks, earns_slot) -> tuple:
+    """(tracks the card fills, tracks it worsens) for the deck ``state`` describes.
+
+    ``earns_slot``: the card fills a missing or short role, or adds scaling the deck is not yet full of,
+    which is what a deck held to a target size still makes room for."""
     tracks, fills, worse, limits = state.get("tracks") or {}, [], [], state["limits"]
     status = {name: row["status"] for name, row in tracks.items()}
     if "weak" in status and marks.get("weak"):
@@ -403,7 +435,7 @@ def _track_effect(state, marks, fills_role) -> tuple:
             (fills if cost > gain else worse if gain > cost else []).append("stars")
         elif cost > gain and (cost - gain) - tracks["stars"]["count"] > limits.get("star_deficit", 3):
             worse.append("stars")       # balanced now, short after this card
-    if status.get("deck_size") in EXCESS and not fills and not fills_role:
+    if status.get("deck_size") in EXCESS and not fills and not earns_slot:
         worse.append("deck_size")
     return fills, worse
 
@@ -416,8 +448,8 @@ def offer_effects(state, offers) -> list:
     In the early phase the plan's first roles count as needed and never as over-supplied.
     ``fills_priority`` marks a card for the phase's most urgent role or track. A character's tracks
     are judged with the roles: a card can fill one (Weak while it is short) or worsen one (a Star
-    cost the deck's Stars do not pay for, a card that kills Osty, any card that fills nothing once
-    the deck is at its target size).
+    cost the deck's Stars do not pay for, a card that kills Osty, any card that neither fills a need
+    nor adds scaling once the deck is at its target size).
     """
     if not state:
         return []
@@ -434,7 +466,8 @@ def offer_effects(state, offers) -> list:
         over = [r for r in roles if not (early and r in priority)
                 and (after_status[r] == "over_supplied" if r in FRONT else counts[r] >= limits["scaling_full"])]
         fills = [r for r in roles if (early and r in priority) or state["status"][r] in NEEDS]
-        track_fills, track_over = _track_effect(state, card_marks(card), bool(fills))
+        grows = any(r in SCALING and counts[r] < limits["scaling_full"] for r in roles)
+        track_fills, track_over = _track_effect(state, card_marks(card), bool(fills) or grows)
         fills, over = fills + track_fills, over + track_over
         out.append({"action_id": action_id, "name": _field(card, "name"), "roles": list(roles) or ["other"],
                     "fills_short": fills, "fills_priority": bool(top.intersection(fills)),
