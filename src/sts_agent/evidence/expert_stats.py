@@ -24,6 +24,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from ..config import ExpertStatsConfig
+from . import card_strength
 
 API_ROOT = "https://spire-codex.com"
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -546,6 +547,11 @@ class ExpertDecisionStats:
             evidence["limitations"].append("Runs span all game versions; no version filter was applied.")
         if reason:
             evidence["reason"] = reason
+        if card_strength.active():
+            for card in evidence["cards"]:
+                note = card_strength.upgrade_note(character, card.get("id"))
+                if note and card.get("upgraded") is not True:
+                    card["owner_note"] = note
         if view.kind not in ("card_reward", "shop") and self.config.history_enabled:   # where an upgrade is chosen
             self._add_upgrade_effects(evidence, deadline=deadline)
         support["upgrade_priority"] = evidence
@@ -572,6 +578,8 @@ class ExpertDecisionStats:
             effect = {"changes": numbers} if numbers else {}
             if "cost" in change:
                 effect["cost"] = f"{entry.get('cost')} -> {change['cost']}"
+                if card_strength.active():
+                    effect["kind"] = "cost_reduction"   # named, because it was read past as "cheap" (Stampede, 2 -> 1)
             after = entry.get("upgrade_description")
             if change.get("description_changed") and isinstance(after, str):
                 effect["text_after"] = re.sub(r"\[/?[A-Za-z_]+(?:[=:][^\]]*)?\]", "", after).replace("\n", " ")[:300]
@@ -1428,6 +1436,18 @@ class ExpertDecisionStats:
                     _withhold(row, self.config.min_context_samples)
                 else:
                     row["reason"] = "no_recorded_observations"
+            if view.kind == "shop" and not invalid_key and key[0] == "cards" and card_strength.active():
+                # The buy rate of a card is near zero whatever the card (those players rarely buy cards), so it
+                # cannot tell a strong one from a weak one. How often they take it as a reward can.
+                seen = [tables["cards"][key[1]] for _, tables in profiles if tables["cards"].get(key[1])]
+                taken, offered = sum(n for n, _ in seen), sum(d for _, d in seen)
+                if offered:
+                    row["reward_pick_rate"] = _withhold(
+                        {"metric": "pick_rate", "numerator": taken, "denominator": offered,
+                         "rate_pct": round(taken / offered * 100, 2),
+                         "contributing_players": sum(1 for _, d in seen if d),
+                         "note": "how often these players took this card when it was offered as a card reward"},
+                        self.config.min_context_samples)
             support["options"].append(row)
         available = sum(row["status"] == "available" for row in support["options"])
         support["status"] = ("available" if available == len(candidates) and len(profiles) == len(cohort)

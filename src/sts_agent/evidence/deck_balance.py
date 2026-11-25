@@ -57,6 +57,7 @@ class DeckPlan:
     deck_target: int | None = None  # deck size the plan holds to: at or above it only a card that fills a need is added
     deck_targets: dict = field(default_factory=dict)    # act -> the deck size held to in that act (replaces ``deck_target``)
     removals_from_act: int | None = None    # from this act the shop's card removal is bought before a card (``pilot.runs``)
+    skip_neutral_from_act: int | None = None    # from this act a card that fills nothing is skipped unless it is strong
     tracks: tuple = ()              # the character's own tracks, most urgent first (``_TRACKS``)
     targets: dict = field(default_factory=dict)     # numbers the tracks read (see each track)
     note: str = ""                  # the plan in one sentence, shown with the evidence
@@ -253,24 +254,30 @@ PLANS_V0107 = {
 #     help: the shop's removal not bought first (floor -0.12 +-0.15), no cap on damage cards (floor -0.03
 #     +-0.55, act 2 boss -3.3 +-5.3 points) and a deck kept thin from act 2 (floor -0.47 +-0.32, act 2
 #     boss -6.7 +-5.2 points).
+# After the first live run on this build (2026-11-25, Ironclad): the plan had no act from which a card that fills
+# nothing is left, so the rule of act 1 ("a solid neutral card is worth taking") held all run and 15 of 15 card
+# rewards were taken, among them cards the selected players take one time in seven. The players above took a card
+# with no role one time in three in every act and 64% of act 2's rewards (Ironclad). ``skip_neutral_from_act=2``
+# makes skipping the default for such a card from act 2 on, unless it is strong by itself (``card_strength``).
+# Not simulated: ``pilot.runs`` reads only ``thin_from_act`` for its stand-in drafter.
 PLANS_V0111 = {
     "IRONCLAD": DeckPlan(
         early_roles=("damage_scaling", "block"), thin_from_act=None, front_min=99, build_first=("block_scaling",),
         caps={"damage": (5, 7, 8)}, scaling_min={"block_scaling": 4}, scaling_full=4,
-        tracks=("weak", "flow"), targets={"weak_per_cards": 0, "weak_min": 1}, removals_from_act=2,
+        tracks=("weak", "flow"), targets={"weak_per_cards": 0, "weak_min": 1}, removals_from_act=2, skip_neutral_from_act=2,
         note="one Weak source and Block that grows first, draw and energy taken at any count, Exhaust utility added in "
              "every act; attacks stop once the deck holds what the best decks hold"),
     "SILENT": DeckPlan(
         early_roles=("damage_scaling", "damage", "block"), thin_from_act=None,
         build_first=("block_scaling", "damage_scaling"), caps={"damage": (5, 7, 8)}, never_over=("block",),
         scaling_min={"block_scaling": 4, "damage_scaling": 2}, scaling_full=7,
-        tracks=("weak",), targets={"weak_per_cards": 0, "weak_min": 2, "weak_over": 3}, removals_from_act=2,
+        tracks=("weak",), targets={"weak_per_cards": 0, "weak_min": 2, "weak_over": 3}, removals_from_act=2, skip_neutral_from_act=2,
         note="Block that grows first, then Shiv scaling, two Weak sources, Block, draw and utility added in every "
              "act; plain attacks stop after the first few"),
     "NECROBINDER": DeckPlan(
         early_roles=("damage_scaling", "block"), thin_from_act=None, front_min=99, caps={"damage": (5, 7, 9)},
         scaling_full=5,
-        tracks=("weak", "osty"), targets={"weak_per_cards": 7, "weak_min": 4, "osty_dies_ok": 1}, removals_from_act=2,
+        tracks=("weak", "osty"), targets={"weak_per_cards": 7, "weak_min": 4, "osty_dies_ok": 1}, removals_from_act=2, skip_neutral_from_act=2,
         note="Weak first and in numbers, Block and a first damage multiplier, removals before additions from act 2, "
              "energy and draw in every act; plain attacks stop after the first few"),
     "REGENT": DeckPlan(
@@ -278,7 +285,7 @@ PLANS_V0111 = {
         caps={"damage": (4, 5, 6)}, scaling_min={"block_scaling": 4}, scaling_full=7,
         tracks=("stars", "weak"),
         targets={"star_deficit": 3, "star_slack": 3, "weak_per_cards": 0, "weak_min": 1, "weak_over": 2},
-        removals_from_act=2,
+        removals_from_act=2, skip_neutral_from_act=2,
         note="Star costs paid for by Star gain, Block that grows first, Block and Star utility added in every act; "
              "few plain attacks"),
     "DEFECT": DeckPlan(
@@ -286,7 +293,7 @@ PLANS_V0111 = {
         build_first=("block_scaling",), caps={"damage": (6, 8, 10)}, scaling_min={"block_scaling": 4}, scaling_full=7,
         tracks=("frost", "weak"),
         targets={"frost_per_cards": 99, "frost_min": 2, "frost_max": 6, "weak_per_cards": 0, "weak_min": 1, "weak_over": 1},
-        removals_from_act=2,
+        removals_from_act=2, skip_neutral_from_act=2,
         note="two Frost cards and Block first, one Weak source, Focus, Orb slots and Block Powers while under four; "
              "draw and energy added in every act, attacks only while few are held"),
 }
@@ -304,6 +311,19 @@ def plan_for(character, build=None) -> DeckPlan:
     Ironclad's for a character without one."""
     table = plans(build)
     return table.get(character_key(character) or "IRONCLAD", table["IRONCLAD"])
+
+
+LEAVE_NEUTRAL = ("fill missing or short roles and tracks first and skip cards that worsen the balance; a card that "
+                 "fills nothing is taken only when it is strong by itself (card_strength reads often_taken, or an "
+                 "owner note calls it strong), and skipping is the default: the best players leave about one card "
+                 "reward in three from act 2 on")
+
+
+def neutral_cards(plan: DeckPlan, act) -> str | None:
+    """What a plan that keeps building does with a card that fills nothing, in this act; None for other plans."""
+    if plan.skip_neutral_from_act is None:
+        return None
+    return "skip_unless_strong" if act is not None and act >= plan.skip_neutral_from_act else "take_solid"
 
 
 def phase_rules(plan: DeckPlan) -> dict:
@@ -666,12 +686,16 @@ def balance(deck, act=None, character=None, plan: DeckPlan | None = None) -> dic
     tracks = {name: _TRACKS[name](plan, size, marks, {k: sorted(v)[:MAX_NAMES] for k, v in mark_names.items()}, act)
               for name in plan.tracks}
     stage = phase(act, added, plan)
+    neutral = neutral_cards(plan, act)
+    rule = phase_rules(plan)[stage]
+    if stage == BUILD and neutral == "skip_unless_strong":
+        rule = f"act {plan.skip_neutral_from_act} onwards: {LEAVE_NEUTRAL}"
     sides = {"damage": counts["damage"] + counts["damage_scaling"], "block": counts["block"] + counts["block_scaling"]}
     return {
         "label": "DECK BALANCE: the cards added beyond the starter, counted by what they do. Rules over card text, "
                  "not a strength score.",
         "character": character_key(character), "plan": plan.note,
-        "phase": stage, "phase_rule": phase_rules(plan)[stage], "priority": _priority(stage, status, plan, tracks),
+        "phase": stage, "phase_rule": rule, **({"neutral_cards": neutral} if neutral else {}), "priority": _priority(stage, status, plan, tracks),
         "deck_size": size, "curses_and_statuses": dead, "starter_cards": starter, "cards_added": added,
         "added": {role: {"count": counts[role], "cards": sorted(names[role])[:MAX_NAMES]} for role in counts},
         "status": status,

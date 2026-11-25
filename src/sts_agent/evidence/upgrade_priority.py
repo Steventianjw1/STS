@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from statistics import median
 
+from . import card_strength
 from .expert_stats import _id, _withhold, evidence_strength
+
+LOW_SAMPLE = 8      # observations from which a withheld upgrade rate is still shown, marked low_sample
 
 
 def _summary(rows, origin, min_samples):
@@ -14,6 +17,11 @@ def _summary(rows, origin, min_samples):
               "contributing_players": len({r["username"] for r in rows}),
               "contributing_runs": len({r["run_hash"] for r in rows})}
     _withhold(result, min_samples)
+    if (card_strength.active() and result["rate_pct"] is None and LOW_SAMPLE <= total < min_samples
+            and result["contributing_players"] >= 2):
+        # A card held in few recorded runs (Stampede: upgraded in 8 of 10) lost its whole record to the
+        # sample rule, beside starter cards with hundreds of runs and a low rate. Shown, and marked.
+        result["low_sample_rate_pct"] = round(100 * n / total, 2)
     timing_strength = evidence_strength(n, len({r["username"] for r in upgraded}), min_samples)
     delays = [r["upgrade_floor"] - (r["born"] if origin is None else origin) for r in upgraded]
     result["timing"] = {"basis": "floors_after_acquisition" if origin is None else "floors_from_current_floor",

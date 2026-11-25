@@ -22,7 +22,7 @@ from .models import DecisionFrame, route_plan_mode
 
 # One version per game build (``game.builds``): a build's prompt carries its characters' guidance, so the
 # version that names the text is the build's own. ``DECISION_PROMPT_VERSION`` is the one of the build in use.
-DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-36", "v0.111.0": "decision-prompt-41"}
+DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-36", "v0.111.0": "decision-prompt-42"}
 
 
 def decision_prompt_version(build=None) -> str:
@@ -385,7 +385,7 @@ RESTING VERSUS UPGRADING, at a rest site and on the map when the room you travel
 # runs, 8.5k to 10k card rewards a character): the rate at which a card that draws or gives energy was taken does not
 # move with how many the deck holds or with its Powers. The comparison with the setup held is the narrated player's.
 _ACCESS = """\
-DRAW, ENERGY AND GETTING POWERS INTO PLAY ARE NOT AMONG THE FOUR ROLES. Where this character's plan counts them (a deck_balance track named flow), the track's status wanted means a card that draws or gives energy improves the deck at any count: deck_balance_offers marks it improves, and it is taken after the missing or short roles and tracks, not before them. For every other character deck_balance lists such cards under added.other and marks one neutral whatever the deck needs, so for these cards neutral is not a verdict. What is known: the best players took a card that draws or gives energy about three times in ten whatever the deck already held of them and however many Powers it held (the Ironclad nearly half the time), so such a card is never a skip on count alone, and nothing in their picks shows a cap. What decides between it and another card the deck does not otherwise need is whether the deck can find and pay for what it holds. Count its setup (the Powers, and the other cards costing 2 or more that it wants in play early) against what finds and pays for that setup (cards that draw, give energy, keep cards in hand or cost 0). When the setup outnumbers what serves it (several Powers and one or no card that draws or gives energy; recent fights that ended with Powers unplayed), the draw, energy or hand-keeping card is the better of the two: say which the deck lacks, cards or energy. More draw without the energy to play what it finds adds nothing, and neither does energy with nothing to spend it on. Once the deck plays its setup in the first turns of a fight, one more such card is judged by its quality like any other."""
+DRAW, ENERGY AND GETTING POWERS INTO PLAY ARE NOT AMONG THE FOUR ROLES. Where this character's plan counts them (a deck_balance track named flow), the track's status wanted means a card that draws or gives energy improves the deck at any count: deck_balance_offers marks it improves, and it is taken after the missing or short roles and tracks, not before them, unless CARD STRENGTH below reads it above the role card it competes with. For every other character deck_balance lists such cards under added.other and marks one neutral whatever the deck needs, so for these cards neutral is not a verdict. What is known: the best players took a card that draws or gives energy about three times in ten whatever the deck already held of them and however many Powers it held (the Ironclad nearly half the time), so such a card is never a skip on count alone, and nothing in their picks shows a cap. What decides between it and another card the deck does not otherwise need is whether the deck can find and pay for what it holds. Count its setup (the Powers, and the other cards costing 2 or more that it wants in play early) against what finds and pays for that setup (cards that draw, give energy, keep cards in hand or cost 0). When the setup outnumbers what serves it (several Powers and one or no card that draws or gives energy; recent fights that ended with Powers unplayed), the draw, energy or hand-keeping card is the better of the two: say which the deck lacks, cards or energy. More draw without the energy to play what it finds adds nothing, and neither does energy with nothing to spend it on. Once the deck plays its setup in the first turns of a fight, one more such card is judged by its quality like any other."""
 
 _GRID_DRAWS = """\
 A removal is worth what it does to the draws that remain: give up the card that most delays the ones the plan needs, usually a starter Strike, then the starter card nothing in the deck improves. Check the target against the deck as it is now: a card that has since been upgraded, or that a held card or relic makes better (a Power that pays for that kind of card, an enchantment on it), is no longer the one to give up. When the removal is random, or nothing in the deck is unwanted, declining it is right. A transform is a removal plus an unknown card: good on a starter card when it is free or cheap."""
@@ -438,7 +438,12 @@ def _v0111_noncombat() -> str:
 
 def _v0111_balance(text: str, skip_wrong: str) -> str:
     text = _changed(text, _ON_PAPER, _ON_PAPER_OR_BET)
-    return _changed(text, skip_wrong + ".", skip_wrong + _REPEAT) + "\n\n" + _ACCESS
+    text = _changed(text, "a solid neutral card is worth taking over a skip. Skip only cards that worsen the balance "
+                    "and cards that are weak.",
+                    "a solid neutral card is worth taking over a skip. Skip only cards that worsen the balance "
+                    "and cards that are weak. That change holds while deck_balance.neutral_cards reads take_solid "
+                    "(act 1); once it reads skip_unless_strong, CARD STRENGTH below says which such cards are taken.")
+    return _changed(text, skip_wrong + ".", skip_wrong + _REPEAT) + "\n\n" + _ACCESS + "\n\n" + _CARD_STRENGTH
 
 
 def _v0111_autobattle(text: str) -> str:
@@ -455,6 +460,31 @@ def _v0111_potions_held(text: str) -> str:
     return _changed(text, "Holding potions in simulation cost about 5 more HP per hallway fight and about 9 per elite",
                     "On this game version, keeping a potion cost about 4 HP in a simulated hallway fight and about 7 at an elite")
 
+
+# After the first live run on this build (2026-11-25): the balance ranked cards by role only, so True Grit was bought
+# over Battle Trance, cards the selected players take one time in seven were added because they filled nothing and
+# worsened nothing, every card reward of the run was taken, and Bash was upgraded before Stampede's cost cut on the
+# strength of one boss mechanic. ``evidence.card_strength`` supplies the reading these rules use.
+_CARD_STRENGTH = """\
+CARD STRENGTH: HOW GOOD THE CARD IS BY ITSELF. The balance says which role a card fills and never whether the card is good; current_facts.card_strength (card rewards and shops) says that. For each offered card it gives expert_pick_rate_pct, how often the selected expert players took the card when it was offered as a reward, and read: often_taken (40% or more), sometimes_taken, rarely_taken (under 20%) or unknown. An owner_note is what the person running this agent knows about the card: it sets read and outranks the rate. At a shop use this and not the buy rate in decision_support.options: those players rarely buy any card, so a buy rate near zero says nothing about the card. Apply it to the offers the balance does not mark worsens:
+- A card read often_taken is taken ahead of one read sometimes_taken or rarely_taken, whatever roles the two fill. The order among improving offers (fills_priority, the lighter side, a missing role before a short one) and the place of a flow card after the roles decide only between cards of the same read. One exception: a card that supplies the first entry of priority while that role or track is missing wins over a better-read card that does not, unless it is itself read rarely_taken.
+- A card read rarely_taken is never taken or bought because it fills nothing and worsens nothing. It is taken only when it supplies a missing role or track on the priority list and no better-read offer does; say so when it is.
+- When deck_balance.neutral_cards is skip_unless_strong (from act 2), a card whose effect is neutral is taken only when it is read often_taken. Otherwise skip it, and at a shop keep the gold or spend it on the removal, a relic or a potion: those players leave about one card reward in three from act 2 on, and an unused reward is not a loss.
+- A boss or elite demand never raises a card's read. A rule of one fight (a turn that allows a single card, one large attack) covers a few turns of that fight: it decides between two cards of the same read, and never makes a rarely_taken card or the smaller upgrade the right choice. A standing_plan entry written from such a demand weighs no more than the demand.
+State the read of the card you take, and of any better-read card you pass over, in one clause of the reason."""
+
+_UPGRADE_RANK = (
+    " RANK THE UPGRADES BY WHAT THEY CHANGE, not by which card is the biggest. upgrade_effect.kind cost_reduction "
+    "means the card costs less every time it is played for the rest of the run, and a Power comes into play a turn "
+    "sooner or beside another card: that is usually worth more than an upgrade that adds 2 or 3 to a number, most of "
+    "all on a starter card. Next come upgrades that change what the card does (text_after) or add a card drawn or an "
+    "energy; plain number increases come last. An owner_note on a card is what the person running this agent knows "
+    "about that upgrade and outranks the statistics. low_sample_rate_pct, shown where rate_pct is withheld, is the "
+    "share upgraded among 8 to 19 recorded copies from at least two players: a weak hint, but 8 of 10 upgraded says "
+    "more than no record, so never call such a card unproven beside a starter card whose adequate rate is low. The "
+    "standing plan's upgrade_targets were written without upgrade_effect: check each against it, and say so when you "
+    "depart from the list. One boss mechanic does not choose the upgrade: compare what each upgrade does in every "
+    "fight until then.")
 
 _ON_PAPER = "a Power too slow or too small to matter in the fights ahead) is still a skip."
 _ON_PAPER_OR_BET = (_ON_PAPER[:-1] + ", unless it passes the test for a payoff taken before its enabler given on card "
@@ -479,6 +509,7 @@ _V0111_MODULES = {
     "elite_stance_act3": _ELITE_ACT3,
     "ancient_route": _changed(_ANCIENT_ROUTE, "\n- Read the map the other way round as well:",
                               "\n" + _ANCIENT_CARDS + "\n- Read the map the other way round as well:"),
+    "evidence_upgrade_choice": _E_UPGRADE_CHOICE + _UPGRADE_RANK,
     "evidence_duplicate": _changed(_E_DUPLICATE, "does not by itself justify another. ",
                                    "does not by itself justify another. " + _DUPLICATE_WORTH + " "),
     "combat_play": _COMBAT_PLAY + "\n\n" + _COMBAT_HABITS,
