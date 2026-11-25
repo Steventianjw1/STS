@@ -551,7 +551,10 @@ def _event(raw, obs):
         option_id = _s(raw_option.get("option_id"), 120)
         if option_id:
             option["option_id"] = option_id
-    in_dialogue = e.get("in_dialogue") is True
+    # The mod can report a dialogue that is over: at the act 2 ancient Tezcatara it kept in_dialogue true with the
+    # three relic options already on screen, and advancing changed nothing. Options that can be chosen win.
+    in_dialogue = (e.get("in_dialogue") is True
+                   and not any(o["index"] is not None and not o["is_locked"] and not o["is_proceed"] for o in opts))
     details = {"event_id": _s(e.get("event_id"), 80), "event_name": _s(e.get("event_name"), 120),
                "is_ancient": e.get("is_ancient") if isinstance(e.get("is_ancient"), bool) else None,
                "in_dialogue": in_dialogue, "body": _s(e.get("body"), 2000), "options": opts}
