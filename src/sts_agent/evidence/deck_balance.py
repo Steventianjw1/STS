@@ -189,7 +189,8 @@ PLANS_V0107 = {
 #     none, at one more than the mean those decks held at each act's boss, rounded up; otherwise it is
 #     never over-supplied. Damage fell that far for all five (to 9, 8, 13, 8 and 11%) and held 3.5/5.4/7.0
 #     (Ironclad), 3.8/5.6/7.0 (Silent), 4.2/6.5/8.5 (Defect), 2.2/3.7/4.8 (Regent), 3.6/5.9/7.6
-#     (Necrobinder). Block fell that far for the Ironclad alone (38% to 18%, holding 2.5/4.3/5.8).
+#     (Necrobinder). Block fell that far for the Ironclad alone (38% to 18%, holding 2.5/4.3/5.8), by a
+#     hair, and there the simulated runs chose: no cap on Block (see below).
 #   - a scaling role is short while its pick rate is above the highest rate of a card with no role, and
 #     full from the count where the rate is under 20%. Block scaling stays above it through three held
 #     for the Ironclad (46/55/54/66%), Silent (88/75/68/60%), Defect (48/44/41/39%) and Regent
@@ -212,14 +213,42 @@ PLANS_V0107 = {
 #     (Necrobinder) was taken 29% with none held (39% in act 1) and 11% with one: one is carried.
 #   - removals by act: 0.4/1.6/1.1, 0.6/1.6/1.2, 0.5/1.8/0.9, 0.5/1.8/1.0, 0.8/2.0/1.2 in the order above:
 #     bought first from act 2 on.
-# Simulator evidence for these plans is under ``PLANS_V0111`` below.
+#
+# Simulator evidence is ``pilot.runs`` on Spire Mentor's v0.111.0 engine (release 0.11.8, fingerprint
+# b3df13b15b37b75e), run 2026-11-25: ascension 10, runs ended at the act 2 boss, fights searched with 400
+# simulations a decision and 1600 at bosses, a stand-in drafter, no model and no live run. Every plan of
+# a character drafted the same seeds: 120 for Spire Mentor's run-policy net alone, 60 for the plan carried
+# over from v0.107.1 and for the first refit, 60 or 80 for a variant. Average floor / act 1 boss beaten /
+# act 2 boss beaten of the plans below, then the plan minus the carried-over plan, and minus the net:
+#     IRONCLAD     27.6 / 83.3% / 55.0%   +1.58 +-0.80, +8.3 +-4.3, +13.3 +-7.3   -1.17 +-0.73, -5.0 +-3.7, -8.3 +-6.8
+#     SILENT       21.4 / 56.7% / 33.3%   +0.00 +-0.00, +0.0 +-0.0, +0.0 +-2.4    -1.05 +-0.83, -5.0 +-5.5, -1.7 +-5.6
+#     DEFECT       25.7 / 76.7% / 45.0%   +0.07 +-0.06, +0.0 +-0.0, +3.3 +-2.3    -0.33 +-0.67, -5.0 +-3.7, -3.3 +-6.7
+#     REGENT       23.3 / 73.8% / 25.0%   +0.00 +-0.44, -5.0 +-2.8, +5.0 +-6.9    +1.04 +-0.72, +5.0 +-3.9, +2.5 +-5.0
+#     NECROBINDER  19.5 / 46.7% / 15.0%   +0.33 +-0.35, +0.0 +-0.0, +3.3 +-2.3    -0.13 +-0.52, -3.3 +-2.3, -3.3 +-4.7
+# (the net alone: 27.4 / 83.3% / 57.5%, 23.0 / 63.3% / 34.2%, 25.9 / 80.0% / 45.8%, 22.8 / 68.3% / 24.2% and
+# 19.8 / 49.2% / 18.3%). So no refit is behind the plan it replaces, the Ironclad's is ahead of it, and all
+# five are within noise of the net by itself, as on v0.107.1. They are kept because they read decks the
+# way this build's players build them: of the cards those players took, the refits call 7% (Ironclad),
+# 11% (Silent), 6% (Defect), 11% (Regent) and 9% (Necrobinder) worsening, where the carried-over plans
+# call 20, 12, 9, 14 and 11%, and a card a refit puts first was taken 43, 38, 39, 33 and 54% of the times
+# it was offered (27, 34, 38, 28 and 56% before).
+# Two numbers the rules above left open were set by these runs:
+#   - Ironclad, Block. With Block capped at the players' holding plus one (4, 6 and 7 by act) the plan
+#     reached 27.3 / 81.7% / 50.0%; without the cap floor +0.35 +-0.27 and act 2 boss +5.0 +-3.7 points:
+#     no cap. Damage and Block as the first picks instead was behind (floor -0.45 +-0.64).
+#   - Regent, first picks. Block and damage scaling first reached 23.7 / 71.7% / 25.0% and lost the act 1
+#     boss more often than the carried-over plan (-8.3 +-4.3 points); damage and Block first gave floor
+#     +0.58 +-0.60 and act 2 boss +5.0 +-3.7 points against it. Three other changes to that refit did not
+#     help: the shop's removal not bought first (floor -0.12 +-0.15), no cap on damage cards (floor -0.03
+#     +-0.55, act 2 boss -3.3 +-5.3 points) and a deck kept thin from act 2 (floor -0.47 +-0.32, act 2
+#     boss -6.7 +-5.2 points).
 PLANS_V0111 = {
     "IRONCLAD": DeckPlan(
         early_roles=("damage_scaling", "block"), thin_from_act=None, front_min=99, build_first=("block_scaling",),
-        caps={"damage": (5, 7, 8), "block": (4, 6, 7)}, scaling_min={"block_scaling": 4}, scaling_full=4,
+        caps={"damage": (5, 7, 8)}, scaling_min={"block_scaling": 4}, scaling_full=4,
         tracks=("weak",), targets={"weak_per_cards": 0, "weak_min": 1}, removals_from_act=2,
         note="one Weak source and Block that grows first, draw, energy and Exhaust utility added in every act; "
-             "attacks and plain Block stop once the deck holds what the best decks hold"),
+             "attacks stop once the deck holds what the best decks hold"),
     "SILENT": DeckPlan(
         early_roles=("damage_scaling", "damage", "block"), thin_from_act=None,
         build_first=("block_scaling", "damage_scaling"), caps={"damage": (5, 7, 8)}, never_over=("block",),
