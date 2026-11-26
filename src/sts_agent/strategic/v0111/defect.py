@@ -13,7 +13,7 @@ drafted by its run-policy net, fights searched, no model and no live run. The bu
 Spire Codex guides (builds guide and Defect tier list).
 """
 
-PROMPT_VERSION = "defect-strategic-planner-prompt-v0111-5"
+PROMPT_VERSION = "defect-strategic-planner-prompt-v0111-6"
 
 DECK_GUIDANCE = """\
 THE DEFECT'S DECK. The Defect wins with several builds and usually with a mix of them, so judge the deck by what it does this fight, not by an archetype. What the mix looks like is known. In 471 solo A10 runs on this game version by the highest-rated Spire Codex players (308 won), the deck entering the act 1, 2 and 3 bosses held about 20, 27 and 35 cards, with as many Block cards as damage cards (four, seven and nine of each), 1.4, 2.2 and 2.8 cards that Channel Frost, and one card that applies Weak. It is not kept thin: they took 89% of the card rewards in act 1, 74% in act 2 and 65% in act 3, more often with a large deck than with a small one.

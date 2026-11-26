@@ -28,6 +28,7 @@ from typing import Callable
 
 from ..evidence import boss_demands, budget, card_strength, deck_balance, enemy_patterns
 from ..evidence.potion_odds import drop_state
+from ..game import builds
 from ..game.client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
 from ..config import Limits
 from ..session.hooks import SessionHooks
@@ -77,6 +78,12 @@ COMBAT_OVERLAY_KINDS = ("card_select",)
 # The game's refusal while a room is still opening, e.g. "Rest site room is not open" (observed live).
 _ROOM_NOT_OPEN = re.compile(r"\bnot open\b", re.I)
 STATE_VERSION = 1
+
+
+# Builds whose decision prompts describe the uncovered losing condition, where a card the balance would withhold
+# stays offered because it answers an act-boss demand the deck has nothing for.
+_BOSS_ANSWER_BUILDS = ("v0.111.0",)
+_BOSS_ANSWER_TEXT = {"aoe": "an attack that hits ALL enemies", "multi_hit": "an attack that hits several times"}
 
 
 class _Stop(Exception):
@@ -582,7 +589,14 @@ class RunCoordinator:
         """Offered cards that would only add to a role the deck already holds too many of, by action_id.
 
         They are withheld from the model at card rewards and shops: left to its judgment, nearly
-        every such card found a reason to be taken. A card reward keeps them unless it can be skipped."""
+        every such card found a reason to be taken. A card reward keeps them unless it can be skipped.
+        One that answers an act-boss demand nothing in the deck supplies stays (``_boss_answers``)."""
+        rejects = self._worsening_offers(v)
+        released = self._boss_answers(v, rejects)
+        return {aid: o for aid, o in rejects.items() if aid not in released}
+
+    def _worsening_offers(self, v: ScreenView) -> dict:
+        """Every offered card whose balance effect is worsens, by action_id, on screens that withhold them."""
         if (v.kind not in ("card_reward", "shop") or v.in_combat or self._handoff or self._fight_overlay(v)
                 or v.facts.get("combat_context")):
             return {}
@@ -597,6 +611,33 @@ class RunCoordinator:
             if c["kind"] == "select_card_reward"
             or (c["kind"] == "shop_purchase" and c["details"].get("category") == "card")])
         return {o["action_id"]: o for o in offers if o["effect"] == "worsens"}
+
+    def _boss_answers(self, v: ScreenView, rejects: dict) -> dict:
+        """Of the ``rejects``, those whose text answers an act-boss demand no card in the deck supplies, with that
+        limitation line, by action_id.
+
+        The role counts call a deck of single-target attacks over-supplied with damage, and the boss that is three
+        monsters, or that loses only 1 HP to each hit, is lost all the same. Such a card is shown, as the losing
+        condition the balance rules admit, and the model judges it by that fight. On the builds whose prompts
+        describe that exception."""
+        if not rejects or builds.active().key not in _BOSS_ANSWER_BUILDS:
+            return {}
+        open_needs = boss_demands.open_text_needs(self._act_boss(v), v.facts.get("deck"))
+        if not open_needs:
+            return {}
+        by_id = {c["action_id"]: c for c in v.candidates}
+        out = {}
+        for aid, offer in rejects.items():
+            needs = sorted(boss_demands.text_needs((by_id.get(aid) or {}).get("details")) & set(open_needs))
+            if needs:
+                asks = "; ".join(f"{_BOSS_ANSWER_TEXT[n]}, which {', '.join(open_needs[n])} asks for "
+                                 f"(act_boss deck_demands [{n}])" for n in needs)
+                out[aid] = (f"Offered although it adds only to a role this deck already holds too many of "
+                            f"(current_facts.deck_balance): {offer['name']} "
+                            f"({', '.join(offer['adds_to_over_supplied'])}). It is {asks}, and no card in the deck "
+                            f"supplies that. This is the uncovered losing condition the balance rules allow: one "
+                            f"such card answers it, so judge it by that fight against the other offers and skipping.")
+        return out
 
     def _hidden_candidates(self, v: ScreenView) -> dict:
         """Candidates withheld from the model on this screen: action_id -> the limitation line that says why."""
@@ -1083,6 +1124,7 @@ class RunCoordinator:
             cands = [c for c in cands if c["action_id"] not in hidden
                      and not any(aid in hidden for aid in v.bindings[c["action_id"]].get("steps", []))]
             lims.extend(sorted(set(hidden.values())))
+        lims.extend(self._boss_answers(v, self._worsening_offers(v)).values())
         cap = CAPABILITIES.get(v.kind, {})
         overlay = self._fight_overlay(v) or self._handoff
         boss = None if v.in_combat or overlay else self._act_boss(v)

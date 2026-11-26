@@ -22,7 +22,7 @@ from .models import DecisionFrame, route_plan_mode
 
 # One version per game build (``game.builds``): a build's prompt carries its characters' guidance, so the
 # version that names the text is the build's own. ``DECISION_PROMPT_VERSION`` is the one of the build in use.
-DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-36", "v0.111.0": "decision-prompt-43"}
+DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-36", "v0.111.0": "decision-prompt-44"}
 
 
 def decision_prompt_version(build=None) -> str:
@@ -443,6 +443,12 @@ def _v0111_balance(text: str, skip_wrong: str) -> str:
                     "a solid neutral card is worth taking over a skip. Skip only cards that worsen the balance "
                     "and cards that are weak. That change holds while deck_balance.neutral_cards reads take_solid "
                     "(act 1); once it reads skip_unless_strong, CARD STRENGTH below says which such cards are taken.")
+    text = _changed(text, "\n- Boss demands and elite gaps say WHICH card", "\n" + _LOSING_CONDITION
+                    + "\n- Boss demands and elite gaps say WHICH card")
+    if "the exception is for a card that would reach the deck another way" in text:   # the Ironclad's module
+        text = _changed(text, "the exception is for a card that would reach the deck another way",
+                        "apart from the card a losing condition keeps offered (below), the exception is for a card "
+                        "that would reach the deck another way")
     return _changed(text, skip_wrong + ".", skip_wrong + _REPEAT) + "\n\n" + _ACCESS + "\n\n" + _CARD_STRENGTH
 
 
@@ -468,9 +474,9 @@ def _v0111_potions_held(text: str) -> str:
 _CARD_STRENGTH = """\
 CARD STRENGTH: HOW GOOD THE CARD IS BY ITSELF. The balance says which role a card fills and never whether the card is good; current_facts.card_strength (card rewards and shops) says that. For each offered card it gives expert_pick_rate_pct, how often the selected expert players took the card when it was offered as a reward, and read: often_taken (40% or more), sometimes_taken, rarely_taken (under 20%) or unknown. An owner_note is what the person running this agent knows about the card: it sets read and outranks the rate. At a shop use this and not the buy rate in decision_support.options: those players rarely buy any card, so a buy rate near zero says nothing about the card. Apply it to the offers the balance does not mark worsens:
 - A card read often_taken is taken ahead of one read sometimes_taken or rarely_taken, whatever roles the two fill. The order among improving offers (fills_priority, the lighter side, a missing role before a short one) and the place of a flow card after the roles decide only between cards of the same read. One exception: a card that supplies the first entry of priority while that role or track is missing wins over a better-read card that does not, unless it is itself read rarely_taken.
-- A card read rarely_taken is never taken or bought because it fills nothing and worsens nothing (effect neutral), in any act. While deck_balance.neutral_cards reads take_solid (act 1), one whose effect is improves is still taken when no better-read offer is on the screen: the deck is small and needs the role, and those players take a card at more than four act 1 rewards in five. From act 2 on it is taken only when it supplies a missing role or track on the priority list and no better-read offer does; say so when it is.
+- A card read rarely_taken is never taken or bought because it fills nothing and worsens nothing (effect neutral), in any act, unless it answers a losing condition (A FIGHT THE DECK HAS NOTHING FOR, above) and no better-read offer does; say so. While deck_balance.neutral_cards reads take_solid (act 1), one whose effect is improves is still taken when no better-read offer is on the screen: the deck is small and needs the role, and those players take a card at more than four act 1 rewards in five. From act 2 on it is taken only when it supplies a missing role or track on the priority list and no better-read offer does; say so when it is.
 - When deck_balance.neutral_cards is skip_unless_strong (from act 2), a card whose effect is neutral is taken only when it is read often_taken. Otherwise skip it, and at a shop keep the gold or spend it on the removal, a relic or a potion: those players leave about one card reward in three from act 2 on, and an unused reward is not a loss.
-- A boss or elite demand never raises a card's read. A rule of one fight (a turn that allows a single card, one large attack) covers a few turns of that fight: it decides between two cards of the same read, and never makes a rarely_taken card or the smaller upgrade the right choice. A standing_plan entry written from such a demand weighs no more than the demand.
+- A boss or elite demand never raises a card's read. A rule of one fight (a turn that allows a single card, one large attack) covers a few turns of that fight: it decides between two cards of the same read, and never makes the smaller upgrade the right choice. It makes a rarely_taken card right only as a losing condition: a fight the deck has nothing for at all, answered by the first card that does it. A standing_plan entry written from such a demand weighs no more than the demand.
 State the read of the card you take, and of any better-read card you pass over, in one clause of the reason."""
 
 _UPGRADE_RANK = (
@@ -489,6 +495,11 @@ _UPGRADE_RANK = (
 _ON_PAPER = "a Power too slow or too small to matter in the fights ahead) is still a skip."
 _ON_PAPER_OR_BET = (_ON_PAPER[:-1] + ", unless it passes the test for a payoff taken before its enabler given on card "
                     "reward and shop screens.")
+# A role's count says how many cards it holds, not which fights they win; the exception admits the first card that
+# answers a fight the deck has nothing for, not more of the role. The coordinator keeps the one case it can check
+# by text on screen (``RunCoordinator._boss_answers``).
+_LOSING_CONDITION = """\
+- A FIGHT THE DECK HAS NOTHING FOR. A role the counts call covered or over-supplied is covered only for the fights its cards win. Damage is several jobs: ending fights with several enemies (attacks that hit ALL enemies), ending hallway fights before chip damage adds up (front-loaded damage), and the act boss's long fight (damage that grows or repeats, or what boss_readiness and the act_boss deck_demands name). Seven single-target attacks do not answer a boss fought as three monsters, and front-loaded damage does not answer a long boss fight; small Block every turn does not answer the largest hit. When a fight on the route or the act boss is lost because no held card does the job it asks for, that is a losing condition, and an offer that does the job is the one exception to effect worsens: take the first such card when no offer that leaves the balance intact answers that fight as well, name the fight and why the cards held do not win it, and let the counts decide the next one. At card rewards and shops the case Python can check (an attack that hits ALL enemies or several times, for an act-boss demand no card in the deck supplies) stays offered with a limitation line that says so; other worsening cards stay withheld there, and the exception reaches them only through an event option or a relic's effect. A fight that might go badly, a card that is merely strong, or a need some held card already supplies is not a losing condition."""
 _V0111_MODULES = {
     "noncombat": _v0111_noncombat(),
     "autobattle_pilot": _v0111_autobattle(_AUTOBATTLE),

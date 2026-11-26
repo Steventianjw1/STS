@@ -218,6 +218,39 @@ def coverage(demands, deck, cards, *, character=None) -> list | None:
     return out
 
 
+# The needs a card's own text shows, for cards whose catalog entry has not been read (the offers on a screen and the
+# observed deck). Only these two, because deck_balance counts both as plain damage: an attack that hits ALL enemies
+# and one that hits several times fill the same role there, so a deck full of single hits reads as over-supplied
+# for a boss that one of them answers.
+_TEXT_NEEDS = {
+    "aoe": re.compile(r"\bdamage\b[^.]*\bto ALL enemies\b|\bALL enemies\b[^.]*\bdamage\b"),
+    "multi_hit": re.compile(r"\bdamage\b[^.]*\b(?:twice|\d+ times|X times)\b", re.I),
+}
+_TEXT_MARKUP = re.compile(r"\[/?[A-Za-z_]+(?:[=:][^\]]*)?\]")
+
+
+def text_needs(card) -> set:
+    """The ``_TEXT_NEEDS`` an attack's description says it supplies; empty for any other card."""
+    if not isinstance(card, dict) or str(card.get("type") or "").strip().lower() != "attack":
+        return set()
+    text = _TEXT_MARKUP.sub("", str(card.get("description") or ""))
+    return {need for need, rule in _TEXT_NEEDS.items() if rule.search(text)}
+
+
+def open_text_needs(act_boss, deck) -> dict:
+    """need -> the boss names asking for it, for each ``_TEXT_NEEDS`` demand of this act's boss (``act_boss`` as the
+    coordinator builds it) that no card in the observed deck supplies by its text. Empty when either is unknown."""
+    if not isinstance(act_boss, dict) or not isinstance(deck, list):
+        return {}
+    held = set().union(*(text_needs(entry) for entry in deck if isinstance(entry, dict)))
+    out: dict[str, list] = {}
+    for boss in act_boss.get("bosses") or []:
+        for d in boss.get("deck_demands") or []:
+            if d.get("need") in _TEXT_NEEDS and d["need"] not in held:
+                out.setdefault(d["need"], []).append(str(boss.get("name") or boss.get("id") or "the act boss"))
+    return out
+
+
 def offered_answers(offered_ids, cards, bosses, *, character=None) -> list:
     """Which boss demands each offered card supplies, and the low-death builds at that boss it defines."""
     own_scaling = _SCALING_TEXT.get(character_key(character))

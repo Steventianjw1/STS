@@ -87,6 +87,31 @@ KEEP THE DECK BALANCED, BY THIS CHARACTER'S PLAN. This comes before every other 
 The counts are of cards, not strength, and ignore relics and upgrades: move a card between roles, or call a role or track covered by a relic, only by naming the card or relic and what it does. When the entry is absent the deck is not observed and its balance is unknown.
 """
 
+
+def _replaced(text: str, old: str, new: str) -> str:
+    if text.count(old) != 1:
+        raise ValueError(f"the planner text to change holds {text.count(old)} of {old[:50]!r}, not one")
+    return text.replace(old, new)
+
+
+# The counts are defaults, not walls. A role's count says how many cards it holds, not which fights those cards
+# win: top players took a card that fits badly when without it the deck loses a named fight (an awkward attack
+# taken because the deck otherwise lost to the act's bosses), and front-loaded damage that ends hallway fights
+# does not answer a long boss fight. The exception admits the first card that answers such a fight, not more.
+_LOSING_CONDITION = """\
+- AN UNCOVERED LOSING CONDITION IS THE ONE EXCEPTION TO THE COUNTS. A count says how many cards a role holds, not which fights they win. Damage in particular is several jobs: ending fights with several enemies (attacks that hit ALL enemies), ending hallway fights before chip damage adds up (front-loaded damage), and the act boss's long fight (damage that grows or repeats, or what its deck_demands name, such as hitting several times, or hitting ALL of a boss fought as several monsters). Block likewise splits into small Block every turn and an answer to the largest hit. So a role marked balanced, covered or over-supplied is covered only for the fights its cards actually win: say in its dimension which those are. When a fight on the route or the act boss is still lost because no held card does the job it asks for, that is a losing condition. Name it in deck_needs with the fight, the kind of card that answers it and why the cards held in that role do not (for example "an attack that hits ALL enemies for a boss of three monsters: the seven added attacks are all single-target"), and word skip_rule so that the first card that answers it passes although it adds to a role marked over-supplied or full. It admits that one card, judged against the other offers, not more of the role: once a held card answers the fight, the counts decide again. A fight that might go badly, a card that is merely strong, or a boss need some held card already supplies is not a losing condition.
+"""
+_BALANCE_CHARACTER_BY_BUILD = {"v0.111.0": _replaced(_replaced(_replaced(_replaced(
+    _BALANCE_CHARACTER,
+    "One marked balanced, covered, over-supplied or full is then never a deck_needs entry, even when the boss or the elites reward it.",
+    "One marked balanced, covered, over-supplied or full is then not a deck_needs entry because the boss or the elites reward it, except for the losing condition below."),
+    "is skipped however strong it looks, and a card for a missing or short one passes.",
+    "is skipped however strong it looks unless it answers a losing condition below, and a card for a missing or short one passes."),
+    "They never raise HOW MANY cards a role holds: the entry's status rules say how many lasting sources fill a scaling role for this character, and beyond that further scaling cards go under avoid.",
+    "They never raise HOW MANY cards a role holds: the entry's status rules say how many lasting sources fill a scaling role for this character, and beyond that further scaling cards go under avoid. The one card a losing condition admits is the only addition beyond the counts."),
+    "- When a covered role still looks too weak or too slow for the boss,",
+    _LOSING_CONDITION + "- When a covered role still looks too weak or too slow for the boss,")}
+
 _RELIC_GUIDANCE = """\
 PLAN AROUND THE RELICS HELD. current_facts.relics lists every relic with the game's own text and, where it has one, its counter. A relic whose effect depends on the cards played is part of the deck's engine in every fight: one that counts a kind of card or event (Attacks, Skills, Powers, cards played in a turn, cards exhausted, HP lost), one that adds to something each time it happens (every hit, every Block gain, every card drawn), one that pays out once a turn or once a combat on a condition, one that changes energy, draw or costs. For each such relic say in the relevant dimension what it adds with the current deck, and carry it into standing_plan: put under deck_needs the kind of card that makes it pay out more often or that it multiplies (an effect added to every repetition favours cards that repeat it several times in one play; a relic that counts a card type favours cheap cards of that type), put under avoid what breaks the condition it needs, and word skip_rule so that an offered card a held relic clearly strengthens can pass on that ground. Re-read the relics whenever one is gained; the reference statistics and the act boss's needs ignore them.
 """
@@ -162,7 +187,8 @@ def system_instruction(*, character: str | None = None, combat_delegated: bool =
     behavior.extend(text for text in (strategy.deck_guidance, strategy.elite_guidance) if text)
     if strategy.act_stance:
         behavior.append(_ELITES_BY_ACT)
-    behavior.append(_BALANCE_CHARACTER if strategy.own_balance else _BALANCE)
+    balance_character = _BALANCE_CHARACTER_BY_BUILD.get(builds.active().key, _BALANCE_CHARACTER)
+    behavior.append(balance_character if strategy.own_balance else _BALANCE)
     behavior.append(_RELIC_GUIDANCE)
     if combat_delegated:
         held = _POTIONS_HELD_BY_BUILD.get(builds.active().key, _POTIONS_HELD)
