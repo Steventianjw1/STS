@@ -22,7 +22,7 @@ from .models import DecisionFrame, route_plan_mode
 
 # One version per game build (``game.builds``): a build's prompt carries its characters' guidance, so the
 # version that names the text is the build's own. ``DECISION_PROMPT_VERSION`` is the one of the build in use.
-DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-37", "v0.111.0": "decision-prompt-46"}
+DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-37", "v0.111.0": "decision-prompt-47"}
 
 
 def decision_prompt_version(build=None) -> str:

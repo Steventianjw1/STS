@@ -261,12 +261,19 @@ PLANS_V0107 = {
 # makes skipping the default for such a card from act 2 on, unless it is strong by itself (``card_strength``).
 # Not simulated: ``pilot.runs`` reads only ``thin_from_act`` for its stand-in drafter.
 PLANS_V0111 = {
+    # Owner's guidance (2026-11-26): the Ironclad's card pool has almost no Weak, so its decks are not built
+    # around it, and most of its runs are won by scaling damage, Block being needed but secondary. The Weak
+    # track is left out, damage scaling leads the first and later picks and is short below two sources, and
+    # Block (in forms other than Weak) follows it.
     "IRONCLAD": DeckPlan(
-        early_roles=("damage_scaling", "block"), thin_from_act=None, front_min=99, build_first=("block_scaling",),
-        caps={"damage": (5, 7, 8)}, scaling_min={"block_scaling": 4}, scaling_full=4,
-        tracks=("weak", "flow"), targets={"weak_per_cards": 0, "weak_min": 1}, removals_from_act=2, skip_neutral_from_act=2,
-        note="one Weak source and Block that grows first, draw and energy taken at any count, Exhaust utility added in "
-             "every act; attacks stop once the deck holds what the best decks hold"),
+        early_roles=("damage_scaling", "block"), thin_from_act=None, front_min=99,
+        build_first=("damage_scaling", "block_scaling"),
+        caps={"damage": (5, 7, 8)}, scaling_min={"damage_scaling": 2, "block_scaling": 4}, scaling_full=4,
+        tracks=("flow",), removals_from_act=2, skip_neutral_from_act=2,
+        note="damage that scales first: the Ironclad wins most runs by growing its damage; then Block in forms other "
+             "than Weak (Block cards beyond the starter's Defends, Block that grows, Block Powers); draw and energy "
+             "taken at any count, Exhaust utility added in every act; plain attacks stop once the deck holds what "
+             "the best decks hold. Weak is not sought: the Ironclad has almost no source of it"),
     "SILENT": DeckPlan(
         early_roles=("damage_scaling", "damage", "block"), thin_from_act=None,
         build_first=("block_scaling", "damage_scaling"), caps={"damage": (5, 7, 8)}, never_over=("block",),
