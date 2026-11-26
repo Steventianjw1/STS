@@ -45,6 +45,65 @@ PROBE_SIMS = 16         # Mentor 0.11: the token search of the call that rebuild
 logger = logging.getLogger("sts_agent.pilot")
 
 
+def board_slots(encounter, enemies) -> dict | None:
+    """Where each enemy slot of the simulator's fight sits on the game's board: {slot: board index}.
+
+    The simulator keeps an enemy the game has taken off the board (a dead minion, an ordinary corpse) in its slot
+    and numbers targets with it; the board the advice is played on has closed the gap. The board's enemies keep
+    their order in the fight, so each is matched to the next slot of its kind, passing over dead slots the board
+    no longer shows. Empty when both list the same number of enemies, so the numbers agree. None when they cannot
+    be matched: a living slot the board lacks, or a board enemy the fight lacks.
+    """
+    if not isinstance(enemies, list) or len(enemies) == len(encounter):
+        return {}
+    slots, at = {}, 0
+    for index, shown in enumerate(enemies):
+        if not isinstance(shown, dict):
+            return None
+        kind = engine.kind_key(shown.get("id") or shown.get("kind") or shown.get("name") or "")
+        alive = shown["is_alive"] if type(shown.get("is_alive")) is bool else (shown.get("hp") or 0) > 0
+        while True:
+            if at == len(encounter):
+                return None
+            mine, at = encounter[at], at + 1
+            gone = bool(mine.get("is_dead") or mine.get("is_escaped"))
+            kind_here = engine.kind_key(mine.get("kind") or "")
+            if kind and kind_here and gone != alive and (kind_here.startswith(kind) or kind.startswith(kind_here)):
+                slots[at - 1] = index
+                break
+            if not gone:
+                return None
+    if any(not (e.get("is_dead") or e.get("is_escaped")) for e in encounter[at:]):
+        return None
+    return slots
+
+
+def on_board(result, slots) -> None:
+    """Renumber every enemy target of a search result from the simulator's slots to the board's (in place).
+
+    A move of the line that targets a slot the board does not have yet ends the line there. A ranked move that
+    does is an error (KeyError): every legal target is on the board.
+    """
+    moved = set()
+
+    def move(action):
+        if isinstance(action, dict) and id(action) not in moved and type(action.get("target_index")) is int:
+            action["target_index"] = slots[action["target_index"]]
+            moved.add(id(action))
+
+    for row in result.get("actions") or []:
+        move(row.get("action"))
+    line = []
+    for action in result.get("pv") or []:
+        try:
+            move(action)
+        except KeyError:
+            break
+        line.append(action)
+    if "pv" in result:
+        result["pv"] = line
+
+
 def install(advisor, rs, potion_context=None) -> None:
     """Route the advisor's combat search, for a move and for a card choice inside a fight, through the pilot."""
     table, tuned = engine.encounters(rs), {}        # tuned: per-encounter profiles by character, read on first use
@@ -147,11 +206,20 @@ def install(advisor, rs, potion_context=None) -> None:
             # Mentor's own function with a token search: it checks the request, keeps its mirror in step and
             # hands back the fight as the simulator rebuilt it.
             _, fight, call_cfg, _ = mentor_advice(state, cfg, PROBE_SIMS, mirror)
+            # The advice step below reads the result against the board as the game shows it; the fight Mentor
+            # carries from move to move still holds the enemies the game has taken off it.
+            slots = board_slots(rs.state_to_dict(fight).get("encounter") or [], state.get("enemies"))
+            if slots is None:               # not matched one for one: search the board as rebuilt, numbered as shown
+                logger.warning("pilot: the carried fight's enemies do not match the board; searching the board rebuilt")
+                _, fight, call_cfg, _ = mentor_advice(state, cfg, PROBE_SIMS, None)
             encounter, tier, character, profile = profile_of(fight)
             search = advisor._mcts_kwargs(call_cfg, sims)
             d = decide(core, fight, profile, seed=search.get("seed") or 0,
                        carry=(search.get("win_hp_carry"), search.get("win_potion_carry")), tier=tier,
                        drop_chance_pct=turn.drop_chance_pct, potion_used=turn.potion_used, character=character)
+            if slots:
+                on_board(d.result, slots)
+                logger.info("pilot: targets renumbered for the board, simulator slot -> board index %s", slots)
             advice, rows = rs.advice_from_result(state, d.result, dataclasses.asdict(cfg), max(int(d.sims or sims), 1),
                                                  _names(), None)
             logger.info("pilot %s: %s %s  (%d sims, %.2fs, win %s)", encounter or turn.room, d.rule, d.action, d.sims,
