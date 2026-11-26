@@ -26,7 +26,7 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
-from ..evidence import boss_demands, budget, card_strength, deck_balance, enemy_patterns
+from ..evidence import boss_demands, budget, card_strength, conversions, deck_balance, engine_access, enemy_patterns
 from ..evidence.potion_odds import drop_state
 from ..game import builds
 from ..game.client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
@@ -36,6 +36,7 @@ from ..evidence.route_paths import enumerate_routes, map_type
 from ..evidence.route_risk import agent_loss_scale, node_class
 from ..pilot.potion_context import publish as publish_potion_context
 from ..strategic import StrategicSnapshot
+from .fight_tally import FightTally
 from .models import SMITH, Choice, DecisionFrame, is_rest_destination, names_card
 from .policy import LLMDecisionPolicy, model_identity
 from .prompts import MENTOR_PILOT, OWN_PILOT
@@ -84,6 +85,8 @@ STATE_VERSION = 1
 # stays offered because it answers an act-boss demand the deck has nothing for.
 _BOSS_ANSWER_BUILDS = ("v0.111.0",)
 _BOSS_ANSWER_TEXT = {"aoe": "an attack that hits ALL enemies", "multi_hit": "an attack that hits several times"}
+# Builds whose prompts explain deck_conversions and engine_access (``evidence.conversions``, ``evidence.engine_access``).
+_CONVERSION_BUILDS = ("v0.111.0",)
 
 
 class _Stop(Exception):
@@ -107,6 +110,7 @@ class _Combat:
     healed: int = 0            # sum of HP increases, including end-of-combat healing
     hp_tracked: bool = True    # False when part of the fight was not observed with this tracking
     potions_held: list | None = None   # potion names held when the fight was first seen; None = not observed
+    tally: FightTally = field(default_factory=FightTally)   # which cards did the work; not kept across sessions
 
     def note_hp(self, hp):
         if type(hp) is not int:
@@ -230,6 +234,8 @@ class RunCoordinator:
                                        "source": "observed player.max_energy"}
         if self.combat is not None:
             self.combat.note_hp((view.facts.get("player") or {}).get("hp"))
+            if view.in_combat and view.encounter_key == self.combat.key:
+                self.combat.tally.observe(view.facts)
         if view.fingerprint != self._last_fp:
             self._last_fp = view.fingerprint
             self.last_progress = self.clock()
@@ -585,22 +591,29 @@ class RunCoordinator:
             return by_id["proceed"], "The card reward left here was already seen and skipped."
         return None
 
-    def _balance_rejects(self, v: ScreenView) -> dict:
-        """Offered cards that would only add to a role the deck already holds too many of, by action_id.
+    def _balance_advice(self, v: ScreenView) -> list:
+        """Limitation lines on the offered cards that would only add to a role the deck already holds too many of.
 
-        They are withheld from the model at card rewards and shops: left to its judgment, nearly
-        every such card found a reason to be taken. A card reward keeps them unless it can be skipped.
-        One that answers an act-boss demand nothing in the deck supplies stays (``_boss_answers``)."""
-        rejects = self._worsening_offers(v)
-        released = self._boss_answers(v, rejects)
-        return {aid: o for aid, o in rejects.items() if aid not in released}
+        Every such card stays on offer: the model sees all of them, and these lines advise strongly against the
+        ones the deck's plan reads as making it worse. A card that answers an act-boss demand nothing in the deck
+        supplies gets its own line instead (``_boss_answers``): it is the exception the balance rules allow."""
+        worse = self._worsening_offers(v)
+        answers = self._boss_answers(v, worse)
+        lines = list(answers.values())
+        against = [o for aid, o in worse.items() if aid not in answers]
+        if against:
+            lines.append("STRONGLY ADVISED AGAINST, by this character's deck plan (current_facts.deck_balance_offers "
+                         "effect worsens): each adds only to a role or track this deck already holds too many of: "
+                         + "; ".join(f"{o['name']} ({', '.join(o['adds_to_over_supplied'])})".replace("_", " ")
+                                     for o in against)
+                         + ". They are offered so that you can still take one for a fight the deck has nothing for; "
+                           "say which fight and why the cards held do not win it. Otherwise skip them.")
+        return lines
 
     def _worsening_offers(self, v: ScreenView) -> dict:
-        """Every offered card whose balance effect is worsens, by action_id, on screens that withhold them."""
+        """Every offered card whose balance effect is worsens, by action_id, at card rewards and shops."""
         if (v.kind not in ("card_reward", "shop") or v.in_combat or self._handoff or self._fight_overlay(v)
                 or v.facts.get("combat_context")):
-            return {}
-        if v.kind == "card_reward" and not any(c["kind"] == "skip_card_reward" for c in v.candidates):
             return {}
         run = v.facts.get("run") or {}
         state = deck_balance.balance(v.facts.get("deck"), run.get("act"), run.get("character"))
@@ -617,9 +630,9 @@ class RunCoordinator:
         limitation line, by action_id.
 
         The role counts call a deck of single-target attacks over-supplied with damage, and the boss that is three
-        monsters, or that loses only 1 HP to each hit, is lost all the same. Such a card is shown, as the losing
-        condition the balance rules admit, and the model judges it by that fight. On the builds whose prompts
-        describe that exception."""
+        monsters, or that loses only 1 HP to each hit, is lost all the same. Such a card is marked as the losing
+        condition the balance rules admit instead of being advised against, and the model judges it by that fight.
+        On the builds whose prompts describe that exception."""
         if not rejects or builds.active().key not in _BOSS_ANSWER_BUILDS:
             return {}
         open_needs = boss_demands.open_text_needs(self._act_boss(v), v.facts.get("deck"))
@@ -632,7 +645,7 @@ class RunCoordinator:
             if needs:
                 asks = "; ".join(f"{_BOSS_ANSWER_TEXT[n]}, which {', '.join(open_needs[n])} asks for "
                                  f"(act_boss deck_demands [{n}])" for n in needs)
-                out[aid] = (f"Offered although it adds only to a role this deck already holds too many of "
+                out[aid] = (f"Adds only to a role this deck already holds too many of "
                             f"(current_facts.deck_balance): {offer['name']} "
                             f"({', '.join(offer['adds_to_over_supplied'])}). It is {asks}, and no card in the deck "
                             f"supplies that. This is the uncovered losing condition the balance rules allow: one "
@@ -657,26 +670,7 @@ class RunCoordinator:
                         + ". To take one, first discard a held potion (discard_potion_N); the reward is then offered "
                           "again. Otherwise leave it.")
                 hidden.update({c["action_id"]: line for c in potions})
-        rejects = self._balance_rejects(v)
-        if rejects:
-            line = ("Not offered, because each adds only to a role this deck already holds too many of "
-                    "(current_facts.deck_balance): "
-                    + "; ".join(f"{o['name']} ({', '.join(o['adds_to_over_supplied'])})" for o in rejects.values()) + ".")
-            hidden.update({aid: line for aid in rejects})
         return hidden
-
-    def _balance_skip(self, v: ScreenView) -> tuple | None:
-        """(skip candidate, reason) when every card of a card reward breaks the deck's balance."""
-        if v.kind != "card_reward" or not v.ready:
-            return None
-        cards = [c for c in v.candidates if c["kind"] == "select_card_reward"]
-        rejects = self._balance_rejects(v)
-        if not cards or any(c["action_id"] not in rejects for c in cards):
-            return None
-        skip = next(c for c in v.candidates if c["kind"] == "skip_card_reward")
-        return skip, ("Every offered card adds only to a role the deck already holds too many of: "
-                      + "; ".join(f"{o['name']} ({', '.join(o['adds_to_over_supplied'])})".replace("_", " ")
-                                  for o in rejects.values()) + ".")
 
     def _note_potion_drop(self, v: ScreenView):
         """Whether the fight just won dropped a potion, read from its first rewards screen (the drop counter)."""
@@ -732,6 +726,10 @@ class RunCoordinator:
                           f"{damage if damage is not None else 'unknown'}, HP regained "
                           f"{healed if healed is not None else 'unknown'} (between observations, so lower bounds); "
                           f"{potions}; potions sent by this agent: {c.potions_used}.")[:500]}
+        c.tally.finish(result)
+        play = c.tally.summary()
+        if play:
+            item["play"] = play
         self.recent_outcomes.append(item)
         self.route_outcomes.append(outcome)
         self.pending_combat_finished = True
@@ -988,6 +986,13 @@ class RunCoordinator:
                                  "description": "Balance of the current deck over damage, Block and the scaling of "
                                                 "each (not a choice on this screen).",
                                  "details": _clip(deck_balance.summary_text(state))})
+            if builds.active().key in _CONVERSION_BUILDS and isinstance(f.get("deck"), list):
+                extra.insert(1 if state else 0, {
+                    "id": "deck_conversions", "kind": "other",
+                    "description": "What the deck makes (Strength, Dexterity, Focus, Shivs, Exhaust, Poison, Doom, "
+                                   "Vulnerable, Forge) and what turns it into damage or Block (not a choice on this "
+                                   "screen).",
+                    "details": _clip(conversions.summary_text(conversions.deck_conversions(f["deck"])))})
             items = items[:40 - len(extra)] + extra
             opps = {"items": items[:40]}
         glossary = f.get("keyword_glossary")
@@ -1124,7 +1129,7 @@ class RunCoordinator:
             cands = [c for c in cands if c["action_id"] not in hidden
                      and not any(aid in hidden for aid in v.bindings[c["action_id"]].get("steps", []))]
             lims.extend(sorted(set(hidden.values())))
-        lims.extend(self._boss_answers(v, self._worsening_offers(v)).values())
+        lims.extend(self._balance_advice(v))
         cap = CAPABILITIES.get(v.kind, {})
         overlay = self._fight_overlay(v) or self._handoff
         boss = None if v.in_combat or overlay else self._act_boss(v)
@@ -1185,6 +1190,18 @@ class RunCoordinator:
                     or (c["kind"] == "shop_purchase" and c["details"].get("category") == "card")])
                 if offered:
                     facts = {**facts, "deck_balance_offers": offered}
+            card_offers = [(c["action_id"], c["details"]) for c in cands if c["kind"] == "select_card_reward"
+                           or (c["kind"] == "shop_purchase" and c["details"].get("category") == "card")]
+            if builds.active().key in _CONVERSION_BUILDS:
+                rows = conversions.deck_conversions(v.facts.get("deck"))
+                if rows is not None:   # what the deck makes and what turns it into damage or Block; facts, not limits
+                    facts = {**facts, "deck_conversions": {
+                        "label": "WHAT THE DECK MAKES AND WHAT CONVERTS IT, by rules over card text (copies counted, "
+                                 "relics ignored). A fact for judgment, not a limit.",
+                        "deck": rows, "offers": conversions.offer_conversions(rows, card_offers)}}
+                odds = engine_access.access(self._plan_engine(), v.facts.get("deck"), v.facts.get("relics"), card_offers)
+                if odds:
+                    facts = {**facts, "engine_access": odds}
             if card_strength.active() and v.kind in ("card_reward", "shop"):
                 # How good each offered card is by itself: the balance above only says which role it fills.
                 strength = card_strength.offers(
@@ -1232,6 +1249,12 @@ class RunCoordinator:
             candidates=cands, bindings={c["action_id"]: v.bindings[c["action_id"]] for c in cands},
             limitations=lims, assessment=self._assessment_for_frame(v),
             previous_turn_intent=self.turn_intent, history=self.history, decision_support=support)
+
+    def _plan_engine(self) -> dict | None:
+        """standing_plan.engine of the current strategic assessment, when it names one."""
+        a = self.planner.assessment if self.planner is not None else None
+        engine = ((a.content or {}).get("standing_plan") or {}).get("engine") if a is not None else None
+        return engine if isinstance(engine, dict) and engine.get("pieces") else None
 
     def _note_support(self, v: ScreenView, support):
         """Keep what later bookkeeping needs from the evidence: class losses and coverage counters."""
@@ -1284,14 +1307,12 @@ class RunCoordinator:
         smith = self._smith_target(v)
         if cand is None:
             cand = smith
-        # Reward collection and a card reward whose every card breaks the deck's balance are not judgments.
+        # Reward collection is not a judgment. A card reward is, whatever the balance says of its cards.
         routine = None
-        if cand is None and not self._handoff:
-            for source, found in (("reward_routine", self._reward_routine(v) if self.reward_routine else None),
-                                  ("deck_balance", self._balance_skip(v))):
-                if found and (v.fingerprint, found[0]["action_id"]) not in self.stats.blocked:
-                    routine, cand = (source, found[1]), found[0]
-                    break
+        if cand is None and not self._handoff and self.reward_routine:
+            found = self._reward_routine(v)
+            if found and (v.fingerprint, found[0]["action_id"]) not in self.stats.blocked:
+                routine, cand = ("reward_routine", found[1]), found[0]
         if cand is not None:
             aid = cand["action_id"]
             if (v.fingerprint, aid) in self.stats.blocked:
@@ -1812,7 +1833,7 @@ class RunCoordinator:
                                       last_hp=c.get("last_hp"), damage=c.get("damage") or 0,
                                       healed=c.get("healed") or 0,
                                       hp_tracked=c.get("hp_tracked") is True and c.get("last_hp") is not None,
-                                      potions_held=c.get("potions_held"))
+                                      potions_held=c.get("potions_held"), tally=FightTally(partial=True))
                 self.combat.note_hp((v.facts.get("player") or {}).get("hp"))   # what happened while unobserved
                 self.seen_combat = True
         elif c:  # the fight that was open when the session stopped ended while nobody was watching

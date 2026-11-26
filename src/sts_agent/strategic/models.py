@@ -21,7 +21,7 @@ Fact shapes (version 0). Each top-level key is required; its value is either
     opportunities:   {items: [{id: str, kind: str, description: str, details?: str}]}
                       kind in OPPORTUNITY_KINDS; only currently player-visible choices
     recent_outcomes: {items: [{id: str, encounter_type?: str, result?: str, hp_lost?: int>=0,
-                      turns?: int>=0, notes?: str}]}   # result in OUTCOME_RESULTS
+                      turns?: int>=0, notes?: str, play?: str}]}   # result in OUTCOME_RESULTS; play optional
 
 Optional top-level key (may be absent, never null):
 
@@ -286,7 +286,11 @@ def validate_facts(facts: Any) -> None:
         items = _list(out["items"], p + "/items", maxlen=10)
         for i, x in enumerate(items):
             q = f"{p}/items/{i}"
-            _obj(x, q, ("id", "encounter_type", "result", "hp_lost", "turns", "notes"))
+            # ``play`` is optional: what did the work in the fight, when the fight was observed (decision.fight_tally)
+            _obj({k: v for k, v in x.items() if k != "play"} if isinstance(x, dict) else x, q,
+                 ("id", "encounter_type", "result", "hp_lost", "turns", "notes"))
+            if "play" in x:
+                _str(x["play"], q + "/play", maxlen=800)
             _str(x["id"], q + "/id", maxlen=_SHORT, nullable=False, nonempty=True)
             _str(x["encounter_type"], q + "/encounter_type", maxlen=_SHORT)
             _enum(x["result"], q + "/result", OUTCOME_RESULTS)
