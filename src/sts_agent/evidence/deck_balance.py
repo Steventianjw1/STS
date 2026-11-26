@@ -314,9 +314,9 @@ def plan_for(character, build=None) -> DeckPlan:
 
 
 LEAVE_NEUTRAL = ("fill missing or short roles and tracks first and skip cards that worsen the balance; a card that "
-                 "fills nothing is taken only when it is strong by itself (card_strength reads often_taken, or an "
-                 "owner note calls it strong), and skipping is the default: the best players leave about one card "
-                 "reward in three from act 2 on")
+                 "fills nothing is a skip by default, taken when it is strong by itself (card_strength: an expert "
+                 "grade of S or A, a read of often_taken, or an owner note that calls it strong) and nothing on "
+                 "offer answers a need better: the best players leave about one card reward in three from act 2 on")
 
 
 def neutral_cards(plan: DeckPlan, act) -> str | None:

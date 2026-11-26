@@ -22,7 +22,7 @@ from .models import DecisionFrame, route_plan_mode
 
 # One version per game build (``game.builds``): a build's prompt carries its characters' guidance, so the
 # version that names the text is the build's own. ``DECISION_PROMPT_VERSION`` is the one of the build in use.
-DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-37", "v0.111.0": "decision-prompt-45"}
+DECISION_PROMPT_VERSIONS = {"v0.107.1": "decision-prompt-37", "v0.111.0": "decision-prompt-46"}
 
 
 def decision_prompt_version(build=None) -> str:
@@ -473,12 +473,17 @@ def _v0111_potions_held(text: str) -> str:
 # worsened nothing, every card reward of the run was taken, and Bash was upgraded before Stampede's cost cut on the
 # strength of one boss mechanic. ``evidence.card_strength`` supplies the reading these rules use.
 _CARD_STRENGTH = """\
-CARD STRENGTH: HOW GOOD THE CARD IS BY ITSELF. The balance says which role a card fills and never whether the card is good; current_facts.card_strength (card rewards and shops) says that. For each offered card it gives expert_pick_rate_pct, how often the selected expert players took the card when it was offered as a reward, and read: often_taken (40% or more), sometimes_taken, rarely_taken (under 20%) or unknown. An owner_note is what the person running this agent knows about the card: it sets read and outranks the rate. At a shop use this and not the buy rate in decision_support.options: those players rarely buy any card, so a buy rate near zero says nothing about the card. Apply it to the offers the balance does not mark worsens:
-- A card read often_taken is taken ahead of one read sometimes_taken or rarely_taken, whatever roles the two fill. The order among improving offers (fills_priority, the lighter side, a missing role before a short one) and the place of a flow card after the roles decide only between cards of the same read. One exception: a card that supplies the first entry of priority while that role or track is missing wins over a better-read card that does not, unless it is itself read rarely_taken.
-- A card read rarely_taken is never taken or bought because it fills nothing and worsens nothing (effect neutral), in any act, unless it answers a losing condition (A FIGHT THE DECK HAS NOTHING FOR, above) and no better-read offer does; say so. While deck_balance.neutral_cards reads take_solid (act 1), one whose effect is improves is still taken when no better-read offer is on the screen: the deck is small and needs the role, and those players take a card at more than four act 1 rewards in five. From act 2 on it is taken only when it supplies a missing role or track on the priority list and no better-read offer does; say so when it is.
-- When deck_balance.neutral_cards is skip_unless_strong (from act 2), a card whose effect is neutral is taken only when it is read often_taken. Otherwise skip it, and at a shop keep the gold or spend it on the removal, a relic or a potion: those players leave about one card reward in three from act 2 on, and an unused reward is not a loss.
-- A boss or elite demand never raises a card's read. A rule of one fight (a turn that allows a single card, one large attack) covers a few turns of that fight: it decides between two cards of the same read, and never makes the smaller upgrade the right choice. It makes a rarely_taken card right only as a losing condition: a fight the deck has nothing for at all, answered by the first card that does it. A standing_plan entry written from such a demand weighs no more than the demand.
-State the read of the card you take, and of any better-read card you pass over, in one clause of the reason."""
+CARD STRENGTH: HOW GOOD THE CARD IS IN GENERAL, WEIGHED AGAINST WHAT THIS DECK NEEDS. The balance, a losing condition, the act boss's needs, deck_conversions and the standing plan say what this deck needs; current_facts.card_strength (card rewards and shops) says how strong each offered card is in general. Its readings are evidence, and none of them is a rule:
+- expert: the grade the best players' v0.111 tier lists give the card (S, A, B, C, D), their views in their own tiers, the conditions and reasons they gave (notes), and disputed when they are two tiers or more apart. same_job lists, for each job the card does, the deck's cards that already do that job and stronger cards for it that may be offered later.
+- expert_pick_rate_pct and read: how often the selected expert players took the card when it was offered as a reward (often_taken 40% or more, sometimes_taken, rarely_taken under 20%, unknown). Rates pool every game version and ignore the deck. At a shop use this and not the buy rate in decision_support.options: those players rarely buy any card, so a buy rate near zero says nothing about the card.
+- owner_note: what the person running this agent knows about the card. It outranks the grade and the rate as a reading of strength.
+How to weigh them:
+- What a card is worth here is how much it fixes what this deck is losing to, and how well it does that job. A B card that answers the deck's current need (a missing or short role or track, a losing condition, the act boss's need, the converter its sources lack) can be worth more than an S card that adds to what the deck already has; an S card that answers a need, or does the needed job better, is the stronger pick. When no offer answers a need, general strength decides more of the choice.
+- Between offers that do the same job, the higher grade usually does it better. A card adds less when the deck already holds a stronger card for its job (same_job.deck_already_has). A stronger card for the job may never be offered: weigh how soon the need is tested before passing on the weaker one.
+- Where the grade and the rate disagree, or the card is disputed, or a note attaches a condition (only with Accelerant, only while damage is unsolved, worth most early), the deck's situation decides: say which way it points.
+- A card that fills nothing and worsens nothing (effect neutral) is a skip by default from the act in which deck_balance.neutral_cards reads skip_unless_strong: those players leave about one card reward in three from act 2 on, and an unused reward is not a loss. Strong evidence of strength (grade S or A, often_taken, an owner note that calls it strong) is the usual reason to take one anyway. While neutral_cards reads take_solid (act 1) a solid card is still worth taking over a skip. A C or D card, or one read rarely_taken, is taken when it answers a need no better-graded offer answers as well; name the need. These are defaults: when you depart from one, name the reason.
+- A boss or elite demand never raises a card's grade or read. It raises what the card is worth to this deck, which is the other half of the weighing; a rule of one fight (a turn that allows a single card, one large attack) weighs a few turns of that fight, not the whole run.
+State, in one clause of the reason, the grade and read of the card you take, those of any better-graded card you pass over, and the deck need that decided between them."""
 
 # The conversion counts and engine draw chances (``evidence.conversions``, ``evidence.engine_access``): facts the
 # model weighs, never gates.
@@ -494,7 +499,9 @@ _UPGRADE_RANK = (
     "sooner or beside another card: that is usually worth more than an upgrade that adds 2 or 3 to a number, most of "
     "all on a starter card. Next come upgrades that change what the card does (text_after) or add a card drawn or an "
     "energy; plain number increases come last. An owner_note on a card is what the person running this agent knows "
-    "about that upgrade and outranks the statistics. low_sample_rate_pct, shown where rate_pct is withheld, is the "
+    "about that upgrade and outranks the statistics. An expert_note is what the best players said about that "
+    "upgrade (for example that a card is weak until upgraded): weigh it with upgrade_effect. low_sample_rate_pct, "
+    "shown where rate_pct is withheld, is the "
     "share upgraded among 8 to 19 recorded copies from at least two players: a weak hint, but 8 of 10 upgraded says "
     "more than no record, so never call such a card unproven beside a starter card whose adequate rate is low. The "
     "standing plan's upgrade_targets were written without upgrade_effect: check each against it, and say so when you "

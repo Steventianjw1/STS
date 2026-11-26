@@ -1,0 +1,4629 @@
+{
+"build":"v0.111.0",
+"characters":{
+"IRONCLAD":{
+"BLOODLETTING":{
+"name":"Bloodletting",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Energy",
+"Self-damage"
+],
+"views":"JapaneseExport v0.103.1: S; vmService list of 2026-04-12: S; NaveGreed v0.111: Click; Opem v0.111: high (exact tier not read)"
+},
+"OFFERING":{
+"name":"Offering",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Energy",
+"Self-damage"
+],
+"views":"JapaneseExport v0.103.1: S; vmService list of 2026-04-12: S; NaveGreed v0.111: Click; Opem v0.111: high (exact tier not read)"
+},
+"POMMEL_STRIKE":{
+"name":"Pommel Strike",
+"grade":"S",
+"score":89,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: S; vmService list of 2026-04-12: S; NaveGreed v0.111: Click; Opem v0.111: high (exact tier not read)"
+},
+"UNMOVABLE":{
+"name":"Unmovable",
+"grade":"S",
+"score":89,
+"type":"Power",
+"jobs":[
+"Block scaling power"
+],
+"views":"JapaneseExport v0.103.1: S; vmService list of 2026-04-12: S; NaveGreed v0.111: Click; Opem v0.111: high (exact tier not read)"
+},
+"DARK_EMBRACE":{
+"name":"Dark Embrace",
+"grade":"S",
+"score":87,
+"type":"Power",
+"jobs":[
+"Card draw",
+"Exhaust payoff"
+],
+"views":"JapaneseExport v0.103.1: S; vmService list of 2026-04-12: A; NaveGreed v0.111: Click; Opem v0.111: high (exact tier not read)"
+},
+"SECOND_WIND":{
+"name":"Second Wind",
+"grade":"S",
+"score":85,
+"type":"Skill",
+"jobs":[
+"Block",
+"Exhaust outlet"
+],
+"views":"JapaneseExport v0.103.1: A; vmService list of 2026-04-12: A; NaveGreed v0.111: Click; Opem v0.111: high (exact tier not read)"
+},
+"FEEL_NO_PAIN":{
+"name":"Feel No Pain",
+"grade":"A",
+"score":83,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Exhaust payoff"
+],
+"views":"JapaneseExport v0.103.1: A; vmService list of 2026-04-12: B; NaveGreed v0.111: Click; Opem v0.111: high (exact tier not read)"
+},
+"PRIMAL_FORCE":{
+"name":"Primal Force",
+"grade":"A",
+"score":82,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.103.1: S; vmService list of 2026-04-12: A; NaveGreed v0.111: Click; Opem v0.111: A/B (row unreadable)",
+"notes":[
+"NaveGreed: taken on sight unless the deck's damage is already solved."
+]
+},
+"BATTLE_TRANCE":{
+"name":"Battle Trance",
+"grade":"A",
+"score":81,
+"type":"Skill",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.103.1: S; vmService list of 2026-04-12: S; NaveGreed v0.111: Super strong options; Opem v0.111: high (exact tier not read)"
+},
+"BURNING_PACT":{
+"name":"Burning Pact",
+"grade":"A",
+"score":81,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Exhaust outlet"
+],
+"views":"JapaneseExport v0.103.1: S; vmService list of 2026-04-12: S; NaveGreed v0.111: Super strong options; Opem v0.111: high (exact tier not read)"
+},
+"UPPERCUT":{
+"name":"Uppercut",
+"grade":"A",
+"score":80,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Vulnerable",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.103.1: S; Opem v0.107.1: S; vmService list of 2026-04-12: S; NaveGreed v0.111: Super strong options"
+},
+"CORRUPTION":{
+"name":"Corruption",
+"grade":"A",
+"score":79,
+"type":"Power",
+"jobs":[],
+"views":"JapaneseExport v0.103.1: A; vmService list of 2026-04-12: S; NaveGreed v0.111: Super strong options; Opem v0.111: high (exact tier not read)",
+"notes":[
+"Both players: a boss-fight scaler."
+]
+},
+"BRAND":{
+"name":"Brand",
+"grade":"A",
+"score":78,
+"type":"Skill",
+"jobs":[
+"Exhaust outlet",
+"Self-damage",
+"Strength"
+],
+"views":"NaveGreed v0.111: Super strong options; Opem v0.111: high (exact tier not read)"
+},
+"CRIMSON_MANTLE":{
+"name":"Crimson Mantle",
+"grade":"A",
+"score":78,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Self-damage"
+],
+"views":"NaveGreed v0.111: Super strong options; Opem v0.111: high (exact tier not read)"
+},
+"FORGOTTEN_RITUAL":{
+"name":"Forgotten Ritual",
+"grade":"A",
+"score":78,
+"type":"Skill",
+"jobs":[
+"Energy"
+],
+"views":"NaveGreed v0.111: Super strong options; Opem v0.111: high (exact tier not read)"
+},
+"NOT_YET":{
+"name":"Not Yet",
+"grade":"A",
+"score":78,
+"type":"Skill",
+"jobs":[],
+"views":"NaveGreed v0.111: Super strong options; Opem v0.111: high (exact tier not read)"
+},
+"CRUELTY":{
+"name":"Cruelty",
+"grade":"A",
+"score":78,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Vulnerable"
+],
+"views":"JapaneseExport v0.103.1: S; Opem v0.107.1: A; vmService list of 2026-04-12: S; NaveGreed v0.111: Super strong options"
+},
+"FIEND_FIRE":{
+"name":"Fiend Fire",
+"grade":"A",
+"score":77,
+"type":"Attack",
+"jobs":[
+"Exhaust outlet",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: S; vmService list of 2026-04-12: S; NaveGreed v0.111: Super strong options; Opem v0.111: A/B (row unreadable)"
+},
+"COLOSSUS":{
+"name":"Colossus",
+"grade":"A",
+"score":75,
+"type":"Skill",
+"jobs":[
+"Block",
+"Vulnerable"
+],
+"views":"NaveGreed v0.111: Super strong options"
+},
+"SHRUG_IT_OFF":{
+"name":"Shrug It Off",
+"grade":"A",
+"score":75,
+"type":"Skill",
+"jobs":[
+"Block",
+"Card draw"
+],
+"views":"JapaneseExport v0.103.1: A; Opem v0.107.1: A; vmService list of 2026-04-12: A; NaveGreed v0.111: Super strong options"
+},
+"TAUNT":{
+"name":"Taunt",
+"grade":"A",
+"score":75,
+"type":"Skill",
+"jobs":[
+"Block",
+"Vulnerable"
+],
+"views":"NaveGreed v0.111: Super strong options",
+"notes":[
+"Preferred to Iron Wave: similar Block plus Vulnerable."
+],
+"upgrade":"a good upgrade but not an urgent one"
+},
+"TREMBLE":{
+"name":"Tremble",
+"grade":"A",
+"score":75,
+"type":"Skill",
+"jobs":[
+"Vulnerable"
+],
+"views":"Opem v0.107.1: A; NaveGreed v0.111: Super strong options",
+"notes":[
+"Repeatable Vulnerable that also strips Artifact; preferred to Break and Thunderclap."
+]
+},
+"INFERNO":{
+"name":"Inferno",
+"grade":"A",
+"score":75,
+"type":"Power",
+"jobs":[
+"AoE",
+"Damage scaling power",
+"Self-damage"
+],
+"views":"JapaneseExport v0.103.1: S; vmService list of 2026-04-12: A; NaveGreed v0.111: Super strong options; Opem v0.111: A/B (row unreadable)",
+"notes":[
+"NaveGreed: the best Ironclad AoE card."
+]
+},
+"STOKE":{
+"name":"Stoke",
+"grade":"A",
+"score":74,
+"type":"Skill",
+"jobs":[
+"Exhaust outlet"
+],
+"views":"JapaneseExport v0.103.1: A; Opem v0.107.1: A; vmService list of 2026-04-12: B (card may have changed since); NaveGreed v0.111: Super strong options"
+},
+"FEED":{
+"name":"Feed",
+"grade":"A",
+"score":73,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: A; vmService list of 2026-04-12: A; NaveGreed v0.111: Super strong options; Opem v0.111: A/B (row unreadable)"
+},
+"MANGLE":{
+"name":"Mangle",
+"grade":"A",
+"score":72,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Weak / enemy Strength loss"
+],
+"views":"NaveGreed v0.111: Super strong options; Opem v0.111: A/B (row unreadable)"
+},
+"HEADBUTT":{
+"name":"Headbutt",
+"grade":"A",
+"score":72,
+"type":"Attack",
+"jobs":[
+"Discard / Sly",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: A; Opem v0.107.1: B; vmService list of 2026-04-12: B; NaveGreed v0.111: Super strong options"
+},
+"DOMINATE":{
+"name":"Dominate",
+"grade":"A",
+"score":69,
+"type":"Skill",
+"jobs":[
+"Strength",
+"Vulnerable"
+],
+"views":"JapaneseExport v0.103.1: S; Opem v0.107.1: S; vmService list of 2026-04-12: S (card may have changed since); NaveGreed v0.111: Good",
+"disputed":true
+},
+"IMPERVIOUS":{
+"name":"Impervious",
+"grade":"B",
+"score":64,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.103.1: S; Opem v0.107.1: B; vmService list of 2026-04-12: A; NaveGreed v0.111: Good"
+},
+"RAGE":{
+"name":"Rage",
+"grade":"B",
+"score":64,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.103.1: A; Opem v0.107.1: A; vmService list of 2026-04-12: A; NaveGreed v0.111: Good"
+},
+"RUPTURE":{
+"name":"Rupture",
+"grade":"B",
+"score":64,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Strength"
+],
+"views":"Opem v0.107.1: A; NaveGreed v0.111: Good"
+},
+"BARRICADE":{
+"name":"Barricade",
+"grade":"B",
+"score":64,
+"type":"Power",
+"jobs":[
+"Block scaling power"
+],
+"views":"JapaneseExport v0.103.1: D; vmService list of 2026-04-12: D; NaveGreed v0.111: Super strong options; Opem v0.111: high (exact tier not read)",
+"disputed":true,
+"notes":[
+"NaveGreed: a boss-fight scaler."
+]
+},
+"BLOOD_WALL":{
+"name":"Blood Wall",
+"grade":"B",
+"score":63,
+"type":"Skill",
+"jobs":[
+"Block",
+"Self-damage"
+],
+"views":"JapaneseExport v0.103.1: A; Opem v0.107.1: B; vmService list of 2026-04-12: A; NaveGreed v0.111: Good"
+},
+"FLAME_BARRIER":{
+"name":"Flame Barrier",
+"grade":"B",
+"score":63,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.103.1: A; Opem v0.107.1: A; vmService list of 2026-04-12: B; NaveGreed v0.111: Good"
+},
+"TEAR_ASUNDER":{
+"name":"Tear Asunder",
+"grade":"B",
+"score":63,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: B; Opem v0.107.1: A; vmService list of 2026-04-12: A; NaveGreed v0.111: Good",
+"notes":[
+"A better damage scaler than Rampage."
+]
+},
+"DEMON_FORM":{
+"name":"Demon Form",
+"grade":"B",
+"score":63,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Strength"
+],
+"views":"NaveGreed v0.111: Super strong options; Opem v0.111: C",
+"disputed":true,
+"notes":[
+"NaveGreed: take it early; on its own it fixes boss fights.",
+"Opem: does not like it (C)."
+]
+},
+"SPITE":{
+"name":"Spite",
+"grade":"B",
+"score":62,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: B; Opem v0.107.1: A; vmService list of 2026-04-12: B (card may have changed since); NaveGreed v0.111: Good"
+},
+"ASHEN_STRIKE":{
+"name":"Ashen Strike",
+"grade":"B",
+"score":62,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: B; Opem v0.107.1: B; vmService list of 2026-04-12: A; NaveGreed v0.111: Good"
+},
+"PYRE":{
+"name":"Pyre",
+"grade":"B",
+"score":62,
+"type":"Power",
+"jobs":[
+"Energy"
+],
+"views":"JapaneseExport v0.103.1: A; Opem v0.107.1: B; vmService list of 2026-04-12: B; NaveGreed v0.111: Good"
+},
+"HEMOKINESIS":{
+"name":"Hemokinesis",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"Self-damage",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: A; Opem v0.107.1: C; vmService list of 2026-04-12: A (card may have changed since); NaveGreed v0.111: Good"
+},
+"BREAK":{
+"name":"Break",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Vulnerable"
+],
+"views":"NaveGreed v0.111: Good",
+"notes":[
+"Much better once Bash is upgraded. Relying on Break alone leaves no Vulnerable against the boss with Artifact; Tremble or Taunt cover that."
+],
+"upgrade":"much better once Bash is upgraded"
+},
+"CONFLAGRATION":{
+"name":"Conflagration",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"AoE"
+],
+"views":"Opem v0.107.1: B; NaveGreed v0.111: Good"
+},
+"EVIL_EYE":{
+"name":"Evil Eye",
+"grade":"B",
+"score":60,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.103.1: B; Opem v0.107.1: B; vmService list of 2026-04-12: B; NaveGreed v0.111: Good"
+},
+"EXPECT_A_FIGHT":{
+"name":"Expect a Fight",
+"grade":"B",
+"score":60,
+"type":"Skill",
+"jobs":[
+"Block",
+"Strength"
+],
+"views":"NaveGreed v0.111: Good"
+},
+"PACTS_END":{
+"name":"Pact's End",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Card draw"
+],
+"views":"NaveGreed v0.111: Good"
+},
+"ANGER":{
+"name":"Anger",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"Discard / Sly",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: A; Opem v0.107.1: C; vmService list of 2026-04-12: B; NaveGreed v0.111: Good"
+},
+"THRASH":{
+"name":"Thrash",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"Exhaust outlet",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: B; Opem v0.107.1: C; vmService list of 2026-04-12: A; NaveGreed v0.111: Good"
+},
+"STONE_ARMOR":{
+"name":"Stone Armor",
+"grade":"B",
+"score":56,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Dexterity / Plating"
+],
+"views":"JapaneseExport v0.103.1: C; Opem v0.107.1: C; vmService list of 2026-04-12: B; NaveGreed v0.111: Good"
+},
+"BREAKTHROUGH":{
+"name":"Breakthrough",
+"grade":"B",
+"score":55,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Self-damage"
+],
+"views":"JapaneseExport v0.103.1: B; vmService list of 2026-04-12: B; NaveGreed v0.111: Good; Opem v0.111: C"
+},
+"FIGHT_ME":{
+"name":"Fight Me!",
+"grade":"B",
+"score":53,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Strength"
+],
+"views":"NaveGreed v0.111: Good; Opem v0.111: C"
+},
+"HOWL_FROM_BEYOND":{
+"name":"Howl from Beyond",
+"grade":"B",
+"score":53,
+"type":"Attack",
+"jobs":[
+"AoE"
+],
+"views":"NaveGreed v0.111: Good; Opem v0.111: C"
+},
+"TWIN_STRIKE":{
+"name":"Twin Strike",
+"grade":"B",
+"score":52,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: B; vmService list of 2026-04-12: C; NaveGreed v0.111: Good; Opem v0.111: C"
+},
+"WHIRLWIND":{
+"name":"Whirlwind",
+"grade":"B",
+"score":50,
+"type":"Attack",
+"jobs":[
+"AoE"
+],
+"views":"JapaneseExport v0.103.1: B; vmService list of 2026-04-12: B; NaveGreed v0.111: Good; Opem v0.111: F",
+"disputed":true,
+"notes":[
+"NaveGreed: take the first AoE card you see, since multi-enemy fights are a top Ironclad failure point.",
+"Opem: F; he rates the AoE commons low."
+]
+},
+"BODY_SLAM":{
+"name":"Body Slam",
+"grade":"C",
+"score":49,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: C; vmService list of 2026-04-12: D; NaveGreed v0.111: Situational; Opem v0.111: high (exact tier not read)",
+"notes":[
+"Opem rates it highly because he keeps his decks very small: worth more the thinner the deck."
+]
+},
+"DISMANTLE":{
+"name":"Dismantle",
+"grade":"C",
+"score":48,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Vulnerable"
+],
+"views":"JapaneseExport v0.103.1: B; Opem v0.107.1: B; vmService list of 2026-04-12: A; NaveGreed v0.111: Situational",
+"disputed":true
+},
+"UNRELENTING":{
+"name":"Unrelenting",
+"grade":"C",
+"score":46,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"Opem v0.107.1: B; NaveGreed v0.111: Situational"
+},
+"BLUDGEON":{
+"name":"Bludgeon",
+"grade":"C",
+"score":46,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: A; Opem v0.107.1: C; vmService list of 2026-04-12: B; NaveGreed v0.111: Situational"
+},
+"STOMP":{
+"name":"Stomp",
+"grade":"C",
+"score":44,
+"type":"Attack",
+"jobs":[
+"AoE"
+],
+"views":"JapaneseExport v0.103.1: B; Opem v0.107.1: C; vmService list of 2026-04-12: B; NaveGreed v0.111: Situational"
+},
+"VICIOUS":{
+"name":"Vicious",
+"grade":"C",
+"score":44,
+"type":"Power",
+"jobs":[
+"Card draw",
+"Vulnerable"
+],
+"views":"JapaneseExport v0.103.1: C; Opem v0.107.1: B; vmService list of 2026-04-12: B; NaveGreed v0.111: Situational"
+},
+"AGGRESSION":{
+"name":"Aggression",
+"grade":"C",
+"score":42,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.103.1: B; Opem v0.107.1: D; vmService list of 2026-04-12: B; NaveGreed v0.111: Situational"
+},
+"ARMAMENTS":{
+"name":"Armaments",
+"grade":"C",
+"score":42,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.103.1: C; Opem v0.107.1: C; vmService list of 2026-04-12: B; NaveGreed v0.111: Situational"
+},
+"BULLY":{
+"name":"Bully",
+"grade":"C",
+"score":42,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Vulnerable"
+],
+"views":"JapaneseExport v0.103.1: C; Opem v0.107.1: C; vmService list of 2026-04-12: B; NaveGreed v0.111: Situational"
+},
+"INFLAME":{
+"name":"Inflame",
+"grade":"C",
+"score":42,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Strength"
+],
+"views":"JapaneseExport v0.103.1: C; Opem v0.107.1: C; vmService list of 2026-04-12: B; NaveGreed v0.111: Situational"
+},
+"IRON_WAVE":{
+"name":"Iron Wave",
+"grade":"C",
+"score":41,
+"type":"Attack",
+"jobs":[
+"Block",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: B; vmService list of 2026-04-12: B; NaveGreed v0.111: Situational; Opem v0.111: low (exact tier not read)",
+"notes":[
+"NaveGreed: outclassed by Taunt (similar Block plus Vulnerable). Only an early bridge before the Skulking Colony or the Eels when no Taunt has appeared."
+]
+},
+"DRUM_OF_BATTLE":{
+"name":"Drum of Battle",
+"grade":"C",
+"score":40,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Energy",
+"Exhaust payoff"
+],
+"views":"Opem v0.107.1: C; NaveGreed v0.111: Situational",
+"notes":[
+"Rated well below the draw and energy engines."
+]
+},
+"SETUP_STRIKE":{
+"name":"Setup Strike",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"NaveGreed v0.111: Situational"
+},
+"SWORD_BOOMERANG":{
+"name":"Sword Boomerang",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: C; Opem v0.107.1: C; vmService list of 2026-04-12: C; NaveGreed v0.111: Situational"
+},
+"TRUE_GRIT":{
+"name":"True Grit",
+"grade":"C",
+"score":40,
+"type":"Skill",
+"jobs":[
+"Block",
+"Exhaust outlet"
+],
+"views":"JapaneseExport v0.103.1: C; Opem v0.107.1: C; vmService list of 2026-04-12: C; NaveGreed v0.111: Situational"
+},
+"HAVOC":{
+"name":"Havoc",
+"grade":"C",
+"score":36,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.103.1: C; vmService list of 2026-04-12: C; NaveGreed v0.111: Situational; Opem v0.111: low (exact tier not read)",
+"notes":[
+"Both players rate it near the bottom; the draw and energy engines (Offering, Bloodletting, Pommel Strike, Battle Trance, Burning Pact, Forgotten Ritual) are what they take."
+]
+},
+"RAMPAGE":{
+"name":"Rampage",
+"grade":"C",
+"score":35,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"NaveGreed v0.111: Situational; Opem v0.111: low (exact tier not read)",
+"notes":[
+"Emergency-only, for an act 1 boss the deck cannot otherwise kill; Tear Asunder is the better scaler."
+]
+},
+"JUGGERNAUT":{
+"name":"Juggernaut",
+"grade":"C",
+"score":34,
+"type":"Power",
+"jobs":[
+"Damage scaling power"
+],
+"views":"Opem v0.107.1: D; NaveGreed v0.111: Situational"
+},
+"CASCADE":{
+"name":"Cascade",
+"grade":"C",
+"score":32,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.103.1: C; Opem v0.107.1: A; vmService list of 2026-04-12: B; NaveGreed v0.111: Bad",
+"disputed":true
+},
+"CINDER":{
+"name":"Cinder",
+"grade":"C",
+"score":31,
+"type":"Attack",
+"jobs":[
+"Exhaust outlet",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: B; vmService list of 2026-04-12: B (card may have changed since); NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)",
+"disputed":true
+},
+"PILLAGE":{
+"name":"Pillage",
+"grade":"C",
+"score":31,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: C; vmService list of 2026-04-12: A; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)",
+"disputed":true
+},
+"STAMPEDE":{
+"name":"Stampede",
+"grade":"D",
+"score":29,
+"type":"Power",
+"jobs":[
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.103.1: C; vmService list of 2026-04-12: B; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)",
+"disputed":true
+},
+"THUNDERCLAP":{
+"name":"Thunderclap",
+"grade":"D",
+"score":29,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Vulnerable"
+],
+"views":"JapaneseExport v0.103.1: C; vmService list of 2026-04-12: B; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)",
+"disputed":true,
+"notes":[
+"Both players rate it low; Tremble and Taunt are the Vulnerable sources they want."
+]
+},
+"INFERNAL_BLADE":{
+"name":"Infernal Blade",
+"grade":"D",
+"score":26,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.103.1: C; vmService list of 2026-04-12: C; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)",
+"notes":[
+"Both players rate it near the bottom."
+]
+},
+"PERFECTED_STRIKE":{
+"name":"Perfected Strike",
+"grade":"D",
+"score":26,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.1: C; vmService list of 2026-04-12: C; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)"
+},
+"MOLTEN_FIST":{
+"name":"Molten Fist",
+"grade":"D",
+"score":24,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Vulnerable"
+],
+"views":"JapaneseExport v0.103.1: C; Opem v0.107.1: D; vmService list of 2026-04-12: C; NaveGreed v0.111: Bad"
+},
+"HELLRAISER":{
+"name":"Hellraiser",
+"grade":"D",
+"score":24,
+"type":"Power",
+"jobs":[
+"Card draw",
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.103.1: C; vmService list of 2026-04-12: D; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)"
+},
+"JUGGLING":{
+"name":"Juggling",
+"grade":"D",
+"score":24,
+"type":"Power",
+"jobs":[
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.103.1: C; vmService list of 2026-04-12: D; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)"
+},
+"ONE_TWO_PUNCH":{
+"name":"One-Two Punch",
+"grade":"D",
+"score":21,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.103.1: D; vmService list of 2026-04-12: D; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)"
+}
+},
+"SILENT":{
+"AFTERIMAGE":{
+"name":"Afterimage",
+"grade":"S",
+"score":94,
+"type":"Power",
+"jobs":[
+"Block scaling power"
+],
+"views":"JapaneseExport v0.110.1: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Out of this world broken; Opem v0.111: high (exact tier not read)"
+},
+"FOOTWORK":{
+"name":"Footwork",
+"grade":"S",
+"score":94,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Dexterity / Plating"
+],
+"views":"JapaneseExport v0.110.1: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Out of this world broken; Opem v0.111: high (exact tier not read)"
+},
+"WELL_LAID_PLANS":{
+"name":"Well-Laid Plans",
+"grade":"S",
+"score":94,
+"type":"Power",
+"jobs":[
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.110.1: S (card may have changed since); NaveGreed v0.111: Out of this world broken; Opem v0.111: high (exact tier not read)"
+},
+"CALCULATED_GAMBLE":{
+"name":"Calculated Gamble",
+"grade":"S",
+"score":90,
+"type":"Skill",
+"jobs":[
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.110.1: S; Opem v0.98.2: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Incredible"
+},
+"LEG_SWEEP":{
+"name":"Leg Sweep",
+"grade":"S",
+"score":90,
+"type":"Skill",
+"jobs":[
+"Block",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.110.1: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Incredible"
+},
+"MALAISE":{
+"name":"Malaise",
+"grade":"S",
+"score":90,
+"type":"Skill",
+"jobs":[
+"Strength",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.110.1: S; Opem v0.98.2: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Incredible"
+},
+"PIERCING_WAIL":{
+"name":"Piercing Wail",
+"grade":"S",
+"score":90,
+"type":"Skill",
+"jobs":[
+"AoE",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.110.1: S; Opem v0.98.2: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Incredible"
+},
+"THE_HUNT":{
+"name":"The Hunt",
+"grade":"S",
+"score":90,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: S; Opem v0.98.2: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Incredible"
+},
+"ADRENALINE":{
+"name":"Adrenaline",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Energy"
+],
+"views":"JapaneseExport v0.110.1: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Incredible; Opem v0.111: high (exact tier not read)"
+},
+"BLADE_OF_INK":{
+"name":"Blade of Ink",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Shivs"
+],
+"views":"JapaneseExport v0.110.1: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Incredible; Opem v0.111: high (exact tier not read)"
+},
+"TOOLS_OF_THE_TRADE":{
+"name":"Tools of the Trade",
+"grade":"S",
+"score":89,
+"type":"Power",
+"jobs":[
+"Card draw",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.110.1: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Incredible; Opem v0.111: high (exact tier not read)"
+},
+"BACKFLIP":{
+"name":"Backflip",
+"grade":"S",
+"score":87,
+"type":"Skill",
+"jobs":[
+"Block",
+"Card draw"
+],
+"views":"JapaneseExport v0.110.1: A; vmService list of 2026-04-21: S; NaveGreed v0.111: Incredible; Opem v0.111: high (exact tier not read)"
+},
+"NOXIOUS_FUMES":{
+"name":"Noxious Fumes",
+"grade":"S",
+"score":87,
+"type":"Power",
+"jobs":[
+"AoE",
+"Damage scaling power",
+"Poison"
+],
+"views":"JapaneseExport v0.110.1: A; vmService list of 2026-04-21: S; NaveGreed v0.111: Incredible; Opem v0.111: high (exact tier not read)"
+},
+"EXPOSE":{
+"name":"Expose",
+"grade":"S",
+"score":86,
+"type":"Skill",
+"jobs":[
+"Vulnerable"
+],
+"views":"JapaneseExport v0.110.1: A; Opem v0.98.2: A; vmService list of 2026-04-21: A; NaveGreed v0.111: Incredible"
+},
+"HIDDEN_DAGGERS":{
+"name":"Hidden Daggers",
+"grade":"S",
+"score":86,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Discard / Sly",
+"Shivs"
+],
+"views":"JapaneseExport v0.110.1: A; Opem v0.98.2: A; vmService list of 2026-04-21: A; NaveGreed v0.111: Incredible"
+},
+"ACCURACY":{
+"name":"Accuracy",
+"grade":"S",
+"score":85,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Shivs"
+],
+"views":"JapaneseExport v0.110.1: A; vmService list of 2026-04-21: A; NaveGreed v0.111: Incredible; Opem v0.111: high (exact tier not read)",
+"notes":[
+"Gets the deck into Shivs cleanly."
+]
+},
+"INFINITE_BLADES":{
+"name":"Infinite Blades",
+"grade":"S",
+"score":85,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Shivs"
+],
+"views":"JapaneseExport v0.110.1: A; vmService list of 2026-04-21: A; NaveGreed v0.111: Incredible; Opem v0.111: high (exact tier not read)",
+"notes":[
+"Gets the deck into Shivs cleanly."
+]
+},
+"LEADING_STRIKE":{
+"name":"Leading Strike",
+"grade":"A",
+"score":83,
+"type":"Attack",
+"jobs":[
+"Shivs",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: A; vmService list of 2026-04-21: B; NaveGreed v0.111: Incredible"
+},
+"PHANTOM_BLADES":{
+"name":"Phantom Blades",
+"grade":"A",
+"score":81,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Retain",
+"Shivs"
+],
+"views":"JapaneseExport v0.110.1: B; vmService list of 2026-04-21: B; NaveGreed v0.111: Incredible; Opem v0.111: high (exact tier not read)",
+"disputed":true,
+"notes":[
+"Gets the deck into Shivs cleanly."
+]
+},
+"PREPARED":{
+"name":"Prepared",
+"grade":"A",
+"score":80,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.110.1: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Strong"
+},
+"SUPPRESS":{
+"name":"Suppress",
+"grade":"A",
+"score":80,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.110.1: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Strong"
+},
+"TRACKING":{
+"name":"Tracking",
+"grade":"A",
+"score":80,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.110.1: S (card may have changed since); NaveGreed v0.111: Strong"
+},
+"KNIFE_TRAP":{
+"name":"Knife Trap",
+"grade":"A",
+"score":79,
+"type":"Skill",
+"jobs":[
+"Shivs"
+],
+"views":"JapaneseExport v0.110.1: C; vmService list of 2026-04-21: B; NaveGreed v0.111: Incredible; Opem v0.111: high (exact tier not read)",
+"disputed":true
+},
+"BLUR":{
+"name":"Blur",
+"grade":"A",
+"score":78,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.110.1: A; Opem v0.98.2: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Strong"
+},
+"DEFLECT":{
+"name":"Deflect",
+"grade":"A",
+"score":77,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.110.1: B; vmService list of 2026-04-21: A; NaveGreed v0.111: Strong; Opem v0.111: S",
+"notes":[
+"Opem: S, because 0-cost Block matters when energy is tight."
+]
+},
+"ABRASIVE":{
+"name":"Abrasive",
+"grade":"A",
+"score":75,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Dexterity / Plating",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.110.1: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Good; Opem v0.111: S",
+"disputed":true,
+"notes":[
+"Opem: S. NaveGreed: Good."
+]
+},
+"BLADE_DANCE":{
+"name":"Blade Dance",
+"grade":"A",
+"score":75,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Shivs"
+],
+"views":"JapaneseExport v0.110.1: A; Opem v0.98.2: A; vmService list of 2026-04-21: A; NaveGreed v0.111: Strong"
+},
+"ECHOING_SLASH":{
+"name":"Echoing Slash",
+"grade":"A",
+"score":75,
+"type":"Attack",
+"jobs":[
+"AoE"
+],
+"views":"JapaneseExport v0.110.1: A; Opem v0.98.2: A; vmService list of 2026-04-21: A; NaveGreed v0.111: Strong"
+},
+"SIDESTEP":{
+"name":"Sidestep",
+"grade":"A",
+"score":75,
+"type":"Skill",
+"jobs":[
+"Energy"
+],
+"views":"NaveGreed v0.111: Strong"
+},
+"ACROBATICS":{
+"name":"Acrobatics",
+"grade":"A",
+"score":69,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.110.1: S; Opem v0.98.2: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Good",
+"disputed":true
+},
+"DODGE_AND_ROLL":{
+"name":"Dodge and Roll",
+"grade":"A",
+"score":69,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.110.1: S; Opem v0.98.2: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Good",
+"disputed":true
+},
+"ESCAPE_PLAN":{
+"name":"Escape Plan",
+"grade":"A",
+"score":69,
+"type":"Skill",
+"jobs":[
+"Block",
+"Card draw"
+],
+"views":"JapaneseExport v0.110.1: S; Opem v0.98.2: S; vmService list of 2026-04-21: S; NaveGreed v0.111: Good",
+"disputed":true
+},
+"FAN_OF_KNIVES":{
+"name":"Fan of Knives",
+"grade":"A",
+"score":68,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Shivs"
+],
+"views":"JapaneseExport v0.110.1: C; Opem v0.98.2: B; vmService list of 2026-04-21: B; NaveGreed v0.111: Strong"
+},
+"CLOAK_AND_DAGGER":{
+"name":"Cloak and Dagger",
+"grade":"B",
+"score":66,
+"type":"Skill",
+"jobs":[
+"Block",
+"Card draw",
+"Shivs"
+],
+"views":"JapaneseExport v0.110.1: B; Opem v0.98.2: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Strong",
+"disputed":true
+},
+"RICOCHET":{
+"name":"Ricochet",
+"grade":"B",
+"score":64,
+"type":"Attack",
+"jobs":[
+"Discard / Sly",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: B; Opem v0.98.2: A; vmService list of 2026-04-21: S; NaveGreed v0.111: Good"
+},
+"REFLEX":{
+"name":"Reflex",
+"grade":"B",
+"score":63,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.110.1: S; vmService list of 2026-04-21: A; NaveGreed v0.111: Strong; Opem v0.111: F",
+"disputed":true,
+"notes":[
+"Opem: F, because Sly cards cost energy the Silent rarely has spare. NaveGreed: Strong."
+]
+},
+"BACKSTAB":{
+"name":"Backstab",
+"grade":"B",
+"score":63,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: B; Opem v0.98.2: A; vmService list of 2026-04-21: A; NaveGreed v0.111: Good"
+},
+"PRECISE_CUT":{
+"name":"Precise Cut",
+"grade":"B",
+"score":63,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: B; Opem v0.98.2: A; vmService list of 2026-04-21: A; NaveGreed v0.111: Good"
+},
+"ACCELERANT":{
+"name":"Accelerant",
+"grade":"B",
+"score":62,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Poison"
+],
+"views":"JapaneseExport v0.110.1: D; Opem v0.98.2: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Strong",
+"disputed":true,
+"notes":[
+"The card that makes the other Poison cards work."
+]
+},
+"ASSASSINATE":{
+"name":"Assassinate",
+"grade":"B",
+"score":62,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Vulnerable"
+],
+"views":"JapaneseExport v0.110.1: A; vmService list of 2026-04-21: B; NaveGreed v0.111: Good"
+},
+"SERPENT_FORM":{
+"name":"Serpent Form",
+"grade":"B",
+"score":62,
+"type":"Power",
+"jobs":[
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.110.1: C; vmService list of 2026-04-21: D; NaveGreed v0.111: Strong",
+"disputed":true
+},
+"DAGGER_SPRAY":{
+"name":"Dagger Spray",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"AoE"
+],
+"views":"JapaneseExport v0.110.1: B; Opem v0.98.2: B; vmService list of 2026-04-21: B; NaveGreed v0.111: Good"
+},
+"POUNCE":{
+"name":"Pounce",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: B; NaveGreed v0.111: Good"
+},
+"WRAITH_FORM":{
+"name":"Wraith Form",
+"grade":"B",
+"score":59,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Damage prevention",
+"Dexterity / Plating"
+],
+"views":"JapaneseExport v0.110.1: S; Opem v0.98.2: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Good"
+},
+"SHADOWMELD":{
+"name":"Shadowmeld",
+"grade":"B",
+"score":58,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.110.1: C; Opem v0.98.2: B; vmService list of 2026-04-21: B; NaveGreed v0.111: Good"
+},
+"PREDATOR":{
+"name":"Predator",
+"grade":"B",
+"score":56,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: B; Opem v0.98.2: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Good"
+},
+"DASH":{
+"name":"Dash",
+"grade":"B",
+"score":54,
+"type":"Attack",
+"jobs":[
+"Block",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: C; Opem v0.98.2: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Good"
+},
+"TACTICIAN":{
+"name":"Tactician",
+"grade":"B",
+"score":54,
+"type":"Skill",
+"jobs":[
+"Discard / Sly",
+"Energy"
+],
+"views":"JapaneseExport v0.110.1: A; vmService list of 2026-04-21: A; NaveGreed v0.111: Good; Opem v0.111: F",
+"disputed":true,
+"notes":[
+"Opem: F (Sly cards cost energy the Silent rarely has spare). NaveGreed: Good."
+]
+},
+"FINISHER":{
+"name":"Finisher",
+"grade":"B",
+"score":52,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: C; Opem v0.98.2: C; vmService list of 2026-04-21: D; NaveGreed v0.111: Good",
+"disputed":true
+},
+"FLECHETTES":{
+"name":"Flechettes",
+"grade":"B",
+"score":50,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: A; Opem v0.98.2: A; vmService list of 2026-04-21: A; NaveGreed v0.111: Only if needed",
+"disputed":true
+},
+"PINPOINT":{
+"name":"Pinpoint",
+"grade":"B",
+"score":50,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: A; vmService list of 2026-04-21: A; NaveGreed v0.111: Only if needed",
+"disputed":true
+},
+"UNTOUCHABLE":{
+"name":"Untouchable",
+"grade":"C",
+"score":49,
+"type":"Skill",
+"jobs":[
+"Block",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.110.1: S; NaveGreed v0.111: Only if needed; Opem v0.111: low (exact tier not read)",
+"disputed":true,
+"notes":[
+"Low on both lists."
+]
+},
+"SUCKER_PUNCH":{
+"name":"Sucker Punch",
+"grade":"C",
+"score":46,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.110.1: B; vmService list of 2026-04-21: B; NaveGreed v0.111: Only if needed"
+},
+"BURST":{
+"name":"Burst",
+"grade":"C",
+"score":46,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.110.1: C; Opem v0.98.2: A; vmService list of 2026-04-21: B; NaveGreed v0.111: Only if needed"
+},
+"EXPERTISE":{
+"name":"Expertise",
+"grade":"C",
+"score":45,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Retain"
+],
+"views":"JapaneseExport v0.110.1: C (card may have changed since); NaveGreed v0.111: Good; Opem v0.111: F",
+"disputed":true,
+"notes":[
+"Opem: F (Sly cards cost energy the Silent rarely has spare). NaveGreed: Good."
+]
+},
+"SLICE":{
+"name":"Slice",
+"grade":"C",
+"score":42,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: B; Opem v0.98.2: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Only if needed"
+},
+"STRANGLE":{
+"name":"Strangle",
+"grade":"C",
+"score":42,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: C; Opem v0.98.2: C; vmService list of 2026-04-21: B; NaveGreed v0.111: Only if needed"
+},
+"FLICK_FLACK":{
+"name":"Flick-Flack",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.110.1: C (card may have changed since); NaveGreed v0.111: Only if needed"
+},
+"HAZE":{
+"name":"Haze",
+"grade":"C",
+"score":40,
+"type":"Skill",
+"jobs":[
+"AoE",
+"Poison",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.110.1: C (card may have changed since); NaveGreed v0.111: Only if needed"
+},
+"MIRAGE":{
+"name":"Mirage",
+"grade":"C",
+"score":40,
+"type":"Skill",
+"jobs":[
+"AoE",
+"Poison"
+],
+"views":"NaveGreed v0.111: Only if needed"
+},
+"OUTBREAK":{
+"name":"Outbreak",
+"grade":"C",
+"score":40,
+"type":"Skill",
+"jobs":[
+"AoE",
+"Poison"
+],
+"views":"JapaneseExport v0.110.1: C (card may have changed since); NaveGreed v0.111: Only if needed"
+},
+"POISONED_STAB":{
+"name":"Poisoned Stab",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"Poison",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Only if needed"
+},
+"SKEWER":{
+"name":"Skewer",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Only if needed"
+},
+"SNAKEBITE":{
+"name":"Snakebite",
+"grade":"C",
+"score":40,
+"type":"Skill",
+"jobs":[
+"Poison",
+"Retain"
+],
+"views":"JapaneseExport v0.110.1: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Only if needed",
+"notes":[
+"Feels terrible without Accelerant; Poison only to solve a specific fight, not once the deck is in Shivs."
+]
+},
+"BUBBLE_BUBBLE":{
+"name":"Bubble Bubble",
+"grade":"C",
+"score":39,
+"type":"Skill",
+"jobs":[
+"Poison"
+],
+"views":"JapaneseExport v0.110.1: C; vmService list of 2026-04-21: B; NaveGreed v0.111: Only if needed; Opem v0.111: low (exact tier not read)",
+"notes":[
+"Feels terrible without Accelerant; Poison only to solve a specific fight, not once the deck is in Shivs."
+]
+},
+"HAND_TRICK":{
+"name":"Hand Trick",
+"grade":"C",
+"score":38,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.110.1: C; Opem v0.98.2: C; vmService list of 2026-04-21: D; NaveGreed v0.111: Only if needed"
+},
+"SHADOW_STEP":{
+"name":"Shadow Step",
+"grade":"C",
+"score":38,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.110.1: C; Opem v0.98.2: C; vmService list of 2026-04-21: D; NaveGreed v0.111: Only if needed"
+},
+"ENVENOM":{
+"name":"Envenom",
+"grade":"C",
+"score":36,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Poison"
+],
+"views":"JapaneseExport v0.110.1: D; Opem v0.98.2: D; vmService list of 2026-04-21: C; NaveGreed v0.111: Only if needed"
+},
+"BULLET_TIME":{
+"name":"Bullet Time",
+"grade":"C",
+"score":34,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.110.1: D; Opem v0.98.2: D; vmService list of 2026-04-21: D; NaveGreed v0.111: Only if needed"
+},
+"NIGHTMARE":{
+"name":"Nightmare",
+"grade":"C",
+"score":34,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.110.1: D; Opem v0.98.2: D; vmService list of 2026-04-21: D; NaveGreed v0.111: Only if needed"
+},
+"DEADLY_POISON":{
+"name":"Deadly Poison",
+"grade":"C",
+"score":34,
+"type":"Skill",
+"jobs":[
+"Poison"
+],
+"views":"JapaneseExport v0.110.1: C; vmService list of 2026-04-21: D; NaveGreed v0.111: Only if needed; Opem v0.111: low (exact tier not read)",
+"notes":[
+"Feels terrible without Accelerant. Take Poison only to solve a specific fight (the Waterfall Giant, the Eels), and not once the deck is in Shivs."
+]
+},
+"UP_MY_SLEEVE":{
+"name":"Up My Sleeve",
+"grade":"C",
+"score":34,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Shivs"
+],
+"views":"JapaneseExport v0.110.1: D; vmService list of 2026-04-21: C; NaveGreed v0.111: Only if needed; Opem v0.111: low (exact tier not read)"
+},
+"CORROSIVE_WAVE":{
+"name":"Corrosive Wave",
+"grade":"D",
+"score":29,
+"type":"Skill",
+"jobs":[
+"AoE",
+"Card draw",
+"Poison"
+],
+"views":"JapaneseExport v0.110.1: C; vmService list of 2026-04-21: B; NaveGreed v0.111: Kinda just bad; Opem v0.111: low (exact tier not read)",
+"disputed":true
+},
+"DAGGER_THROW":{
+"name":"Dagger Throw",
+"grade":"D",
+"score":28,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Discard / Sly",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: B; Opem v0.98.2: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Kinda just bad",
+"disputed":true
+},
+"MASTER_PLANNER":{
+"name":"Master Planner",
+"grade":"D",
+"score":26,
+"type":"Power",
+"jobs":[],
+"views":"JapaneseExport v0.110.1: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Kinda just bad; Opem v0.111: low (exact tier not read)"
+},
+"MURDER":{
+"name":"Murder",
+"grade":"D",
+"score":26,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: C; vmService list of 2026-04-21: C; NaveGreed v0.111: Kinda just bad; Opem v0.111: low (exact tier not read)"
+},
+"ANTICIPATE":{
+"name":"Anticipate",
+"grade":"D",
+"score":26,
+"type":"Skill",
+"jobs":[
+"Dexterity / Plating"
+],
+"views":"JapaneseExport v0.110.1: C (card may have changed since); NaveGreed v0.111: Kinda just bad"
+},
+"GRAND_FINALE":{
+"name":"Grand Finale",
+"grade":"D",
+"score":21,
+"type":"Attack",
+"jobs":[
+"AoE"
+],
+"views":"JapaneseExport v0.110.1: D; vmService list of 2026-04-21: D; NaveGreed v0.111: Kinda just bad; Opem v0.111: low (exact tier not read)"
+},
+"STORM_OF_STEEL":{
+"name":"Storm of Steel",
+"grade":"D",
+"score":21,
+"type":"Skill",
+"jobs":[
+"Discard / Sly",
+"Shivs"
+],
+"views":"JapaneseExport v0.110.1: D; vmService list of 2026-04-21: D; NaveGreed v0.111: Kinda just bad; Opem v0.111: low (exact tier not read)"
+},
+"BOUNCING_FLASK":{
+"name":"Bouncing Flask",
+"grade":"D",
+"score":20,
+"type":"Skill",
+"jobs":[
+"Poison"
+],
+"views":"JapaneseExport v0.110.1: D; Opem v0.98.2: D; vmService list of 2026-04-21: D; NaveGreed v0.111: Kinda just bad"
+},
+"MEMENTO_MORI":{
+"name":"Memento Mori",
+"grade":"D",
+"score":20,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.110.1: D; vmService list of 2026-04-21: D; NaveGreed v0.111: Kinda just bad"
+},
+"SPEEDSTER":{
+"name":"Speedster",
+"grade":"D",
+"score":20,
+"type":"Power",
+"jobs":[
+"AoE",
+"Card draw",
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.110.1: D; vmService list of 2026-04-21: D; NaveGreed v0.111: Kinda just bad"
+}
+},
+"DEFECT":{
+"ECHO_FORM":{
+"name":"Echo Form",
+"grade":"S",
+"score":94,
+"type":"Power",
+"jobs":[],
+"views":"JapaneseExport v0.109.0: S; vmService list of 2026-05-05: S; NaveGreed v0.111: why; Opem v0.111: high (exact tier not read)"
+},
+"SHATTER":{
+"name":"Shatter",
+"grade":"S",
+"score":94,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Evoke"
+],
+"views":"JapaneseExport v0.109.0: S (card may have changed since); NaveGreed v0.111: why; Opem v0.111: high (exact tier not read)"
+},
+"CHILL":{
+"name":"Chill",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Frost orbs"
+],
+"views":"JapaneseExport v0.109.0: S; vmService list of 2026-05-05: S; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"DEFRAGMENT":{
+"name":"Defragment",
+"grade":"S",
+"score":89,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Damage scaling power",
+"Focus"
+],
+"views":"JapaneseExport v0.109.0: S; vmService list of 2026-05-05: S; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"GENETIC_ALGORITHM":{
+"name":"Genetic Algorithm",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.109.0: S; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"GLACIER":{
+"name":"Glacier",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Block",
+"Frost orbs"
+],
+"views":"JapaneseExport v0.109.0: S; vmService list of 2026-05-05: S; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"OVERCLOCK":{
+"name":"Overclock",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Discard / Sly",
+"Status"
+],
+"views":"JapaneseExport v0.109.0: S; vmService list of 2026-05-05: S; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)",
+"notes":[
+"A Status generator for Flak Cannon."
+]
+},
+"TRASH_TO_TREASURE":{
+"name":"Trash to Treasure",
+"grade":"S",
+"score":89,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Damage scaling power",
+"Status"
+],
+"views":"JapaneseExport v0.109.0: S (card may have changed since); NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"BIASED_COGNITION":{
+"name":"Biased Cognition",
+"grade":"S",
+"score":88,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Damage scaling power",
+"Focus"
+],
+"views":"NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"NULL":{
+"name":"Null",
+"grade":"S",
+"score":88,
+"type":"Attack",
+"jobs":[
+"Dark orbs",
+"Single-target damage",
+"Weak / enemy Strength loss"
+],
+"views":"NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"FLAK_CANNON":{
+"name":"Flak Cannon",
+"grade":"S",
+"score":88,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Status"
+],
+"views":"JapaneseExport v0.109.0: A; vmService list of 2026-05-05: B; NaveGreed v0.111: why; Opem v0.111: high (exact tier not read)",
+"disputed":true,
+"notes":[
+"The payoff of the Status engine: pair it with Status generators (Overclock, Boost Away, TURBO)."
+]
+},
+"FIGHT_THROUGH":{
+"name":"Fight Through",
+"grade":"S",
+"score":87,
+"type":"Skill",
+"jobs":[
+"Block",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: A; vmService list of 2026-05-05: S; NaveGreed v0.111: Don’t think just click"
+},
+"SUPERCRITICAL":{
+"name":"Supercritical",
+"grade":"S",
+"score":87,
+"type":"Skill",
+"jobs":[
+"Energy"
+],
+"views":"JapaneseExport v0.109.0: S; Opem list of 2026-05-12: A; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click"
+},
+"BOOT_SEQUENCE":{
+"name":"Boot Sequence",
+"grade":"S",
+"score":87,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.109.0: S; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"BUFFER":{
+"name":"Buffer",
+"grade":"S",
+"score":87,
+"type":"Power",
+"jobs":[
+"Block scaling power"
+],
+"views":"JapaneseExport v0.109.0: S; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"DARKNESS":{
+"name":"Darkness",
+"grade":"S",
+"score":87,
+"type":"Skill",
+"jobs":[
+"Dark orbs"
+],
+"views":"JapaneseExport v0.109.0: S; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"ICE_LANCE":{
+"name":"Ice Lance",
+"grade":"S",
+"score":87,
+"type":"Attack",
+"jobs":[
+"Frost orbs",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: S; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"MACHINE_LEARNING":{
+"name":"Machine Learning",
+"grade":"S",
+"score":87,
+"type":"Power",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.109.0: S; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"COOLHEADED":{
+"name":"Coolheaded",
+"grade":"S",
+"score":86,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Frost orbs"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: A; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click"
+},
+"HAILSTORM":{
+"name":"Hailstorm",
+"grade":"S",
+"score":86,
+"type":"Power",
+"jobs":[
+"AoE",
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: A; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click"
+},
+"BULK_UP":{
+"name":"Bulk Up",
+"grade":"S",
+"score":85,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Damage scaling power",
+"Dexterity / Plating",
+"Strength"
+],
+"views":"JapaneseExport v0.109.0: A; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"COLD_SNAP":{
+"name":"Cold Snap",
+"grade":"S",
+"score":85,
+"type":"Attack",
+"jobs":[
+"Frost orbs",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: A; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"SUBROUTINE":{
+"name":"Subroutine",
+"grade":"S",
+"score":85,
+"type":"Power",
+"jobs":[
+"Energy"
+],
+"views":"JapaneseExport v0.109.0: A; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"TURBO":{
+"name":"TURBO",
+"grade":"S",
+"score":85,
+"type":"Skill",
+"jobs":[
+"Discard / Sly",
+"Energy"
+],
+"views":"JapaneseExport v0.109.0: A; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)",
+"notes":[
+"A Status generator for Flak Cannon."
+]
+},
+"BOOST_AWAY":{
+"name":"Boost Away",
+"grade":"A",
+"score":84,
+"type":"Skill",
+"jobs":[
+"Block",
+"Discard / Sly",
+"Status"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: B; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click",
+"notes":[
+"A Status generator for Flak Cannon."
+]
+},
+"CHARGE_BATTERY":{
+"name":"Charge Battery",
+"grade":"A",
+"score":84,
+"type":"Skill",
+"jobs":[
+"Block",
+"Energy"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: B; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click"
+},
+"HOLOGRAM":{
+"name":"Hologram",
+"grade":"A",
+"score":84,
+"type":"Skill",
+"jobs":[
+"Block",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.109.0: B; Opem list of 2026-05-12: A; vmService list of 2026-05-05: A; NaveGreed v0.111: Don’t think just click"
+},
+"ITERATION":{
+"name":"Iteration",
+"grade":"A",
+"score":83,
+"type":"Power",
+"jobs":[
+"Card draw",
+"Status"
+],
+"views":"JapaneseExport v0.109.0: A; vmService list of 2026-05-05: B; NaveGreed v0.111: Don’t think just click; Opem v0.111: high (exact tier not read)"
+},
+"COMPILE_DRIVER":{
+"name":"Compile Driver",
+"grade":"A",
+"score":80,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: C; Opem list of 2026-05-12: A; vmService list of 2026-05-05: B; NaveGreed v0.111: Don’t think just click",
+"disputed":true
+},
+"MODDED":{
+"name":"Modded",
+"grade":"A",
+"score":80,
+"type":"Skill",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.109.0: S; Opem list of 2026-05-12: S; vmService list of 2026-05-05: S; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"SKIM":{
+"name":"Skim",
+"grade":"A",
+"score":78,
+"type":"Skill",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: C; vmService list of 2026-05-05: C; NaveGreed v0.111: Don’t think just click",
+"disputed":true
+},
+"COOLANT":{
+"name":"Coolant",
+"grade":"A",
+"score":76,
+"type":"Power",
+"jobs":[
+"Block scaling power"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: A; vmService list of 2026-05-05: S; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"BARRAGE":{
+"name":"Barrage",
+"grade":"A",
+"score":75,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: S; Opem list of 2026-05-12: A; vmService list of 2026-05-05: B; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"CAPACITOR":{
+"name":"Capacitor",
+"grade":"A",
+"score":75,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.109.0: S; Opem list of 2026-05-12: B; vmService list of 2026-05-05: A; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"GO_FOR_THE_EYES":{
+"name":"Go for the Eyes",
+"grade":"A",
+"score":75,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: A; vmService list of 2026-05-05: A; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"LOOP":{
+"name":"Loop",
+"grade":"A",
+"score":75,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.109.0: S; Opem list of 2026-05-12: B; vmService list of 2026-05-05: A; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"REFRACT":{
+"name":"Refract",
+"grade":"A",
+"score":75,
+"type":"Attack",
+"jobs":[
+"Glass orbs",
+"Single-target damage"
+],
+"views":"NaveGreed v0.111: Powerful but you can’t just click"
+},
+"ROCKET_PUNCH":{
+"name":"Rocket Punch",
+"grade":"A",
+"score":75,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Single-target damage",
+"Status"
+],
+"views":"NaveGreed v0.111: Powerful but you can’t just click"
+},
+"SHADOW_SHIELD":{
+"name":"Shadow Shield",
+"grade":"A",
+"score":75,
+"type":"Skill",
+"jobs":[
+"Block",
+"Dark orbs"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: A; vmService list of 2026-05-05: A; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"THUNDER":{
+"name":"Thunder",
+"grade":"A",
+"score":75,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Evoke"
+],
+"views":"NaveGreed v0.111: Powerful but you can’t just click"
+},
+"SPINNER":{
+"name":"Spinner",
+"grade":"A",
+"score":72,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Glass orbs"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: B; vmService list of 2026-05-05: B; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"ALL_FOR_ONE":{
+"name":"All for One",
+"grade":"A",
+"score":70,
+"type":"Attack",
+"jobs":[
+"Discard / Sly",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: B; Opem list of 2026-05-12: B; vmService list of 2026-05-05: B; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"HELIX_DRILL":{
+"name":"Helix Drill",
+"grade":"A",
+"score":70,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: B (card may have changed since); NaveGreed v0.111: Powerful but you can’t just click"
+},
+"BALL_LIGHTNING":{
+"name":"Ball Lightning",
+"grade":"A",
+"score":70,
+"type":"Attack",
+"jobs":[
+"Lightning orbs",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: C; vmService list of 2026-05-05: B; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"FTL":{
+"name":"FTL",
+"grade":"A",
+"score":70,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: C; vmService list of 2026-05-05: B; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"LIGHTNING_ROD":{
+"name":"Lightning Rod",
+"grade":"A",
+"score":70,
+"type":"Skill",
+"jobs":[
+"Block",
+"Lightning orbs"
+],
+"views":"JapaneseExport v0.109.0: C; Opem list of 2026-05-12: B; vmService list of 2026-05-05: A; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"SIGNAL_BOOST":{
+"name":"Signal Boost",
+"grade":"A",
+"score":70,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: C; vmService list of 2026-05-05: B; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"SMOKESTACK":{
+"name":"Smokestack",
+"grade":"A",
+"score":70,
+"type":"Power",
+"jobs":[
+"AoE",
+"Damage scaling power",
+"Status"
+],
+"views":"JapaneseExport v0.109.0: C; Opem list of 2026-05-12: B; vmService list of 2026-05-05: A; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"UPROAR":{
+"name":"Uproar",
+"grade":"A",
+"score":70,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: A; Opem list of 2026-05-12: D (card may have changed since); NaveGreed v0.111: Powerful but you can’t just click"
+},
+"GLASSWORK":{
+"name":"Glasswork",
+"grade":"A",
+"score":68,
+"type":"Skill",
+"jobs":[
+"Block",
+"Glass orbs"
+],
+"views":"JapaneseExport v0.109.0: C; Opem list of 2026-05-12: B; vmService list of 2026-05-05: B; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"LEAP":{
+"name":"Leap",
+"grade":"A",
+"score":68,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.109.0: B; Opem list of 2026-05-12: C; vmService list of 2026-05-05: B; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"MULTI_CAST":{
+"name":"Multi-Cast",
+"grade":"A",
+"score":68,
+"type":"Skill",
+"jobs":[
+"Evoke"
+],
+"views":"JapaneseExport v0.109.0: C; Opem list of 2026-05-12: B; vmService list of 2026-05-05: B; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"SCAVENGE":{
+"name":"Scavenge",
+"grade":"A",
+"score":68,
+"type":"Skill",
+"jobs":[
+"Energy",
+"Exhaust outlet"
+],
+"views":"JapaneseExport v0.109.0: C; Opem list of 2026-05-12: B; vmService list of 2026-05-05: B; NaveGreed v0.111: Powerful but you can’t just click"
+},
+"MOMENTUM_STRIKE":{
+"name":"Momentum Strike",
+"grade":"B",
+"score":64,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: C (card may have changed since); NaveGreed v0.111: Powerful but you can’t just click",
+"disputed":true
+},
+"FUSION":{
+"name":"Fusion",
+"grade":"B",
+"score":62,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.109.0: B; NaveGreed v0.111: Powerful but you can’t just click; Opem v0.111: C (name read from card text only)"
+},
+"METEOR_STRIKE":{
+"name":"Meteor Strike",
+"grade":"B",
+"score":55,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: C; vmService list of 2026-05-05: B; NaveGreed v0.111: Powerful but you can’t just click; Opem v0.111: F",
+"disputed":true,
+"notes":[
+"NaveGreed: powerful but you can't just click it. Opem: F."
+]
+},
+"RAINBOW":{
+"name":"Rainbow",
+"grade":"B",
+"score":55,
+"type":"Skill",
+"jobs":[
+"Dark orbs",
+"Frost orbs",
+"Lightning orbs"
+],
+"views":"JapaneseExport v0.109.0: B; vmService list of 2026-05-05: C; NaveGreed v0.111: Powerful but you can’t just click; Opem v0.111: F",
+"disputed":true,
+"notes":[
+"NaveGreed: powerful but you can't just click it. Opem: F."
+]
+},
+"STORM":{
+"name":"Storm",
+"grade":"B",
+"score":55,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Lightning orbs"
+],
+"views":"JapaneseExport v0.109.0: C; vmService list of 2026-05-05: D; NaveGreed v0.111: Powerful but you can’t just click; Opem v0.111: C (name read from card text only)",
+"disputed":true
+},
+"COMPACT":{
+"name":"Compact",
+"grade":"B",
+"score":52,
+"type":"Skill",
+"jobs":[
+"Block",
+"Status"
+],
+"views":"JapaneseExport v0.109.0: S; Opem list of 2026-05-12: A; vmService list of 2026-05-05: A; NaveGreed v0.111: I guess you could use these",
+"disputed":true,
+"notes":[
+"Nerfed; no longer covers the Status engine."
+]
+},
+"SUNDER":{
+"name":"Sunder",
+"grade":"B",
+"score":50,
+"type":"Attack",
+"jobs":[
+"Energy",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: A (card may have changed since); NaveGreed v0.111: I guess you could use these",
+"disputed":true
+},
+"QUADCAST":{
+"name":"Quadcast",
+"grade":"C",
+"score":48,
+"type":"Skill",
+"jobs":[
+"Evoke"
+],
+"views":"Opem list of 2026-05-12: A; vmService list of 2026-05-05: B; NaveGreed v0.111: I guess you could use these",
+"disputed":true
+},
+"CONSUMING_SHADOW":{
+"name":"Consuming Shadow",
+"grade":"C",
+"score":48,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Dark orbs",
+"Evoke"
+],
+"views":"JapaneseExport v0.109.0: B; Opem list of 2026-05-12: B; vmService list of 2026-05-05: A; NaveGreed v0.111: I guess you could use these",
+"disputed":true
+},
+"HOTFIX":{
+"name":"Hotfix",
+"grade":"C",
+"score":47,
+"type":"Skill",
+"jobs":[
+"Focus"
+],
+"views":"JapaneseExport v0.109.0: C; Opem list of 2026-05-12: A; vmService list of 2026-05-05: A; NaveGreed v0.111: I guess you could use these"
+},
+"SYNTHESIS":{
+"name":"Synthesis",
+"grade":"C",
+"score":46,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: B; NaveGreed v0.111: I guess you could use these"
+},
+"DOUBLE_ENERGY":{
+"name":"Double Energy",
+"grade":"C",
+"score":45,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.109.0: B; vmService list of 2026-05-05: B; NaveGreed v0.111: I guess you could use these; Opem v0.111: C (name read from card text only)"
+},
+"GUNK_UP":{
+"name":"Gunk Up",
+"grade":"C",
+"score":44,
+"type":"Attack",
+"jobs":[
+"Discard / Sly",
+"Single-target damage",
+"Status"
+],
+"views":"JapaneseExport v0.109.0: A; vmService list of 2026-05-05: C; NaveGreed v0.111: I guess you could use these; Opem v0.111: C (name read from card text only)"
+},
+"FERAL":{
+"name":"Feral",
+"grade":"C",
+"score":42,
+"type":"Power",
+"jobs":[
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.109.0: B; vmService list of 2026-05-05: C; NaveGreed v0.111: I guess you could use these; Opem v0.111: C (name read from card text only)"
+},
+"ADAPTIVE_STRIKE":{
+"name":"Adaptive Strike",
+"grade":"C",
+"score":42,
+"type":"Attack",
+"jobs":[
+"Discard / Sly",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: C; Opem list of 2026-05-12: C; vmService list of 2026-05-05: B; NaveGreed v0.111: I guess you could use these"
+},
+"BEAM_CELL":{
+"name":"Beam Cell",
+"grade":"C",
+"score":42,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Vulnerable"
+],
+"views":"JapaneseExport v0.109.0: C; Opem list of 2026-05-12: C; vmService list of 2026-05-05: B; NaveGreed v0.111: I guess you could use these"
+},
+"CREATIVE_AI":{
+"name":"Creative AI",
+"grade":"C",
+"score":42,
+"type":"Power",
+"jobs":[],
+"views":"JapaneseExport v0.109.0: B; Opem list of 2026-05-12: C; vmService list of 2026-05-05: C; NaveGreed v0.111: I guess you could use these"
+},
+"FOCUSED_STRIKE":{
+"name":"Focused Strike",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"Focus",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: D; Opem list of 2026-05-12: C; vmService list of 2026-05-05: B; NaveGreed v0.111: I guess you could use these"
+},
+"HYPERBEAM":{
+"name":"Hyperbeam",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Focus"
+],
+"views":"NaveGreed v0.111: I guess you could use these"
+},
+"REBOOT":{
+"name":"Reboot",
+"grade":"C",
+"score":40,
+"type":"Skill",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.109.0: C; Opem list of 2026-05-12: C; vmService list of 2026-05-05: C; NaveGreed v0.111: I guess you could use these"
+},
+"SYNCHRONIZE":{
+"name":"Synchronize",
+"grade":"C",
+"score":40,
+"type":"Skill",
+"jobs":[
+"Focus"
+],
+"views":"NaveGreed v0.111: I guess you could use these"
+},
+"CLAW":{
+"name":"Claw",
+"grade":"C",
+"score":34,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: D; Opem list of 2026-05-12: D; vmService list of 2026-05-05: D; NaveGreed v0.111: I guess you could use these"
+},
+"TESLA_COIL":{
+"name":"Tesla Coil",
+"grade":"C",
+"score":31,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: B; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)",
+"disputed":true
+},
+"SCRAPE":{
+"name":"Scrape",
+"grade":"D",
+"score":26,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Discard / Sly",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.109.0: D; vmService list of 2026-05-05: B; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)"
+},
+"SWEEPING_BEAM":{
+"name":"Sweeping Beam",
+"grade":"D",
+"score":24,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Card draw"
+],
+"views":"JapaneseExport v0.109.0: D; vmService list of 2026-05-05: C; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)"
+},
+"TEMPEST":{
+"name":"Tempest",
+"grade":"D",
+"score":24,
+"type":"Skill",
+"jobs":[
+"Lightning orbs"
+],
+"views":"JapaneseExport v0.109.0: C; vmService list of 2026-05-05: D; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)"
+},
+"VOLTAIC":{
+"name":"Voltaic",
+"grade":"D",
+"score":24,
+"type":"Skill",
+"jobs":[
+"Lightning orbs"
+],
+"views":"JapaneseExport v0.109.0: C; vmService list of 2026-05-05: D; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)"
+},
+"WHITE_NOISE":{
+"name":"White Noise",
+"grade":"D",
+"score":22,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.109.0: C; vmService list of 2026-05-05: D; NaveGreed v0.111: Bad; Opem v0.111: F (name read from card text only)",
+"notes":[
+"Opem's board shows F; his spoken view is unclear in the transcript."
+]
+},
+"CHAOS":{
+"name":"Chaos",
+"grade":"D",
+"score":21,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.109.0: D; vmService list of 2026-05-05: D; NaveGreed v0.111: Bad; Opem v0.111: low (exact tier not read)"
+}
+},
+"REGENT":{
+"GUARDS":{
+"name":"GUARDS!!!",
+"grade":"S",
+"score":94,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.103.2: S; vmService list of 2026-03-11: S; NaveGreed v0.111: Out of this world broken; Opem v0.111: high (exact tier not read)"
+},
+"REFLECT":{
+"name":"Reflect",
+"grade":"S",
+"score":94,
+"type":"Skill",
+"jobs":[
+"Block",
+"Star spender"
+],
+"views":"NaveGreed v0.111: SSSS; Opem v0.111: Gg",
+"notes":[
+"Opem keeps it in his top tier although his chat said it should go down."
+]
+},
+"TYRANNY":{
+"name":"Tyranny",
+"grade":"S",
+"score":92,
+"type":"Power",
+"jobs":[
+"Card draw",
+"Exhaust outlet"
+],
+"views":"JapaneseExport v0.103.2: A; vmService list of 2026-03-11: S; NaveGreed v0.111: Out of this world broken; Opem v0.111: high (exact tier not read)"
+},
+"BIG_BANG":{
+"name":"Big Bang",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Energy",
+"Forge",
+"Star gain"
+],
+"views":"JapaneseExport v0.103.2: S; vmService list of 2026-03-11: S; NaveGreed v0.111: SSSS; Opem v0.111: high (exact tier not read)"
+},
+"CHARGE":{
+"name":"CHARGE!!",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.103.2: S; NaveGreed v0.111: SSSS; Opem v0.111: high (exact tier not read)"
+},
+"CHILD_OF_THE_STARS":{
+"name":"Child of the Stars",
+"grade":"S",
+"score":89,
+"type":"Power",
+"jobs":[
+"Block scaling power"
+],
+"views":"JapaneseExport v0.103.2: S; vmService list of 2026-03-11: S; NaveGreed v0.111: SSSS; Opem v0.111: high (exact tier not read)"
+},
+"CONVERGENCE":{
+"name":"Convergence",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Energy",
+"Retain",
+"Star gain"
+],
+"views":"JapaneseExport v0.103.2: S; vmService list of 2026-03-11: S; NaveGreed v0.111: SSSS; Opem v0.111: high (exact tier not read)"
+},
+"METEOR_SHOWER":{
+"name":"Meteor Shower",
+"grade":"S",
+"score":89,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Star spender",
+"Vulnerable",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.103.2: S; NaveGreed v0.111: SSSS; Opem v0.111: high (exact tier not read)"
+},
+"SPECTRUM_SHIFT":{
+"name":"Spectrum Shift",
+"grade":"S",
+"score":85,
+"type":"Power",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.103.2: S; vmService list of 2026-03-11: B; NaveGreed v0.111: SSSS; Opem v0.111: high (exact tier not read)"
+},
+"PILLAR_OF_CREATION":{
+"name":"Pillar of Creation",
+"grade":"A",
+"score":84,
+"type":"Power",
+"jobs":[
+"Block scaling power"
+],
+"views":"NaveGreed v0.111: Strong; Opem v0.111: Gg",
+"notes":[
+"Opem: his top tier. NaveGreed: Strong."
+]
+},
+"ORBIT":{
+"name":"Orbit",
+"grade":"A",
+"score":82,
+"type":"Power",
+"jobs":[
+"Energy"
+],
+"views":"JapaneseExport v0.103.2: A; vmService list of 2026-03-11: A; NaveGreed v0.111: SSSS; Opem v0.111: A",
+"notes":[
+"NaveGreed: 'I lose when I don't have Orbit.' Opem: A."
+]
+},
+"GLOW":{
+"name":"Glow",
+"grade":"A",
+"score":77,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Star gain"
+],
+"views":"JapaneseExport v0.103.2: S; Opem list of 2026-04-16: A; NaveGreed v0.111: Strong",
+"notes":[
+"NaveGreed rates it partly for his infinite-combo style."
+]
+},
+"ASTRAL_PULSE":{
+"name":"Astral Pulse",
+"grade":"A",
+"score":75,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Star spender"
+],
+"views":"NaveGreed v0.111: Strong",
+"notes":[
+"Act 1 AoE that handles the Frog Parasite and the Eels."
+]
+},
+"BEGONE":{
+"name":"BEGONE!",
+"grade":"A",
+"score":75,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.103.2: A; Opem list of 2026-04-16: A; NaveGreed v0.111: Strong"
+},
+"BULWARK":{
+"name":"Bulwark",
+"grade":"A",
+"score":75,
+"type":"Skill",
+"jobs":[
+"Block",
+"Forge"
+],
+"views":"NaveGreed v0.111: Strong"
+},
+"COLLISION_COURSE":{
+"name":"Collision Course",
+"grade":"A",
+"score":75,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"NaveGreed v0.111: Strong",
+"notes":[
+"Handles the Skulking Colony and similar act 1 fights."
+]
+},
+"GAMMA_BLAST":{
+"name":"Gamma Blast",
+"grade":"A",
+"score":75,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Star spender",
+"Vulnerable",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.103.2: A; Opem list of 2026-04-16: B; vmService list of 2026-03-11: S; NaveGreed v0.111: Strong"
+},
+"REFINE_BLADE":{
+"name":"Refine Blade",
+"grade":"A",
+"score":75,
+"type":"Skill",
+"jobs":[
+"Energy",
+"Forge"
+],
+"views":"NaveGreed v0.111: Strong"
+},
+"CRASH_LANDING":{
+"name":"Crash Landing",
+"grade":"A",
+"score":74,
+"type":"Attack",
+"jobs":[
+"AoE"
+],
+"views":"JapaneseExport v0.103.2: S; Opem list of 2026-04-16: S; vmService list of 2026-03-11: C; NaveGreed v0.111: Strong"
+},
+"VOID_FORM":{
+"name":"Void Form",
+"grade":"A",
+"score":72,
+"type":"Power",
+"jobs":[],
+"views":"JapaneseExport v0.103.2: S; Opem list of 2026-04-16: C; NaveGreed v0.111: Strong"
+},
+"BOMBARDMENT":{
+"name":"Bombardment",
+"grade":"A",
+"score":70,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: B; Opem list of 2026-04-16: B; NaveGreed v0.111: Strong"
+},
+"ARSENAL":{
+"name":"Arsenal",
+"grade":"A",
+"score":70,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Strength"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: A; NaveGreed v0.111: Strong"
+},
+"COMET":{
+"name":"Comet",
+"grade":"B",
+"score":68,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Star spender",
+"Vulnerable",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.103.2: S; Opem list of 2026-04-16: A; vmService list of 2026-03-11: S; NaveGreed v0.111: Good",
+"disputed":true
+},
+"KNOW_THY_PLACE":{
+"name":"Know Thy Place",
+"grade":"B",
+"score":66,
+"type":"Skill",
+"jobs":[
+"Vulnerable",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.103.2: S; Opem list of 2026-04-16: A; vmService list of 2026-03-11: A; NaveGreed v0.111: Good"
+},
+"PARTICLE_WALL":{
+"name":"Particle Wall",
+"grade":"B",
+"score":66,
+"type":"Skill",
+"jobs":[
+"Block",
+"Star spender"
+],
+"views":"JapaneseExport v0.103.2: A; Opem list of 2026-04-16: A; vmService list of 2026-03-11: S; NaveGreed v0.111: Good"
+},
+"BUNDLE_OF_JOY":{
+"name":"Bundle of Joy",
+"grade":"B",
+"score":64,
+"type":"Skill",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.103.2: A; Opem list of 2026-04-16: A; NaveGreed v0.111: Good"
+},
+"ROYAL_GAMBLE":{
+"name":"Royal Gamble",
+"grade":"B",
+"score":64,
+"type":"Skill",
+"jobs":[
+"Star gain",
+"Star spender"
+],
+"views":"JapaneseExport v0.103.2: S; Opem list of 2026-04-16: B; vmService list of 2026-03-11: A; NaveGreed v0.111: Good"
+},
+"MAKE_IT_SO":{
+"name":"Make It So",
+"grade":"B",
+"score":63,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: A; Opem list of 2026-04-16: A; vmService list of 2026-03-11: B; NaveGreed v0.111: Good"
+},
+"MANIFEST_AUTHORITY":{
+"name":"Manifest Authority",
+"grade":"B",
+"score":63,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.103.2: A; Opem list of 2026-04-16: A; vmService list of 2026-03-11: B; NaveGreed v0.111: Good"
+},
+"GATHER_LIGHT":{
+"name":"Gather Light",
+"grade":"B",
+"score":62,
+"type":"Skill",
+"jobs":[
+"Block",
+"Star gain"
+],
+"views":"JapaneseExport v0.103.2: A; Opem list of 2026-04-16: B; NaveGreed v0.111: Good"
+},
+"KINGLY_KICK":{
+"name":"Kingly Kick",
+"grade":"B",
+"score":62,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: A; Opem list of 2026-04-16: B; NaveGreed v0.111: Good"
+},
+"CLOAK_OF_STARS":{
+"name":"Cloak of Stars",
+"grade":"B",
+"score":62,
+"type":"Skill",
+"jobs":[
+"Block",
+"Star spender"
+],
+"views":"JapaneseExport v0.103.2: A; Opem list of 2026-04-16: B; vmService list of 2026-03-11: B; NaveGreed v0.111: Good"
+},
+"HIDDEN_CACHE":{
+"name":"Hidden Cache",
+"grade":"B",
+"score":62,
+"type":"Skill",
+"jobs":[
+"Star gain"
+],
+"views":"JapaneseExport v0.103.2: B; Opem list of 2026-04-16: B; vmService list of 2026-03-11: A; NaveGreed v0.111: Good"
+},
+"ALIGNMENT":{
+"name":"Alignment",
+"grade":"B",
+"score":60,
+"type":"Skill",
+"jobs":[
+"Energy",
+"Star spender"
+],
+"views":"NaveGreed v0.111: Good",
+"notes":[
+"NaveGreed rates it partly for his infinite-combo style."
+]
+},
+"BLACK_HOLE":{
+"name":"Black Hole",
+"grade":"B",
+"score":60,
+"type":"Power",
+"jobs":[
+"AoE",
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.103.2: B; Opem list of 2026-04-16: B; vmService list of 2026-03-11: B; NaveGreed v0.111: Good"
+},
+"GLITTERSTREAM":{
+"name":"Glitterstream",
+"grade":"B",
+"score":60,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.103.2: B; Opem list of 2026-04-16: B; NaveGreed v0.111: Good"
+},
+"GUIDING_STAR":{
+"name":"Guiding Star",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Single-target damage",
+"Star spender"
+],
+"views":"NaveGreed v0.111: Good"
+},
+"KINGLY_PUNCH":{
+"name":"Kingly Punch",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: B; Opem list of 2026-04-16: B; NaveGreed v0.111: Good"
+},
+"ROYALTIES":{
+"name":"Royalties",
+"grade":"B",
+"score":60,
+"type":"Power",
+"jobs":[],
+"views":"NaveGreed v0.111: Good"
+},
+"SPOILS_OF_BATTLE":{
+"name":"Spoils of Battle",
+"grade":"B",
+"score":60,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Forge"
+],
+"views":"NaveGreed v0.111: Good",
+"notes":[
+"NaveGreed rates it partly for his infinite-combo style."
+]
+},
+"SWORD_SAGE":{
+"name":"Sword Sage",
+"grade":"B",
+"score":60,
+"type":"Power",
+"jobs":[
+"Damage scaling power"
+],
+"views":"NaveGreed v0.111: Good"
+},
+"CELESTIAL_MIGHT":{
+"name":"Celestial Might",
+"grade":"B",
+"score":57,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: B; NaveGreed v0.111: Good"
+},
+"WROUGHT_IN_WAR":{
+"name":"Wrought in War",
+"grade":"B",
+"score":54,
+"type":"Attack",
+"jobs":[
+"Forge",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: C; NaveGreed v0.111: Good"
+},
+"HEAVENLY_DRILL":{
+"name":"Heavenly Drill",
+"grade":"B",
+"score":52,
+"type":"Attack",
+"jobs":[
+"Energy",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: B; vmService list of 2026-03-11: A; NaveGreed v0.111: Good; Opem v0.111: F",
+"disputed":true,
+"notes":[
+"NaveGreed: Good. Opem: F."
+]
+},
+"QUASAR":{
+"name":"Quasar",
+"grade":"B",
+"score":51,
+"type":"Skill",
+"jobs":[
+"Star spender"
+],
+"views":"JapaneseExport v0.103.2: A; vmService list of 2026-03-11: D; NaveGreed v0.111: Situational; Opem v0.111: A",
+"disputed":true,
+"notes":[
+"NaveGreed: Situational, too upgrade-hungry. Opem: A."
+],
+"upgrade":"upgrade-hungry: weak until upgraded"
+},
+"DYING_STAR":{
+"name":"Dying Star",
+"grade":"B",
+"score":50,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Star spender",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.103.2: A; Opem list of 2026-04-16: B; vmService list of 2026-03-11: S; NaveGreed v0.111: Situational",
+"disputed":true
+},
+"RADIATE":{
+"name":"Radiate",
+"grade":"C",
+"score":49,
+"type":"Attack",
+"jobs":[
+"AoE"
+],
+"views":"JapaneseExport v0.103.2: A; Opem list of 2026-04-16: B; vmService list of 2026-03-11: A; NaveGreed v0.111: Situational",
+"disputed":true
+},
+"SUPERMASSIVE":{
+"name":"Supermassive",
+"grade":"C",
+"score":49,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: B; vmService list of 2026-03-11: D; NaveGreed v0.111: Situational; Opem v0.111: A",
+"disputed":true,
+"notes":[
+"NaveGreed: Situational, too upgrade-hungry. Opem: A."
+],
+"upgrade":"upgrade-hungry: weak until upgraded"
+},
+"GLIMMER":{
+"name":"Glimmer",
+"grade":"C",
+"score":48,
+"type":"Skill",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.103.2: B; Opem list of 2026-04-16: B; vmService list of 2026-03-11: A; NaveGreed v0.111: Situational",
+"disputed":true
+},
+"CRUSH_UNDER":{
+"name":"Crush Under",
+"grade":"C",
+"score":46,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Weak / enemy Strength loss"
+],
+"views":"NaveGreed v0.111: Good; Opem v0.111: F",
+"disputed":true,
+"notes":[
+"NaveGreed: Good. Opem: F."
+]
+},
+"DECISIONS_DECISIONS":{
+"name":"Decisions, Decisions",
+"grade":"C",
+"score":46,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Star spender"
+],
+"views":"JapaneseExport v0.103.2: B; Opem list of 2026-04-16: B; vmService list of 2026-03-11: B; NaveGreed v0.111: Situational"
+},
+"SEEKING_EDGE":{
+"name":"Seeking Edge",
+"grade":"C",
+"score":44,
+"type":"Power",
+"jobs":[
+"AoE",
+"Damage scaling power",
+"Forge"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: B; vmService list of 2026-03-11: B; NaveGreed v0.111: Situational"
+},
+"COSMIC_INDIFFERENCE":{
+"name":"Cosmic Indifference",
+"grade":"C",
+"score":44,
+"type":"Skill",
+"jobs":[
+"Block",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: C; vmService list of 2026-03-11: A; NaveGreed v0.111: Situational"
+},
+"FOREGONE_CONCLUSION":{
+"name":"Foregone Conclusion",
+"grade":"C",
+"score":44,
+"type":"Skill",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: C; vmService list of 2026-03-11: A; NaveGreed v0.111: Situational"
+},
+"GENESIS":{
+"name":"Genesis",
+"grade":"C",
+"score":44,
+"type":"Power",
+"jobs":[
+"Star gain"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: C; vmService list of 2026-03-11: A; NaveGreed v0.111: Situational"
+},
+"I_AM_INVINCIBLE":{
+"name":"I Am Invincible",
+"grade":"C",
+"score":43,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: B; NaveGreed v0.111: Situational"
+},
+"LUNAR_BLAST":{
+"name":"Lunar Blast",
+"grade":"C",
+"score":42,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: C; vmService list of 2026-03-11: B; NaveGreed v0.111: Situational"
+},
+"PALE_BLUE_DOT":{
+"name":"Pale Blue Dot",
+"grade":"C",
+"score":42,
+"type":"Power",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: C; vmService list of 2026-03-11: B; NaveGreed v0.111: Situational"
+},
+"SHINING_STRIKE":{
+"name":"Shining Strike",
+"grade":"C",
+"score":42,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Star gain"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: C; vmService list of 2026-03-11: B; NaveGreed v0.111: Situational"
+},
+"THE_SMITH":{
+"name":"The Smith",
+"grade":"C",
+"score":41,
+"type":"Skill",
+"jobs":[
+"Forge",
+"Star spender"
+],
+"views":"JapaneseExport v0.103.2: A; vmService list of 2026-03-11: C; NaveGreed v0.111: Situational; Opem v0.111: low (exact tier not read)"
+},
+"CRESCENT_SPEAR":{
+"name":"Crescent Spear",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Star spender"
+],
+"views":"NaveGreed v0.111: Situational"
+},
+"DEVASTATE":{
+"name":"Devastate",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Star spender"
+],
+"views":"NaveGreed v0.111: Situational"
+},
+"FURNACE":{
+"name":"Furnace",
+"grade":"C",
+"score":40,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Forge"
+],
+"views":"NaveGreed v0.111: Situational"
+},
+"MONARCHS_GAZE":{
+"name":"Monarch's Gaze",
+"grade":"C",
+"score":40,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Weak / enemy Strength loss"
+],
+"views":"NaveGreed v0.111: Situational"
+},
+"NEUTRON_AEGIS":{
+"name":"Neutron Aegis",
+"grade":"C",
+"score":40,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Dexterity / Plating",
+"Star spender"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: D; vmService list of 2026-03-11: B; NaveGreed v0.111: Situational"
+},
+"PARRY":{
+"name":"Parry",
+"grade":"C",
+"score":40,
+"type":"Power",
+"jobs":[
+"Block scaling power"
+],
+"views":"NaveGreed v0.111: Situational"
+},
+"PATTER":{
+"name":"Patter",
+"grade":"C",
+"score":40,
+"type":"Skill",
+"jobs":[
+"Block"
+],
+"views":"NaveGreed v0.111: Situational"
+},
+"KNOCKOUT_BLOW":{
+"name":"Knockout Blow",
+"grade":"C",
+"score":39,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: C; vmService list of 2026-03-11: B; NaveGreed v0.111: Situational; Opem v0.111: low (exact tier not read)"
+},
+"HEGEMONY":{
+"name":"Hegemony",
+"grade":"C",
+"score":36,
+"type":"Attack",
+"jobs":[
+"Energy",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: D; vmService list of 2026-03-11: D; NaveGreed v0.111: Situational"
+},
+"THE_SEALED_THRONE":{
+"name":"The Sealed Throne",
+"grade":"C",
+"score":35,
+"type":"Power",
+"jobs":[
+"Star gain",
+"Star spender"
+],
+"views":"NaveGreed v0.111: Situational; Opem v0.111: low (exact tier not read)"
+},
+"STARDUST":{
+"name":"Stardust",
+"grade":"D",
+"score":30,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: C; vmService list of 2026-03-11: A; NaveGreed v0.111: Rarely used",
+"disputed":true
+},
+"BEAT_INTO_SHAPE":{
+"name":"Beat into Shape",
+"grade":"D",
+"score":29,
+"type":"Attack",
+"jobs":[
+"Forge",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: C (card may have changed since); Opem list of 2026-04-16: B (card may have changed since); NaveGreed v0.111: Rarely used",
+"disputed":true
+},
+"PHOTON_CUT":{
+"name":"Photon Cut",
+"grade":"D",
+"score":29,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: B; vmService list of 2026-03-11: C; NaveGreed v0.111: Rarely used; Opem v0.111: low (exact tier not read)",
+"disputed":true,
+"notes":[
+"Upgrade-hungry; low on both lists."
+],
+"upgrade":"upgrade-hungry: weak until upgraded"
+},
+"SEVEN_STARS":{
+"name":"Seven Stars",
+"grade":"D",
+"score":29,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Star spender"
+],
+"views":"JapaneseExport v0.103.2: C; vmService list of 2026-03-11: B; NaveGreed v0.111: Rarely used; Opem v0.111: low (exact tier not read)",
+"disputed":true
+},
+"CONQUEROR":{
+"name":"Conqueror",
+"grade":"D",
+"score":28,
+"type":"Skill",
+"jobs":[
+"Forge"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: C; vmService list of 2026-03-11: B; NaveGreed v0.111: Rarely used",
+"disputed":true
+},
+"SOLAR_STRIKE":{
+"name":"Solar Strike",
+"grade":"D",
+"score":26,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Star gain"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: C; NaveGreed v0.111: Rarely used"
+},
+"PROPHESIZE":{
+"name":"Prophesize",
+"grade":"D",
+"score":24,
+"type":"Skill",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.103.2: C; Opem list of 2026-04-16: D; vmService list of 2026-03-11: C; NaveGreed v0.111: Rarely used"
+},
+"HEIRLOOM_HAMMER":{
+"name":"Heirloom Hammer",
+"grade":"D",
+"score":23,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.103.2: D; Opem list of 2026-04-16: C; NaveGreed v0.111: Rarely used"
+},
+"MONOLOGUE":{
+"name":"Monologue",
+"grade":"D",
+"score":20,
+"type":"Skill",
+"jobs":[],
+"views":"JapaneseExport v0.103.2: D; Opem list of 2026-04-16: D; vmService list of 2026-03-11: D; NaveGreed v0.111: Rarely used"
+},
+"RESONANCE":{
+"name":"Resonance",
+"grade":"D",
+"score":20,
+"type":"Skill",
+"jobs":[
+"AoE",
+"Star spender",
+"Weak / enemy Strength loss"
+],
+"views":"NaveGreed v0.111: Rarely used"
+},
+"SUMMON_FORTH":{
+"name":"Summon Forth",
+"grade":"D",
+"score":20,
+"type":"Skill",
+"jobs":[
+"Forge"
+],
+"views":"NaveGreed v0.111: Rarely used"
+},
+"TERRAFORMING":{
+"name":"Terraforming",
+"grade":"D",
+"score":20,
+"type":"Skill",
+"jobs":[],
+"views":"NaveGreed v0.111: Rarely used"
+}
+},
+"NECROBINDER":{
+"THE_SCYTHE":{
+"name":"The Scythe",
+"grade":"S",
+"score":95,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"NaveGreed v0.111: Out of this world broken; Opem v0.111: high (exact tier not read)",
+"notes":[
+"The best floor-one card until late act 2."
+]
+},
+"DEMESNE":{
+"name":"Demesne",
+"grade":"S",
+"score":94,
+"type":"Power",
+"jobs":[
+"Card draw",
+"Energy"
+],
+"views":"JapaneseExport v0.107.1: S; vmService list of 2026-03-18: S; NaveGreed v0.111: Out of this world broken; Opem v0.111: high (exact tier not read)"
+},
+"DEATHBRINGER":{
+"name":"Deathbringer",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"AoE",
+"Doom",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.107.1: S; NaveGreed v0.111: Second/red tier; Opem v0.111: high (exact tier not read)",
+"notes":[
+"A hallway-fight answer early in the run."
+]
+},
+"DEFY":{
+"name":"Defy",
+"grade":"S",
+"score":89,
+"type":"Skill",
+"jobs":[
+"Block",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.107.1: S; NaveGreed v0.111: Second/red tier; Opem v0.111: high (exact tier not read)",
+"notes":[
+"A hallway-fight answer early in the run."
+]
+},
+"FRIENDSHIP":{
+"name":"Friendship",
+"grade":"S",
+"score":89,
+"type":"Power",
+"jobs":[
+"Energy",
+"Strength"
+],
+"views":"JapaneseExport v0.107.1: S; vmService list of 2026-03-18: S; NaveGreed v0.111: Second/red tier; Opem v0.111: high (exact tier not read)"
+},
+"LETHALITY":{
+"name":"Lethality",
+"grade":"S",
+"score":89,
+"type":"Power",
+"jobs":[
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.107.1: S; vmService list of 2026-03-18: S; NaveGreed v0.111: Second/red tier; Opem v0.111: high (exact tier not read)",
+"notes":[
+"Late game: pair with a big attack (Eradicate, Squeeze, The Scythe)."
+]
+},
+"NEUROSURGE":{
+"name":"Neurosurge",
+"grade":"S",
+"score":89,
+"type":"Power",
+"jobs":[
+"Card draw",
+"Doom",
+"Energy"
+],
+"views":"JapaneseExport v0.107.1: S; vmService list of 2026-03-18: S; NaveGreed v0.111: Second/red tier; Opem v0.111: high (exact tier not read)"
+},
+"REAPER_FORM":{
+"name":"Reaper Form",
+"grade":"S",
+"score":89,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Doom"
+],
+"views":"JapaneseExport v0.107.1: S; NaveGreed v0.111: Second/red tier; Opem v0.111: high (exact tier not read)"
+},
+"CAPTURE_SPIRIT":{
+"name":"Capture Spirit",
+"grade":"S",
+"score":88,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Single-target damage",
+"Soul"
+],
+"views":"JapaneseExport v0.107.1: S; Opem list of 2026-04-17: A; NaveGreed v0.111: Second/red tier"
+},
+"CALL_OF_THE_VOID":{
+"name":"Call of the Void",
+"grade":"S",
+"score":87,
+"type":"Power",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.107.1: S; vmService list of 2026-03-18: A; NaveGreed v0.111: Second/red tier; Opem v0.111: high (exact tier not read)"
+},
+"ENFEEBLING_TOUCH":{
+"name":"Enfeebling Touch",
+"grade":"S",
+"score":87,
+"type":"Skill",
+"jobs":[
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.107.1: S; vmService list of 2026-03-18: A; NaveGreed v0.111: Second/red tier; Opem v0.111: high (exact tier not read)",
+"notes":[
+"A hallway-fight answer early in the run."
+]
+},
+"FORBIDDEN_GRIMOIRE":{
+"name":"Forbidden Grimoire",
+"grade":"A",
+"score":84,
+"type":"Power",
+"jobs":[],
+"views":"NaveGreed v0.111: S-; Opem v0.111: Gg",
+"notes":[
+"NaveGreed: S-, it backfires when hallway fights are the problem. Opem: his top tier."
+]
+},
+"DELAY":{
+"name":"Delay",
+"grade":"A",
+"score":82,
+"type":"Skill",
+"jobs":[
+"Block",
+"Energy"
+],
+"views":"JapaneseExport v0.107.1: S; vmService list of 2026-03-18: C; NaveGreed v0.111: Second/red tier; Opem v0.111: high (exact tier not read)",
+"disputed":true,
+"notes":[
+"A hallway-fight answer early in the run."
+]
+},
+"ERADICATE":{
+"name":"Eradicate",
+"grade":"A",
+"score":81,
+"type":"Attack",
+"jobs":[
+"Retain",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: A; vmService list of 2026-03-18: C; NaveGreed v0.111: Second/red tier; Opem v0.111: high (exact tier not read)",
+"disputed":true,
+"notes":[
+"A late-game big attack to pair with Lethality."
+]
+},
+"DANSE_MACABRE":{
+"name":"Danse Macabre",
+"grade":"A",
+"score":80,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Energy"
+],
+"views":"JapaneseExport v0.107.1: S; Opem list of 2026-04-17: S; NaveGreed v0.111: S-"
+},
+"PUTREFY":{
+"name":"Putrefy",
+"grade":"A",
+"score":80,
+"type":"Skill",
+"jobs":[
+"Vulnerable",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.107.1: S; Opem list of 2026-04-17: S; vmService list of 2026-03-18: S; NaveGreed v0.111: S-"
+},
+"SPIRIT_OF_ASH":{
+"name":"Spirit of Ash",
+"grade":"A",
+"score":80,
+"type":"Power",
+"jobs":[
+"Block scaling power"
+],
+"views":"JapaneseExport v0.107.1: S; Opem list of 2026-04-17: S; vmService list of 2026-03-18: S; NaveGreed v0.111: S-"
+},
+"BONE_SHARDS":{
+"name":"Bone Shards",
+"grade":"A",
+"score":76,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Block",
+"Osty"
+],
+"views":"JapaneseExport v0.107.1: S; Opem list of 2026-04-17: S; vmService list of 2026-03-18: B; NaveGreed v0.111: S-",
+"notes":[
+"Great early for hallway fights, falls off in acts 2 and 3 (both players)."
+]
+},
+"UNDEATH":{
+"name":"Undeath",
+"grade":"A",
+"score":76,
+"type":"Skill",
+"jobs":[
+"Block",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.107.1: A; Opem list of 2026-04-17: S; vmService list of 2026-03-18: A; NaveGreed v0.111: S-"
+},
+"GRAVE_WARDEN":{
+"name":"Grave Warden",
+"grade":"A",
+"score":75,
+"type":"Skill",
+"jobs":[
+"Block",
+"Card draw",
+"Soul"
+],
+"views":"JapaneseExport v0.107.1: A; Opem list of 2026-04-17: A; NaveGreed v0.111: S-"
+},
+"SHROUD":{
+"name":"Shroud",
+"grade":"A",
+"score":75,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Doom"
+],
+"views":"NaveGreed v0.111: S-"
+},
+"SQUEEZE":{
+"name":"Squeeze",
+"grade":"A",
+"score":74,
+"type":"Attack",
+"jobs":[
+"Osty",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; vmService list of 2026-03-18: C; NaveGreed v0.111: Second/red tier; Opem v0.111: A",
+"disputed":true,
+"notes":[
+"NaveGreed: second tier, a late-game big attack with Lethality. Opem: A, 'worse than Eradicate'."
+]
+},
+"REANIMATE":{
+"name":"Reanimate",
+"grade":"A",
+"score":74,
+"type":"Skill",
+"jobs":[
+"Osty"
+],
+"views":"JapaneseExport v0.107.1: S; Opem list of 2026-04-17: B; vmService list of 2026-03-18: B; NaveGreed v0.111: S-"
+},
+"BORROWED_TIME":{
+"name":"Borrowed Time",
+"grade":"A",
+"score":73,
+"type":"Skill",
+"jobs":[
+"Energy"
+],
+"views":"JapaneseExport v0.107.1: A; Opem list of 2026-04-17: B; NaveGreed v0.111: S-"
+},
+"PAGESTORM":{
+"name":"Pagestorm",
+"grade":"A",
+"score":69,
+"type":"Power",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.107.1: S; Opem list of 2026-04-17: S; vmService list of 2026-03-18: S; NaveGreed v0.111: Good but somewhat situational",
+"disputed":true
+},
+"SLEIGHT_OF_FLESH":{
+"name":"Sleight of Flesh",
+"grade":"A",
+"score":69,
+"type":"Power",
+"jobs":[
+"Damage scaling power"
+],
+"views":"JapaneseExport v0.107.1: S; Opem list of 2026-04-17: S; vmService list of 2026-03-18: S; NaveGreed v0.111: Good but somewhat situational",
+"disputed":true
+},
+"SHARED_FATE":{
+"name":"Shared Fate",
+"grade":"B",
+"score":68,
+"type":"Skill",
+"jobs":[
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.107.1: S; Opem list of 2026-04-17: A; vmService list of 2026-03-18: S; NaveGreed v0.111: Good but somewhat situational",
+"disputed":true
+},
+"END_OF_DAYS":{
+"name":"End of Days",
+"grade":"B",
+"score":67,
+"type":"Skill",
+"jobs":[
+"AoE",
+"Doom"
+],
+"views":"JapaneseExport v0.107.1: A; Opem list of 2026-04-17: S; NaveGreed v0.111: Good but somewhat situational"
+},
+"CALCIFY":{
+"name":"Calcify",
+"grade":"B",
+"score":66,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Osty"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: B; vmService list of 2026-03-18: D; NaveGreed v0.111: S-",
+"disputed":true
+},
+"DREDGE":{
+"name":"Dredge",
+"grade":"B",
+"score":66,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Discard / Sly"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: C; vmService list of 2026-03-18: C; NaveGreed v0.111: S-",
+"disputed":true,
+"notes":[
+"Upgraded it Retains, which makes it a combo enabler."
+],
+"upgrade":"upgraded it Retains, which makes it a combo enabler"
+},
+"SENTRY_MODE":{
+"name":"Sentry Mode",
+"grade":"B",
+"score":65,
+"type":"Power",
+"jobs":[],
+"views":"JapaneseExport v0.107.1: B; vmService list of 2026-03-18: C; NaveGreed v0.111: Good but somewhat situational; Opem v0.111: S",
+"disputed":true,
+"notes":[
+"Opem: S. NaveGreed: Good."
+]
+},
+"NEGATIVE_PULSE":{
+"name":"Negative Pulse",
+"grade":"B",
+"score":64,
+"type":"Skill",
+"jobs":[
+"AoE",
+"Block",
+"Doom"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: S; NaveGreed v0.111: Good but somewhat situational"
+},
+"FETCH":{
+"name":"Fetch",
+"grade":"B",
+"score":63,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Osty",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: A; Opem list of 2026-04-17: B; vmService list of 2026-03-18: A; NaveGreed v0.111: Good but somewhat situational"
+},
+"SNAP":{
+"name":"Snap",
+"grade":"B",
+"score":62,
+"type":"Attack",
+"jobs":[
+"Osty",
+"Retain",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: D; vmService list of 2026-03-18: C; NaveGreed v0.111: S-",
+"disputed":true
+},
+"INVOKE":{
+"name":"Invoke",
+"grade":"B",
+"score":62,
+"type":"Skill",
+"jobs":[
+"Energy",
+"Osty"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: A; vmService list of 2026-03-18: B; NaveGreed v0.111: Good but somewhat situational"
+},
+"REAP":{
+"name":"Reap",
+"grade":"B",
+"score":62,
+"type":"Attack",
+"jobs":[
+"Retain",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: A; vmService list of 2026-03-18: B; NaveGreed v0.111: Good but somewhat situational"
+},
+"DEBILITATE":{
+"name":"Debilitate",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Vulnerable",
+"Weak / enemy Strength loss"
+],
+"views":"JapaneseExport v0.107.1: B; NaveGreed v0.111: Good but somewhat situational"
+},
+"HAUNT":{
+"name":"Haunt",
+"grade":"B",
+"score":60,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Soul"
+],
+"views":"NaveGreed v0.111: Good but somewhat situational"
+},
+"SACRIFICE":{
+"name":"Sacrifice",
+"grade":"B",
+"score":60,
+"type":"Skill",
+"jobs":[
+"Osty",
+"Retain"
+],
+"views":"NaveGreed v0.111: Good but somewhat situational"
+},
+"SOW":{
+"name":"Sow",
+"grade":"B",
+"score":60,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Retain"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: B; vmService list of 2026-03-18: B; NaveGreed v0.111: Good but somewhat situational"
+},
+"COUNTDOWN":{
+"name":"Countdown",
+"grade":"B",
+"score":58,
+"type":"Power",
+"jobs":[
+"Damage scaling power",
+"Doom"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: B; vmService list of 2026-03-18: C; NaveGreed v0.111: Good but somewhat situational"
+},
+"DRAIN_POWER":{
+"name":"Drain Power",
+"grade":"B",
+"score":58,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Discard / Sly",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: B; vmService list of 2026-03-18: B; NaveGreed v0.111: Good but somewhat situational"
+},
+"POKE":{
+"name":"Poke",
+"grade":"B",
+"score":58,
+"type":"Attack",
+"jobs":[
+"Osty",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: B; vmService list of 2026-03-18: B; NaveGreed v0.111: Good but somewhat situational"
+},
+"PULL_AGGRO":{
+"name":"Pull Aggro",
+"grade":"B",
+"score":58,
+"type":"Skill",
+"jobs":[
+"Block",
+"Osty"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: B; vmService list of 2026-03-18: C; NaveGreed v0.111: Good but somewhat situational"
+},
+"TRANSFIGURE":{
+"name":"Transfigure",
+"grade":"B",
+"score":58,
+"type":"Skill",
+"jobs":[
+"Energy"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: B; vmService list of 2026-03-18: C; NaveGreed v0.111: Good but somewhat situational"
+},
+"DIRGE":{
+"name":"Dirge",
+"grade":"B",
+"score":58,
+"type":"Skill",
+"jobs":[
+"Osty",
+"Soul"
+],
+"views":"JapaneseExport v0.107.1: S; NaveGreed v0.111: Good but somewhat situational; Opem v0.111: F",
+"disputed":true,
+"notes":[
+"NaveGreed: Good. Opem: F."
+]
+},
+"HIGH_FIVE":{
+"name":"High Five",
+"grade":"B",
+"score":57,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Osty",
+"Vulnerable"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: C; NaveGreed v0.111: Good but somewhat situational"
+},
+"BANSHEES_CRY":{
+"name":"Banshee's Cry",
+"grade":"B",
+"score":55,
+"type":"Attack",
+"jobs":[
+"AoE",
+"Energy"
+],
+"views":"JapaneseExport v0.107.1: S; Opem list of 2026-04-17: S; NaveGreed v0.111: Only if they are solving a problem/work well in current deck",
+"disputed":true
+},
+"FLATTEN":{
+"name":"Flatten",
+"grade":"B",
+"score":52,
+"type":"Attack",
+"jobs":[
+"Osty",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: C; vmService list of 2026-03-18: D; NaveGreed v0.111: Good but somewhat situational",
+"disputed":true
+},
+"PULL_FROM_BELOW":{
+"name":"Pull from Below",
+"grade":"B",
+"score":52,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: D; vmService list of 2026-03-18: D; NaveGreed v0.111: Good but somewhat situational",
+"disputed":true
+},
+"HANG":{
+"name":"Hang",
+"grade":"B",
+"score":50,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: A; Opem list of 2026-04-17: A; vmService list of 2026-03-18: A; NaveGreed v0.111: Only if they are solving a problem/work well in current deck",
+"disputed":true
+},
+"RATTLE":{
+"name":"Rattle",
+"grade":"B",
+"score":50,
+"type":"Attack",
+"jobs":[
+"Osty",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: D; vmService list of 2026-03-18: D; NaveGreed v0.111: Good but somewhat situational",
+"disputed":true
+},
+"RIGHT_HAND_HAND":{
+"name":"Right Hand Hand",
+"grade":"B",
+"score":50,
+"type":"Attack",
+"jobs":[
+"Discard / Sly",
+"Energy",
+"Osty",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: D; vmService list of 2026-03-18: D; NaveGreed v0.111: Good but somewhat situational",
+"disputed":true
+},
+"DEATHS_DOOR":{
+"name":"Death's Door",
+"grade":"C",
+"score":48,
+"type":"Skill",
+"jobs":[
+"Block",
+"Doom"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: A; vmService list of 2026-03-18: B; NaveGreed v0.111: Only if they are solving a problem/work well in current deck",
+"disputed":true
+},
+"OBLIVION":{
+"name":"Oblivion",
+"grade":"C",
+"score":46,
+"type":"Skill",
+"jobs":[
+"Doom"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: B; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"CLEANSE":{
+"name":"Cleanse",
+"grade":"C",
+"score":44,
+"type":"Skill",
+"jobs":[
+"Exhaust outlet",
+"Osty"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: B; vmService list of 2026-03-18: B; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"DEFILE":{
+"name":"Defile",
+"grade":"C",
+"score":44,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: C; vmService list of 2026-03-18: B; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"MELANCHOLY":{
+"name":"Melancholy",
+"grade":"C",
+"score":44,
+"type":"Skill",
+"jobs":[
+"Block",
+"Energy"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: B; vmService list of 2026-03-18: C; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"PARSE":{
+"name":"Parse",
+"grade":"C",
+"score":44,
+"type":"Skill",
+"jobs":[
+"Card draw"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: B; vmService list of 2026-03-18: B; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"SCOURGE":{
+"name":"Scourge",
+"grade":"C",
+"score":43,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Doom"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: B; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"SPUR":{
+"name":"Spur",
+"grade":"C",
+"score":42,
+"type":"Skill",
+"jobs":[
+"Osty",
+"Retain"
+],
+"views":"JapaneseExport v0.107.1: B; Opem list of 2026-04-17: C; vmService list of 2026-03-18: C; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"AFTERLIFE":{
+"name":"Afterlife",
+"grade":"C",
+"score":42,
+"type":"Skill",
+"jobs":[
+"Osty"
+],
+"views":"JapaneseExport v0.107.1: A; Opem list of 2026-04-17: C; vmService list of 2026-03-18: D; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"DEATH_MARCH":{
+"name":"Death March",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"NECRO_MASTERY":{
+"name":"Necro Mastery",
+"grade":"C",
+"score":40,
+"type":"Power",
+"jobs":[
+"AoE",
+"Block scaling power",
+"Osty"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: C; vmService list of 2026-03-18: C; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"SIC_EM":{
+"name":"Sic 'Em",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"Osty",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"TIMES_UP":{
+"name":"Time's Up",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"Doom",
+"Single-target damage"
+],
+"views":"NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"VEILPIERCER":{
+"name":"Veilpiercer",
+"grade":"C",
+"score":40,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: D; vmService list of 2026-03-18: B; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"BLIGHT_STRIKE":{
+"name":"Blight Strike",
+"grade":"C",
+"score":38,
+"type":"Attack",
+"jobs":[
+"Doom",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: C; vmService list of 2026-03-18: D; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"WISP":{
+"name":"Wisp",
+"grade":"C",
+"score":38,
+"type":"Skill",
+"jobs":[
+"Energy"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: C; vmService list of 2026-03-18: D; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"FEAR":{
+"name":"Fear",
+"grade":"C",
+"score":37,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Vulnerable"
+],
+"views":"JapaneseExport v0.107.1: D; Opem list of 2026-04-17: C; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"SCULPTING_STRIKE":{
+"name":"Sculpting Strike",
+"grade":"C",
+"score":37,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: D; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"SEANCE":{
+"name":"Seance",
+"grade":"C",
+"score":36,
+"type":"Skill",
+"jobs":[
+"Card draw",
+"Soul"
+],
+"views":"JapaneseExport v0.107.1: C; NaveGreed v0.111: Only if they are solving a problem/work well in current deck; Opem v0.111: low (exact tier not read)"
+},
+"SEVERANCE":{
+"name":"Severance",
+"grade":"C",
+"score":36,
+"type":"Attack",
+"jobs":[
+"Discard / Sly",
+"Single-target damage",
+"Soul"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: D; vmService list of 2026-03-18: D; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"PROTECTOR":{
+"name":"Protector",
+"grade":"C",
+"score":35,
+"type":"Attack",
+"jobs":[
+"Osty",
+"Single-target damage"
+],
+"views":"NaveGreed v0.111: Only if they are solving a problem/work well in current deck; Opem v0.111: low (exact tier not read)"
+},
+"REAVE":{
+"name":"Reave",
+"grade":"C",
+"score":35,
+"type":"Attack",
+"jobs":[
+"Card draw",
+"Single-target damage",
+"Soul"
+],
+"views":"NaveGreed v0.111: Only if they are solving a problem/work well in current deck; Opem v0.111: low (exact tier not read)"
+},
+"BURY":{
+"name":"Bury",
+"grade":"C",
+"score":34,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: D; Opem list of 2026-04-17: D; vmService list of 2026-03-18: D; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"GRAVEBLAST":{
+"name":"Graveblast",
+"grade":"C",
+"score":34,
+"type":"Attack",
+"jobs":[
+"Discard / Sly",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: D; Opem list of 2026-04-17: D; vmService list of 2026-03-18: D; NaveGreed v0.111: Only if they are solving a problem/work well in current deck"
+},
+"DEVOUR_LIFE":{
+"name":"Devour Life",
+"grade":"C",
+"score":33,
+"type":"Power",
+"jobs":[
+"Block scaling power",
+"Osty",
+"Soul"
+],
+"views":"JapaneseExport v0.107.1: C; Opem list of 2026-04-17: A; vmService list of 2026-03-18: A; NaveGreed v0.111: Rarely Used",
+"disputed":true
+},
+"NO_ESCAPE":{
+"name":"No Escape",
+"grade":"D",
+"score":29,
+"type":"Skill",
+"jobs":[
+"Doom",
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: B; vmService list of 2026-03-18: C; NaveGreed v0.111: Rarely Used; Opem v0.111: low (exact tier not read)",
+"disputed":true
+},
+"MISERY":{
+"name":"Misery",
+"grade":"D",
+"score":24,
+"type":"Attack",
+"jobs":[
+"Single-target damage"
+],
+"views":"JapaneseExport v0.107.1: C; vmService list of 2026-03-18: D; NaveGreed v0.111: Rarely Used; Opem v0.111: low (exact tier not read)"
+},
+"EIDOLON":{
+"name":"Eidolon",
+"grade":"D",
+"score":22,
+"type":"Skill",
+"jobs":[],
+"views":"NaveGreed v0.111: Rarely Used; Opem v0.111: low (exact tier not read)",
+"notes":[
+"Opem: 'maybe the worst card in the game'."
+]
+},
+"SOUL_STORM":{
+"name":"Soul Storm",
+"grade":"D",
+"score":20,
+"type":"Attack",
+"jobs":[
+"Single-target damage",
+"Soul"
+],
+"views":"NaveGreed v0.111: Rarely Used"
+}
+}
+}
+}

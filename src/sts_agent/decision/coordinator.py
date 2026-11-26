@@ -26,7 +26,8 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
-from ..evidence import boss_demands, budget, card_strength, conversions, deck_balance, engine_access, enemy_patterns
+from ..evidence import (boss_demands, budget, card_strength, conversions, deck_balance, engine_access,
+                        enemy_patterns, expert_grades)
 from ..evidence.potion_odds import drop_state
 from ..game import builds
 from ..game.client import AmbiguousActionError, GameClientError, GameUnavailable, HttpError
@@ -993,6 +994,13 @@ class RunCoordinator:
                                    "Vulnerable, Forge) and what turns it into damage or Block (not a choice on this "
                                    "screen).",
                     "details": _clip(conversions.summary_text(conversions.deck_conversions(f["deck"])))})
+            graded = expert_grades.deck_text(run.get("character"), f.get("deck")) if expert_grades.active() else None
+            if graded:   # general strength of what the deck holds, for removals and upgrades; not a choice either
+                extra.insert(len([e for e in extra if e["id"] in ("deck_balance", "deck_conversions")]), {
+                    "id": "expert_grades", "kind": "other",
+                    "description": "The best players' v0.111 tier-list grades of the cards in the deck (not a "
+                                   "choice on this screen).",
+                    "details": _clip(graded)})
             items = items[:40 - len(extra)] + extra
             opps = {"items": items[:40]}
         glossary = f.get("keyword_glossary")
@@ -1207,7 +1215,8 @@ class RunCoordinator:
                 strength = card_strength.offers(
                     [(c["action_id"], c["details"]) for c in cands if c["kind"] == "select_card_reward"
                      or (c["kind"] == "shop_purchase" and c["details"].get("category") == "card")],
-                    support.get("options") if isinstance(support, dict) else None, run.get("character"))
+                    support.get("options") if isinstance(support, dict) else None, run.get("character"),
+                    v.facts.get("deck"))
                 if strength:
                     facts = {**facts, "card_strength": strength}
             if budget.active() and v.kind in ("card_reward", "shop"):

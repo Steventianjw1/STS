@@ -23,7 +23,7 @@ sts-agent = "sts_agent.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-sts_agent = ["ui/*.html"]
+sts_agent = ["ui/*.html", "evidence/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

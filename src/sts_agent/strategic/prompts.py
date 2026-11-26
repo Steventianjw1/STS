@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 
+from ..evidence import expert_grades
 from ..game import builds
 from .characters import strategy_for
 from .models import (DIMENSIONS, MAX_ENGINE_PIECES, PLAN_ENGINE, PLAN_LISTS, PLAN_TEXTS, StrategicAssessment,
@@ -190,7 +191,8 @@ def system_instruction(*, character: str | None = None, combat_delegated: bool =
     behavior = [f"[{prompt_version_for(character)}]\n{_BEHAVIOR}"]
     if builds.active().key in _BEHAVIOR_BY_BUILD:
         behavior.append(_BEHAVIOR_BY_BUILD[builds.active().key])
-    behavior.extend(text for text in (strategy.deck_guidance, strategy.elite_guidance) if text)
+    behavior.extend(text for text in (strategy.deck_guidance, expert_grades.planner_text(strategy.key),
+                                      strategy.elite_guidance) if text)
     if strategy.act_stance:
         behavior.append(_ELITES_BY_ACT)
     balance_character = _BALANCE_CHARACTER_BY_BUILD.get(builds.active().key, _BALANCE_CHARACTER)

@@ -24,7 +24,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from ..config import ExpertStatsConfig
-from . import card_strength
+from . import card_strength, expert_grades
 
 API_ROOT = "https://spire-codex.com"
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -552,6 +552,9 @@ class ExpertDecisionStats:
                 note = card_strength.upgrade_note(character, card.get("id"))
                 if note and card.get("upgraded") is not True:
                     card["owner_note"] = note
+                hint = expert_grades.upgrade_hint(character, card.get("id")) if expert_grades.active() else None
+                if hint and card.get("upgraded") is not True:
+                    card["expert_note"] = hint
         if view.kind not in ("card_reward", "shop") and self.config.history_enabled:   # where an upgrade is chosen
             self._add_upgrade_effects(evidence, deadline=deadline)
         support["upgrade_priority"] = evidence
